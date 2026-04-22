@@ -5,6 +5,8 @@ import {
   inferPerformanceLiftKey,
 } from "./performance-record-service.js";
 import { GOAL_MEASURABILITY_TIERS } from "./goal-resolution-service.js";
+import { normalizeGoalDriverProfile } from "./goal-driver-graph-service.js";
+import { buildGoalSupportContributionItem } from "./goal-contribution-scoring-service.js";
 
 export const GOAL_PROGRESS_TRACKING_MODES = {
   measurable: "measurable",
@@ -76,6 +78,12 @@ const round1 = (value) => {
 const formatNumber = (value, digits = 1) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed.toFixed(digits) : "";
+};
+
+const clamp01 = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.min(1, Math.max(0, parsed));
 };
 
 const formatSignedDelta = (value, digits = 1, unit = "") => {
@@ -151,6 +159,7 @@ const normalizeResolvedGoal = (goal = {}, index = 0) => {
     measurabilityTier: inferMeasurabilityTier(goal),
     primaryMetric,
     proxyMetrics,
+    driverProfile: normalizeGoalDriverProfile(goal?.driverProfile || null),
     targetDate: sanitizeText(goal?.targetDate || "", 24),
     targetHorizonWeeks: Number.isFinite(Number(goal?.targetHorizonWeeks)) ? Math.max(1, Math.round(Number(goal.targetHorizonWeeks))) : null,
     confidence: sanitizeText(goal?.confidence || goal?.confidenceLevel || "low", 20).toLowerCase() || "low",
@@ -466,6 +475,7 @@ const createTrackedItem = ({
   targetDisplay = "",
   trendDisplay = "",
   why = "",
+  metricMeta = null,
 } = {}) => ({
   key: sanitizeText(key, 60).toLowerCase(),
   label: sanitizeText(label, 80),
@@ -476,6 +486,142 @@ const createTrackedItem = ({
   targetDisplay: sanitizeText(targetDisplay, 120),
   trendDisplay: sanitizeText(trendDisplay, 160),
   why: sanitizeText(why, 220),
+  metricMeta: metricMeta && typeof metricMeta === "object"
+    ? {
+        valueFormat: sanitizeText(metricMeta?.valueFormat || "", 24).toLowerCase() || "",
+        unit: sanitizeText(metricMeta?.unit || "", 24),
+        direction: sanitizeText(metricMeta?.direction || "", 12).toLowerCase() || "",
+        currentValue: toFiniteNumber(metricMeta?.currentValue, null),
+        baselineValue: toFiniteNumber(metricMeta?.baselineValue, null),
+        targetValue: toFiniteNumber(metricMeta?.targetValue, null),
+        distanceValue: toFiniteNumber(metricMeta?.distanceValue, null),
+        currentDate: sanitizeText(metricMeta?.currentDate || "", 24),
+        baselineDate: sanitizeText(metricMeta?.baselineDate || "", 24),
+      }
+    : null,
+});
+
+const formatMetricValue = ({ value = null, valueFormat = "", unit = "" } = {}) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return "";
+  if (valueFormat === "pace") return formatPace(parsed);
+  if (valueFormat === "duration") {
+    const totalSeconds = Math.max(0, Math.round(parsed));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+  const digits = Math.abs(parsed % 1) > 0 ? 1 : 0;
+  return `${formatNumber(parsed, digits)}${unit ? ` ${unit}` : ""}`;
+};
+
+const formatGoalDistanceLabel = ({
+  currentValue = null,
+  targetValue = null,
+  unit = "",
+  direction = "",
+  valueFormat = "",
+} = {}) => {
+  const current = Number(currentValue);
+  const target = Number(targetValue);
+  if (!Number.isFinite(target)) return "Target still needs a clear anchor.";
+  if (!Number.isFinite(current)) return "First current anchor still needs to be logged.";
+  if (direction === "lower") {
+    const remaining = Math.max(0, Math.round(current - target));
+    if (remaining === 0) return valueFormat === "pace" ? "At or ahead of target pace." : "At or ahead of target.";
+    return valueFormat === "pace" ? `${remaining} sec/mi to target pace` : `${remaining}${unit ? ` ${unit}` : ""} to goal`;
+  }
+  const remaining = Math.max(0, round1(target - current));
+  if (remaining === 0) return "At or ahead of target.";
+  return `${formatMetricValue({ value: remaining, unit, valueFormat: "" })} to goal`;
+};
+
+const computeProgressRatio = ({
+  baselineValue = null,
+  currentValue = null,
+  targetValue = null,
+  direction = "higher",
+} = {}) => {
+  const baseline = Number(baselineValue);
+  const current = Number(currentValue);
+  const target = Number(targetValue);
+  if (!Number.isFinite(current) || !Number.isFinite(target)) return null;
+  if (!Number.isFinite(baseline) || baseline === target) {
+    if (direction === "lower") return current <= target ? 1 : 0;
+    return current >= target ? 1 : 0;
+  }
+  if (direction === "lower") {
+    if (baseline <= target) return current <= target ? 1 : 0;
+    return clamp01((baseline - current) / (baseline - target));
+  }
+  if (baseline >= target) return current >= target ? 1 : 0;
+  return clamp01((current - baseline) / (target - baseline));
+};
+
+const buildExactProgressAnchor = ({
+  goal = {},
+  metricLabel = "",
+  valueFormat = "",
+  unit = "",
+  direction = "higher",
+  baselineValue = null,
+  currentValue = null,
+  targetValue = null,
+  currentDate = "",
+  baselineDate = "",
+  status = GOAL_PROGRESS_STATUSES.building,
+  emptyStateLine = "First anchor still needs to be logged.",
+} = {}) => ({
+  kind: "exact_metric",
+  summary: sanitizeText(goal?.summary || "Goal", 120),
+  metricLabel: sanitizeText(metricLabel || goal?.primaryMetric?.label || "Primary metric", 80),
+  status,
+  valueFormat: sanitizeText(valueFormat || "", 24).toLowerCase(),
+  unit: sanitizeText(unit || "", 24),
+  direction: sanitizeText(direction || "higher", 12).toLowerCase() || "higher",
+  baselineValue: toFiniteNumber(baselineValue, null),
+  currentValue: toFiniteNumber(currentValue, null),
+  targetValue: toFiniteNumber(targetValue, null),
+  baselineDate: sanitizeText(baselineDate || "", 24),
+  currentDate: sanitizeText(currentDate || "", 24),
+  baselineLabel: Number.isFinite(Number(baselineValue))
+    ? `${formatMetricValue({ value: baselineValue, valueFormat, unit })} start`
+    : "Start anchor pending",
+  currentLabel: Number.isFinite(Number(currentValue))
+    ? `${formatMetricValue({ value: currentValue, valueFormat, unit })} current`
+    : "Current anchor pending",
+  targetLabel: Number.isFinite(Number(targetValue))
+    ? `${formatMetricValue({ value: targetValue, valueFormat, unit })} target`
+    : "Target pending",
+  distanceLabel: formatGoalDistanceLabel({ currentValue, targetValue, unit, direction, valueFormat }),
+  progressRatio: computeProgressRatio({ baselineValue, currentValue, targetValue, direction }),
+  emptyStateLine: sanitizeText(emptyStateLine, 140),
+});
+
+const buildStatusProgressAnchor = ({
+  goal = {},
+  trackingMode = GOAL_PROGRESS_TRACKING_MODES.proxy,
+  status = GOAL_PROGRESS_STATUSES.building,
+  statusSummary = "",
+  honestyNote = "",
+  nextReviewFocus = "",
+} = {}) => ({
+  kind: "status",
+  summary: sanitizeText(goal?.summary || "Goal", 120),
+  metricLabel: trackingMode === GOAL_PROGRESS_TRACKING_MODES.exploratory ? "Review anchor" : "Proxy tracking",
+  status,
+  headline: sanitizeText(
+    status === GOAL_PROGRESS_STATUSES.reviewBased
+      ? "Building through proxies"
+      : status === GOAL_PROGRESS_STATUSES.needsData
+      ? "Needs a fresh check-in"
+      : "Building from real signals",
+    80
+  ),
+  detailLine: sanitizeText(statusSummary || honestyNote || "This goal is better tracked through review anchors than a fake exact percentage.", 180),
+  noteLine: sanitizeText(nextReviewFocus || honestyNote || "", 180),
 });
 
 const getTargetPaceSeconds = (primaryMetric = null) => {
@@ -505,17 +651,29 @@ const getLiftKeyFromMetric = (metricKey = "") => {
 
 const buildRunTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
   const runSessions = (dataIndex?.sessionRecords || []).filter((record) => record?.sessionFamily === "run");
+  const orderedRunSessions = [...runSessions].sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
   const recentRunSessions = runSessions.filter((record) => isWithinAgeWindow({ dateKey: record?.date || "", now, minDays: 0, maxDays: 21 }));
   const priorRunSessions = runSessions.filter((record) => isWithinAgeWindow({ dateKey: record?.date || "", now, minDays: 22, maxDays: 42 }));
-  const recentManualBenchmarks = getManualRunBenchmarkSeries({ manualProgressInputs })
+  const manualBenchmarks = getManualRunBenchmarkSeries({ manualProgressInputs });
+  const recentManualBenchmarks = manualBenchmarks
     .filter((entry) => isWithinAgeWindow({ dateKey: entry?.date || "", now, minDays: 0, maxDays: 21 }));
   const latestManualBenchmark = recentManualBenchmarks[recentManualBenchmarks.length - 1] || null;
+  const orderedManualBenchmarks = [...manualBenchmarks].sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
   const recentPaces = recentRunSessions.map((record) => Number(record?.metrics?.paceSeconds || 0)).filter((value) => Number.isFinite(value) && value > 0);
   const benchmarkPaces = recentManualBenchmarks.map((entry) => Number(entry?.paceSeconds || 0)).filter((value) => Number.isFinite(value) && value > 0);
   const recentAveragePace = average(recentPaces.slice(-5));
   const benchmarkAveragePace = average(benchmarkPaces.slice(-5));
   const effectiveRecentPace = recentAveragePace ?? benchmarkAveragePace;
   const targetPaceSeconds = getTargetPaceSeconds(goal?.primaryMetric);
+  const firstManualBenchmarkWithPace = orderedManualBenchmarks.find((entry) => Number.isFinite(entry?.paceSeconds) && entry.paceSeconds > 0) || null;
+  const firstRunSessionWithPace = orderedRunSessions.find((record) => Number.isFinite(record?.metrics?.paceSeconds) && record.metrics.paceSeconds > 0) || null;
+  const baselinePace = Number.isFinite(firstManualBenchmarkWithPace?.paceSeconds)
+    ? firstManualBenchmarkWithPace.paceSeconds
+    : Number.isFinite(firstRunSessionWithPace?.metrics?.paceSeconds)
+    ? firstRunSessionWithPace.metrics.paceSeconds
+    : null;
+  const currentPaceDate = latestManualBenchmark?.date || recentRunSessions.slice().sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || ""))).slice(-1)[0]?.date || "";
+  const baselinePaceDate = firstManualBenchmarkWithPace?.date || firstRunSessionWithPace?.date || "";
   const recentVolume = buildTrainingWindow({
     logs: dataIndex?.logs,
     dailyCheckins: dataIndex?.dailyCheckins,
@@ -566,6 +724,16 @@ const buildRunTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs 
       ? `${Math.abs(Math.round(effectiveRecentPace - targetPaceSeconds))} sec/mi ${effectiveRecentPace > targetPaceSeconds ? "slower" : effectiveRecentPace < targetPaceSeconds ? "faster" : "from"} than target`
       : "",
     why: "Event goals move first through repeatable training pace, not just race-day guesses.",
+    metricMeta: {
+      valueFormat: "pace",
+      unit: "sec/mi",
+      direction: "lower",
+      currentValue: effectiveRecentPace,
+      baselineValue: baselinePace,
+      targetValue: targetPaceSeconds,
+      currentDate: currentPaceDate,
+      baselineDate: baselinePaceDate,
+    },
   });
 
   const volumeItem = createTrackedItem({
@@ -603,8 +771,31 @@ const buildRunTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs 
       : "",
     why: "Long-run depth and quality-session repetition show whether race readiness is actually building.",
   });
+  const supportItem = buildGoalSupportContributionItem({
+    goal,
+    exerciseRecords: dataIndex?.exerciseRecords || [],
+    now,
+  });
 
-  return [paceItem, volumeItem, progressionItem];
+  return {
+    trackedItems: [paceItem, volumeItem, progressionItem, ...(supportItem ? [supportItem] : [])],
+    progressAnchor: targetPaceSeconds
+      ? buildExactProgressAnchor({
+          goal,
+          metricLabel: goal?.primaryMetric?.label || "Goal pace",
+          valueFormat: "pace",
+          unit: "sec/mi",
+          direction: "lower",
+          baselineValue: baselinePace,
+          currentValue: effectiveRecentPace,
+          targetValue: targetPaceSeconds,
+          currentDate: currentPaceDate,
+          baselineDate: baselinePaceDate,
+          status: paceItem.status,
+          emptyStateLine: "First paced run or benchmark still needs to be logged.",
+        })
+      : null,
+  };
 };
 
 const formatSwimBenchmarkLabel = (benchmark = null) => {
@@ -671,6 +862,15 @@ const buildSwimTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs
       ? `${Math.abs(improvementSeconds)} sec slower than your first matched benchmark`
       : "No change from the first matched benchmark yet",
     why: "Swim speed needs a repeatable benchmark, not a vague promise to swim harder.",
+    metricMeta: {
+      valueFormat: "duration",
+      unit: "sec",
+      direction: "lower",
+      currentValue: latestComparable?.durationSeconds,
+      baselineValue: firstComparable?.durationSeconds,
+      currentDate: latestComparable?.date || latestBenchmark?.date || "",
+      baselineDate: firstComparable?.date || "",
+    },
   });
 
   const realityItem = createTrackedItem({
@@ -694,8 +894,16 @@ const buildSwimTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs
     dataIndex,
     now,
   });
+  const supportItem = buildGoalSupportContributionItem({
+    goal,
+    exerciseRecords: dataIndex?.exerciseRecords || [],
+    now,
+  });
 
-  return [benchmarkItem, realityItem, consistencyItem];
+  return {
+    trackedItems: [benchmarkItem, realityItem, consistencyItem, ...(supportItem ? [supportItem] : [])],
+    progressAnchor: null,
+  };
 };
 
 const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
@@ -740,6 +948,16 @@ const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
       ? `${formatSignedDelta(latestWeight - firstWeight, 0, "lb")} vs first logged exposure`
       : "",
     why: "The latest working sets show whether the goal lift is actually moving under current training fatigue.",
+    metricMeta: {
+      valueFormat: "load",
+      unit: "lb",
+      direction: "higher",
+      currentValue: latestWeight,
+      baselineValue: firstWeight,
+      targetValue: targetWeight,
+      currentDate: latestTargetedRecord?.date || "",
+      baselineDate: firstTargetedRecord?.date || "",
+    },
   });
 
   const recordItem = createTrackedItem({
@@ -755,6 +973,21 @@ const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
       ? `${formatSignedDelta(bestWeight - firstWeight, 0, "lb")} from first logged exposure`
       : "",
     why: "A strength goal needs a hard anchor in real logged performance, not only planned percentages.",
+    metricMeta: {
+      valueFormat: "load",
+      unit: "lb",
+      direction: "higher",
+      currentValue: bestWeight,
+      baselineValue: firstWeight,
+      targetValue: targetWeight,
+      currentDate: bestTargetedRecord?.date || latestTargetedRecord?.date || "",
+      baselineDate: firstTargetedRecord?.date || "",
+    },
+  });
+  const supportItem = buildGoalSupportContributionItem({
+    goal,
+    exerciseRecords,
+    now,
   });
 
   if (Number.isFinite(targetWeight) && targetWeight > 0) {
@@ -779,8 +1012,35 @@ const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
         ? `Roughly ${Math.max(1, Math.ceil(remaining / incrementStep))} more ${incrementStep} lb jumps at current progression`
         : "Hold the load for repeatable quality work",
       why: "Projected gap-to-target keeps the strength goal honest without creating a fake certainty date.",
+      metricMeta: {
+        valueFormat: "load",
+        unit: "lb",
+        direction: "higher",
+        currentValue: bestWeight ?? latestWeight,
+        baselineValue: firstWeight,
+        targetValue: targetWeight,
+        distanceValue: remaining,
+        currentDate: bestTargetedRecord?.date || latestTargetedRecord?.date || "",
+        baselineDate: firstTargetedRecord?.date || "",
+      },
     });
-    return [topSetItem, recordItem, projectedItem];
+    return {
+      trackedItems: [topSetItem, recordItem, ...(supportItem ? [supportItem] : []), projectedItem],
+      progressAnchor: buildExactProgressAnchor({
+        goal,
+        metricLabel: goal?.primaryMetric?.label || "Strength goal",
+        valueFormat: "load",
+        unit: "lb",
+        direction: "higher",
+        baselineValue: firstWeight,
+        currentValue: bestWeight ?? latestWeight,
+        targetValue: targetWeight,
+        currentDate: bestTargetedRecord?.date || latestTargetedRecord?.date || "",
+        baselineDate: firstTargetedRecord?.date || "",
+        status: projectedItem.status,
+        emptyStateLine: `First ${targetWeight} lb exposure still needs to be logged.`,
+      }),
+    };
   }
 
   const consistencyItem = createTrackedItem({
@@ -795,7 +1055,10 @@ const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
     why: "Maintenance and non-deadline strength goals still need repeatable exposures to stay real.",
   });
 
-  return [topSetItem, recordItem, consistencyItem];
+  return {
+    trackedItems: [topSetItem, recordItem, ...(supportItem ? [supportItem] : []), consistencyItem],
+    progressAnchor: null,
+  };
 };
 
 const buildHybridDomainWindow = ({
@@ -930,7 +1193,16 @@ const buildHybridTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInpu
   if (proxyMetricKeys.has("waist_circumference")) {
     items.push(buildWaistTrendItem({ now, manualProgressInputs }));
   }
-  return items;
+  const supportItem = buildGoalSupportContributionItem({
+    goal,
+    exerciseRecords: dataIndex?.exerciseRecords || [],
+    now,
+  });
+  if (supportItem) items.push(supportItem);
+  return {
+    trackedItems: items,
+    progressAnchor: null,
+  };
 };
 
 const buildBodyweightTrendItem = ({ goal = {}, dataIndex = {}, now = new Date() } = {}) => {
@@ -938,6 +1210,8 @@ const buildBodyweightTrendItem = ({ goal = {}, dataIndex = {}, now = new Date() 
   const latest = recentBodyweights[recentBodyweights.length - 1] || null;
   const first = recentBodyweights[0] || null;
   const delta = latest && first ? round1(latest.value - first.value) : null;
+  const targetValue = parsePrimaryMetricTargetNumber(goal?.primaryMetric);
+  const direction = Number.isFinite(targetValue) && Number.isFinite(first?.value) && targetValue > first.value ? "higher" : "lower";
   return createTrackedItem({
     key: "bodyweight_trend",
     label: "Bodyweight trend",
@@ -947,6 +1221,16 @@ const buildBodyweightTrendItem = ({ goal = {}, dataIndex = {}, now = new Date() 
     currentDisplay: latest ? `${formatNumber(latest.value, 1)} lb latest` : "No bodyweight entries logged yet",
     trendDisplay: delta !== null ? `${formatSignedDelta(delta, 1, "lb")} over the last 21 days` : "",
     why: "Body-composition goals stay honest through repeatable trend data instead of day-to-day scale noise.",
+    metricMeta: {
+      valueFormat: "load",
+      unit: "lb",
+      direction,
+      currentValue: latest?.value,
+      baselineValue: first?.value,
+      targetValue,
+      currentDate: latest?.date || "",
+      baselineDate: first?.date || "",
+    },
   });
 };
 
@@ -1159,7 +1443,28 @@ const buildBodyCompTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
     dataIndex,
     now,
   });
-  return [bodyweightItem, waistItem, consistencyItem];
+  const primaryMetricKey = sanitizeText(goal?.primaryMetric?.key || "", 80).toLowerCase();
+  const primaryAnchorItem = /waist/.test(primaryMetricKey) ? waistItem : bodyweightItem;
+  const primaryMeta = primaryAnchorItem?.metricMeta || null;
+  return {
+    trackedItems: [bodyweightItem, waistItem, consistencyItem],
+    progressAnchor: Number.isFinite(primaryMeta?.targetValue)
+      ? buildExactProgressAnchor({
+          goal,
+          metricLabel: goal?.primaryMetric?.label || primaryAnchorItem?.label || "Body-composition goal",
+          valueFormat: primaryMeta?.valueFormat || "load",
+          unit: primaryMeta?.unit || sanitizeText(goal?.primaryMetric?.unit || "", 24),
+          direction: primaryMeta?.direction || "lower",
+          baselineValue: primaryMeta?.baselineValue,
+          currentValue: primaryMeta?.currentValue,
+          targetValue: primaryMeta?.targetValue,
+          currentDate: primaryMeta?.currentDate || "",
+          baselineDate: primaryMeta?.baselineDate || "",
+          status: primaryAnchorItem?.status || GOAL_PROGRESS_STATUSES.building,
+          emptyStateLine: "First body-composition anchor still needs to be logged.",
+        })
+      : null,
+  };
 };
 
 const buildAppearanceTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
@@ -1190,21 +1495,27 @@ const buildAppearanceTrackedItems = ({ goal = {}, dataIndex = {}, manualProgress
     trendDisplay: missing.length ? `Still missing: ${missing.slice(0, 2).join(", ")}` : "All review anchors are current",
     why: "Appearance goals stay honest through repeatable review anchors and cadence, not a fake exact percentage.",
   });
-  return [checklistItem, waistItem, bodyweightItem];
+  return {
+    trackedItems: [checklistItem, waistItem, bodyweightItem],
+    progressAnchor: null,
+  };
 };
 
-const buildExploratoryTrackedItems = ({ dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => [
-  buildConsistencyItem({
-    key: "weekly_training_frequency",
-    label: "30-day consistency",
-    why: "The first honest win for exploratory goals is showing up consistently enough to trust the baseline again.",
-    dataIndex,
-    now,
-  }),
-  buildReadinessItem({ dataIndex, now }),
-  buildBaselineImprovementItem({ dataIndex, now }),
-  buildBenchmarkAnchorItem({ dataIndex, manualProgressInputs, now }),
-];
+const buildExploratoryTrackedItems = ({ dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => ({
+  trackedItems: [
+    buildConsistencyItem({
+      key: "weekly_training_frequency",
+      label: "30-day consistency",
+      why: "The first honest win for exploratory goals is showing up consistently enough to trust the baseline again.",
+      dataIndex,
+      now,
+    }),
+    buildReadinessItem({ dataIndex, now }),
+    buildBaselineImprovementItem({ dataIndex, now }),
+    buildBenchmarkAnchorItem({ dataIndex, manualProgressInputs, now }),
+  ],
+  progressAnchor: null,
+});
 
 const buildTrackedItemsForGoal = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
   if (goal?.goalFamily === "hybrid") {
@@ -1279,7 +1590,8 @@ const buildHonestyNote = ({ goal = {}, trackingMode = GOAL_PROGRESS_TRACKING_MOD
 
 const buildGoalProgressCard = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
   const trackingMode = resolveTrackingMode(goal);
-  const trackedItems = buildTrackedItemsForGoal({ goal, dataIndex, manualProgressInputs, now });
+  const trackingModel = buildTrackedItemsForGoal({ goal, dataIndex, manualProgressInputs, now });
+  const trackedItems = Array.isArray(trackingModel?.trackedItems) ? trackingModel.trackedItems : [];
   const status = goal?.goalFamily === "appearance"
     ? GOAL_PROGRESS_STATUSES.reviewBased
     : trackingMode === GOAL_PROGRESS_TRACKING_MODES.exploratory
@@ -1294,6 +1606,13 @@ const buildGoalProgressCard = ({ goal = {}, dataIndex = {}, manualProgressInputs
     .filter((item) => item?.status === GOAL_PROGRESS_STATUSES.needsData)
     .map((item) => item?.label)
     .filter(Boolean);
+  const statusSummary = buildStatusSummary({ goal, trackingMode });
+  const honestyNote = buildHonestyNote({ goal, trackingMode, trackedItems });
+  const nextReviewFocus = missingDataLabels.length
+    ? `Add ${missingDataLabels.slice(0, 2).join(" and ")} before the next ${goal?.reviewCadence || "weekly"} review.`
+    : goal?.first30DaySuccessDefinition
+    ? goal.first30DaySuccessDefinition
+    : `Review the current goal stack on the next ${goal?.reviewCadence || "weekly"} cadence.`;
 
   return {
     goalId: goal?.id || "",
@@ -1309,17 +1628,21 @@ const buildGoalProgressCard = ({ goal = {}, dataIndex = {}, manualProgressInputs
     proxyMetrics: [...(goal?.proxyMetrics || [])],
     first30DaySuccessDefinition: goal?.first30DaySuccessDefinition || "",
     status,
-    statusSummary: buildStatusSummary({ goal, trackingMode }),
-    honestyNote: buildHonestyNote({ goal, trackingMode, trackedItems }),
+    statusSummary,
+    honestyNote,
     whatIsTracked: trackedItems.map((item) => item?.label).filter(Boolean),
     trackedItems,
+    progressAnchor: trackingModel?.progressAnchor || buildStatusProgressAnchor({
+      goal,
+      trackingMode,
+      status,
+      statusSummary,
+      honestyNote,
+      nextReviewFocus,
+    }),
     unresolvedGaps: [...(goal?.unresolvedGaps || [])],
     tradeoffs: [...(goal?.tradeoffs || [])],
-    nextReviewFocus: missingDataLabels.length
-      ? `Add ${missingDataLabels.slice(0, 2).join(" and ")} before the next ${goal?.reviewCadence || "weekly"} review.`
-      : goal?.first30DaySuccessDefinition
-      ? goal.first30DaySuccessDefinition
-      : `Review the current goal stack on the next ${goal?.reviewCadence || "weekly"} cadence.`,
+    nextReviewFocus,
   };
 };
 

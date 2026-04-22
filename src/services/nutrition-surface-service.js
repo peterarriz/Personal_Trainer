@@ -233,6 +233,7 @@ export const buildNutritionSurfaceModel = ({
   const hardDay = isHardNutritionDayType(normalizedDayType);
   const mealSlots = Array.isArray(realWorldNutrition?.mealSlots) ? realWorldNutrition.mealSlots : [];
   const performanceGuidance = realWorldNutrition?.performanceGuidance || null;
+  const executionPlan = realWorldNutrition?.executionPlan || null;
   const targets = nutritionLayer?.targets || {};
 
   const heroLine = laneKey === NUTRITION_SURFACE_LANES.endurance && hardDay
@@ -248,6 +249,7 @@ export const buildNutritionSurfaceModel = ({
     heroLine: compactLine(heroLine, 112),
     targetBiasLine: buildTargetsLine({ laneKey, targets }),
     strategySummary: compactLine(laneCopy.strategySummary, 118),
+    executionPlan,
     strategyRows: buildStrategyRows({
       laneKey,
       mealSlots,

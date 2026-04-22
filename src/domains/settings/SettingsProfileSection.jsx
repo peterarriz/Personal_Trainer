@@ -38,9 +38,9 @@ export function SettingsProfileSection({
             <input value={accountProfileDraft.timezone || ""} onChange={(e) => handleDraftPatch({ timezone: e.target.value })} placeholder="America/Chicago" />
           </div>
         </SettingsFieldRow>
-        <SettingsFieldRow label="Birth year">
+        <SettingsFieldRow label="Age">
           <div style={{ maxWidth:220 }}>
-            <input type="number" value={accountProfileDraft.birthYear || ""} onChange={(e) => handleDraftPatch({ birthYear: e.target.value })} placeholder="1990" />
+            <input type="number" min="13" max="100" value={accountProfileDraft.age || ""} onChange={(e) => handleDraftPatch({ age: e.target.value })} placeholder="32" />
           </div>
         </SettingsFieldRow>
         <SettingsFieldRow label="Weight unit">

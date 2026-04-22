@@ -720,6 +720,32 @@ export const buildIntakeStarterMetricQuestions = ({
   return buildQuestionsForIntent(selection);
 };
 
+export const buildIntakeGoalCaptureModel = ({
+  goalTypeId = "",
+  selection = null,
+} = {}) => {
+  const questions = buildIntakeStarterMetricQuestions({ goalTypeId, selection });
+  const entryMode = sanitizeText(
+    selection?.entryMode || (selection?.templateId ? "preset" : "custom"),
+    20
+  ).toLowerCase() || "preset";
+  const isCustom = entryMode === "custom";
+
+  return {
+    entryMode,
+    isCustom,
+    allowsFuzzyMetrics: true,
+    supportsMetricEditing: questions.length > 0,
+    commitLabel: isCustom ? "Save custom goal" : "Save goal",
+    helper: isCustom
+      ? "Use your own words when the mapped goals miss. Exact metrics can wait."
+      : questions.length > 0
+      ? "Add exact targets if you know them. Leave the rest blank and keep moving."
+      : "This goal is specific enough to save as-is.",
+    questions,
+  };
+};
+
 export const buildIntakeStarterFieldSchema = ({
   goalTypeId = "",
   selection = null,

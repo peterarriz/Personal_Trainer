@@ -33,6 +33,13 @@ test("surface clarity contract defines the guarded launch surfaces", () => {
 test("surface clarity contract keeps the key first-load guardrails explicit", () => {
   assert.deepEqual(SURFACE_CLARITY_CONTRACT.today.collapsedDisclosureTestIds, []);
   assert.deepEqual(SURFACE_CLARITY_CONTRACT.today.actionLayerTestIds, ["today-primary-cta"]);
+  assert.deepEqual(SURFACE_CLARITY_CONTRACT.today.visibleCountBudgets, [
+    { testId: "planned-session-plan", maxVisible: 0, minVisible: 0 },
+    { testId: "today-session-plan", maxVisible: 1, minVisible: 1 },
+    { testId: "today-adjust-section", maxVisible: 1, minVisible: 0 },
+  ]);
+  assert.deepEqual(SURFACE_CLARITY_CONTRACT.log.actionLayerTestIds, ["log-save-quick"]);
+  assert.equal(SURFACE_CLARITY_CONTRACT.log.reasonTestId, "log-trust-row");
   assert.deepEqual(SURFACE_CLARITY_CONTRACT.program.visibleCountBudgets, [
     { testId: "program-current-day-highlight", maxVisible: 0, minVisible: 0 },
     { testId: "planned-session-plan", maxVisible: 0, minVisible: 0 },

@@ -13,9 +13,9 @@ const {
 
 const normalizeSurfaceText = (value = "") => String(value || "").replace(/\s+/g, " ").trim();
 
-async function bootSignedInSurface(page) {
+async function bootSignedInSurface(page, payloadOverride = null) {
   const session = makeSession();
-  const payload = makeSignedInPayload();
+  const payload = payloadOverride || makeSignedInPayload();
   await mockSupabaseRuntime(page, { session, payload });
   await bootAppWithSupabaseSeeds(page, { session, payload });
   await expect(page.getByTestId("app-root")).toHaveAttribute("data-onboarding-complete", "true");
@@ -43,7 +43,8 @@ const readVisibleViewportTextMetrics = async (locator) => locator.evaluate((node
 
   const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
     acceptNode(textNode) {
-      if (!String(textNode?.textContent || "").trim()) return NodeFilter.FILTER_REJECT;
+      const textContent = textNode && typeof textNode.textContent === "string" ? textNode.textContent : "";
+      if (!String(textContent || "").trim()) return NodeFilter.FILTER_REJECT;
       const parent = textNode.parentElement;
       return isVisible(parent) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     },
@@ -141,15 +142,13 @@ test.describe("surface clarity guard", () => {
     }
   });
 
-  test("today, program, log, and coach keep the same current-day label and reason", async ({ page }) => {
-    await bootSignedInSurface(page);
-
-    await page.getByTestId("app-tab-settings").click({ force: true });
-    await page.getByTestId("settings-surface-preferences").click();
-    await page.getByRole("button", { name: /Aggressive/i }).first().click();
+  test("today, plan, and coach keep the same current-day label and reason while Log stays execution-focused", async ({ page }) => {
+    const payload = makeSignedInPayload();
+    payload.personalization.settings.trainingPreferences.intensityPreference = "Aggressive";
+    await bootSignedInSurface(page, payload);
 
     const surfaceSnapshots = {};
-    for (const surfaceId of ["today", "program", "log", "coach"]) {
+    for (const surfaceId of ["today", "program", "coach"]) {
       const contract = SURFACE_CLARITY_CONTRACT[surfaceId];
       const root = await navigateToSurface(page, contract);
       if (contract.reasonDisclosureTestId) {
@@ -165,7 +164,7 @@ test.describe("surface clarity guard", () => {
     expect(baseline.label.length).toBeGreaterThan(3);
     expect(baseline.reason).toMatch(/aggressive preference/i);
 
-    for (const surfaceId of ["program", "log", "coach"]) {
+    for (const surfaceId of ["program", "coach"]) {
       expect(surfaceSnapshots[surfaceId].label, `${surfaceId} drifted from Today's current-day label`).toBe(baseline.label);
       expect(surfaceSnapshots[surfaceId].reason, `${surfaceId} drifted away from Today's current-day reason`).toMatch(/aggressive preference/i);
       expect(
@@ -173,5 +172,16 @@ test.describe("surface clarity guard", () => {
         `${surfaceId} no longer carries the same core reason as Today`
       ).toBe(true);
     }
+
+    const logContract = SURFACE_CLARITY_CONTRACT.log;
+    const logRoot = await navigateToSurface(page, logContract);
+    const logSnapshot = {
+      label: normalizeSurfaceText(await logRoot.getByTestId(logContract.labelTestId).innerText()),
+      reason: normalizeSurfaceText(await logRoot.getByTestId(logContract.reasonTestId).innerText()),
+    };
+
+    expect(logSnapshot.label, "log drifted from Today's current-day label").toBe(baseline.label);
+    expect(logSnapshot.reason).toMatch(/prescribed loaded/i);
+    expect(logSnapshot.reason).toMatch(/used later/i);
   });
 });

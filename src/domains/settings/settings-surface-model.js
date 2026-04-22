@@ -27,9 +27,12 @@ const FOCUS_TO_SURFACE = {
 
 export { SETTINGS_SURFACES };
 
+export const DELETE_DIAGNOSTICS_STALE_MS = 5 * 60 * 1000;
+
 export const createEmptySettingsDeleteDiagnosticsState = () => ({
   loading: false,
   checked: false,
+  checkedAt: 0,
   configured: null,
   message: "",
   detail: "",
@@ -37,6 +40,17 @@ export const createEmptySettingsDeleteDiagnosticsState = () => ({
   missing: [],
   required: [],
 });
+
+export const shouldReuseDeleteDiagnosticsResult = ({
+  diagnostics = null,
+  now = Date.now(),
+  staleMs = DELETE_DIAGNOSTICS_STALE_MS,
+} = {}) => {
+  if (!diagnostics?.checked) return false;
+  const checkedAt = Number(diagnostics?.checkedAt || 0);
+  if (!Number.isFinite(checkedAt) || checkedAt <= 0) return false;
+  return (now - checkedAt) < Math.max(1000, Number(staleMs || DELETE_DIAGNOSTICS_STALE_MS));
+};
 
 export const resolveSettingsSurfaceFromFocus = (focus = "") => {
   const normalizedFocus = String(focus || "").trim().toLowerCase();

@@ -204,6 +204,8 @@ export const SurfaceCard = React.forwardRef(function SurfaceCard({
   const variantClassName =
     variant === "action"
       ? "card-action surface-card-action"
+      : variant === "elevated"
+      ? "card-elevated surface-card-elevated"
       : variant === "subtle"
       ? "card-subtle surface-card-subtle"
       : variant === "strong"

@@ -62,7 +62,7 @@ test.describe("synthetic athlete browser probe", () => {
     });
 
     await expect.poll(() => getCurrentFieldId(page), { timeout: 20_000 }).toMatch(/target_timeline|current_strength_baseline/);
-    await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(2);
+    await expect(page.getByTestId("intake-summary-section-what-you-said")).toContainText(/bench 225|chest|shoulders/i);
     await expect(page.getByTestId("intake-summary-section-optimize-first")).toContainText(/bench|chest|shoulders/i);
 
     await completeAnchors(page, {

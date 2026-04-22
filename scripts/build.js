@@ -15,6 +15,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { execFileSync } = require("node:child_process");
 const { transform } = require("sucrase");
+const { minify } = require("terser");
 
 const ROOT = path.join(__dirname, "..");
 const SRC = path.join(ROOT, "src", "trainer-dashboard.jsx");
@@ -58,12 +59,20 @@ const SUPABASE_URL_HOST = (() => {
   }
 })();
 
-const LOCAL_DEPENDENCY_RE = /(?:import|export)\s+[\s\S]*?\s+from\s+['"](.+?)['"];?|require\(\s*['"](.+?)['"]\s*\)/gm;
+const LOCAL_IMPORT_FROM_RE = /(?:import|export)\s+[\s\S]*?\s+from\s+['"](.+?)['"];?/gm;
+const LOCAL_IMPORT_SIDE_EFFECT_RE = /import\s+['"](.+?)['"];?/gm;
 const STATIC_COPY_ENTRIES = [
   "manifest.json",
   "fonts",
   "icons",
   "splash",
+];
+const LAZY_CHUNK_SPECS = [
+  {
+    name: "secondary.tabs",
+    baseName: "secondary.tabs",
+    entryFile: path.join(ROOT, "src", "domains", "secondary-tabs", "lazy-secondary-tabs-entry.js"),
+  },
 ];
 const BUILD_MODES = Object.freeze({
   split: "split",
@@ -80,6 +89,27 @@ const formatKb = (value) => `${(value / 1024).toFixed(1)} KB`;
 const hashContent = (value) => crypto.createHash("sha256").update(value).digest("hex").slice(0, 10);
 const escapeScriptTag = (value) => String(value || "").replace(/<\/script>/gi, "<\\/script>");
 const toModuleId = (filePath) => path.relative(ROOT, filePath).replace(/\\/g, "/");
+
+const minifyScript = async (source = "") => {
+  const result = await minify(source, {
+    compress: {
+      passes: 2,
+      ecma: 2020,
+    },
+    mangle: {
+      toplevel: true,
+    },
+    format: {
+      comments: false,
+    },
+    ecma: 2020,
+    toplevel: true,
+  });
+  if (!result?.code) {
+    throw new Error("Terser did not return minified output.");
+  }
+  return result.code;
+};
 
 const ensureCleanDist = () => {
   fs.rmSync(DIST, {
@@ -115,8 +145,11 @@ const resolveLocalModule = (fromFile, request) => {
 };
 
 const getLocalImportRequests = (source = "") => (
-  Array.from(source.matchAll(LOCAL_DEPENDENCY_RE))
-    .map((match) => match[1] || match[2])
+  [
+    ...Array.from(source.matchAll(LOCAL_IMPORT_FROM_RE)),
+    ...Array.from(source.matchAll(LOCAL_IMPORT_SIDE_EFFECT_RE)),
+  ]
+    .map((match) => match[1])
     .filter((request) => request && request.startsWith("."))
 );
 
@@ -158,7 +191,7 @@ const buildModuleEntries = (entryFile) => {
   });
 };
 
-const buildAppRuntime = ({ moduleEntries, entryId, buildMode }) => {
+const buildAppRuntime = ({ moduleEntries, entryId, buildMode, lazyChunkManifest = {} }) => {
   const bundleModules = moduleEntries.map(({ id, code }) => (
     `  ${JSON.stringify(id)}: function(require, module, exports) {\n${code}\n  }`
   )).join(",\n");
@@ -182,11 +215,19 @@ const buildAppRuntime = ({ moduleEntries, entryId, buildMode }) => {
     '    "react-dom": ReactDOM,',
     "  };",
     "",
-    "  const __modules = {",
+    "  const __eagerModules = {",
     bundleModules,
     "  };",
     "",
-    "  const __cache = {};",
+    `  const __lazyChunkManifest = Object.assign(window.__FORMA_LAZY_CHUNK_MANIFEST__ || {}, ${JSON.stringify(lazyChunkManifest)});`,
+    "  window.__FORMA_LAZY_CHUNK_MANIFEST__ = __lazyChunkManifest;",
+    "  const __modules = window.__FORMA_MODULES__ = window.__FORMA_MODULES__ || {};",
+    "  Object.keys(__eagerModules).forEach(function (id) {",
+    "    __modules[id] = __eagerModules[id];",
+    "  });",
+    "  const __cache = window.__FORMA_MODULE_CACHE__ = window.__FORMA_MODULE_CACHE__ || {};",
+    "  const __loadedChunks = window.__FORMA_LOADED_CHUNKS__ = window.__FORMA_LOADED_CHUNKS__ || {};",
+    "  const __pendingChunks = window.__FORMA_PENDING_CHUNKS__ = window.__FORMA_PENDING_CHUNKS__ || {};",
     "",
     "  const __resolveModuleId = (fromId, request) => {",
     "    if (__externals[request]) return request;",
@@ -213,6 +254,68 @@ const buildAppRuntime = ({ moduleEntries, entryId, buildMode }) => {
     "    return module.exports;",
     "  };",
     "",
+    "  window.__FORMA_REGISTER_CHUNK__ = window.__FORMA_REGISTER_CHUNK__ || function (chunkName, chunkModules) {",
+    "    Object.keys(chunkModules || {}).forEach(function (id) {",
+    "      if (!__modules[id]) __modules[id] = chunkModules[id];",
+    "    });",
+    "    __loadedChunks[chunkName] = true;",
+    "    if (__pendingChunks[chunkName]) {",
+    "      __pendingChunks[chunkName].resolve();",
+    "      delete __pendingChunks[chunkName];",
+    "    }",
+    "  };",
+    "",
+    "  window.__FORMA_LOAD_CHUNK__ = window.__FORMA_LOAD_CHUNK__ || function (chunkName) {",
+    "    if (!chunkName || __loadedChunks[chunkName]) return Promise.resolve();",
+    "    if (__pendingChunks[chunkName]) return __pendingChunks[chunkName].promise;",
+    "    const publicPath = __lazyChunkManifest[chunkName];",
+    "    if (!publicPath) {",
+    "      __loadedChunks[chunkName] = true;",
+    "      return Promise.resolve();",
+    "    }",
+    "    let resolvePromise = function () {};",
+    "    let rejectPromise = function () {};",
+    "    const promise = new Promise(function (resolve, reject) {",
+    "      resolvePromise = resolve;",
+    "      rejectPromise = reject;",
+    "    });",
+    "    __pendingChunks[chunkName] = {",
+    "      promise: promise,",
+    "      resolve: function () { resolvePromise(); },",
+    "      reject: function (error) { rejectPromise(error); },",
+    "    };",
+    "    const script = document.createElement('script');",
+    "    script.defer = true;",
+    "    script.src = publicPath;",
+    "    script.onload = function () {",
+    "      setTimeout(function () {",
+    "        if (__loadedChunks[chunkName]) return;",
+    "        if (__pendingChunks[chunkName]) {",
+    "          __pendingChunks[chunkName].reject(new Error('Lazy chunk did not register: ' + chunkName));",
+    "          delete __pendingChunks[chunkName];",
+    "        }",
+    "      }, 0);",
+    "    };",
+    "    script.onerror = function () {",
+    "      if (__pendingChunks[chunkName]) {",
+    "        __pendingChunks[chunkName].reject(new Error('Lazy chunk failed to load: ' + chunkName));",
+    "        delete __pendingChunks[chunkName];",
+    "      }",
+    "    };",
+    "    document.head.appendChild(script);",
+    "    return promise;",
+    "  };",
+    "",
+    "  window.__FORMA_LOAD_MODULE__ = window.__FORMA_LOAD_MODULE__ || function (input) {",
+    "    const chunkName = typeof input === 'string' ? '' : input?.chunkName || '';",
+    "    const moduleId = typeof input === 'string' ? input : input?.moduleId || '';",
+    "    if (!moduleId) return Promise.reject(new Error('Missing module id for lazy load.'));",
+    "    const ensureChunk = chunkName ? window.__FORMA_LOAD_CHUNK__(chunkName) : Promise.resolve();",
+    "    return ensureChunk.then(function () {",
+    "      return __requireModule(moduleId);",
+    "    });",
+    "  };",
+    "",
     "  try {",
     `    const TrainerDashboard = __requireModule(${JSON.stringify(entryId)}).default;`,
     "    const rootNode = document.getElementById('root');",
@@ -225,6 +328,23 @@ const buildAppRuntime = ({ moduleEntries, entryId, buildMode }) => {
     "      '<div style=\"margin-bottom:1rem;color:#e2e8f0\">BUILD ERROR - screenshot and send to Claude:</div>' +",
     "      e.toString() + '<br/><br/>' + (e.stack || '').substring(0, 1200) + '</div>';",
     "  }",
+    "}());",
+  ].join("\n");
+};
+
+const buildChunkRuntime = ({ moduleEntries, chunkName }) => {
+  const bundleModules = moduleEntries.map(({ id, code }) => (
+    `  ${JSON.stringify(id)}: function(require, module, exports) {\n${code}\n  }`
+  )).join(",\n");
+
+  return [
+    "(function () {",
+    "  if (!window.__FORMA_REGISTER_CHUNK__) {",
+    "    throw new Error('FORMA lazy chunk runtime is not ready.');",
+    "  }",
+    `  window.__FORMA_REGISTER_CHUNK__(${JSON.stringify(chunkName)}, {`,
+    bundleModules,
+    "  });",
     "}());",
   ].join("\n");
 };
@@ -306,7 +426,7 @@ const writeGeneratedServiceWorker = ({ buildVersion, precachePaths }) => {
 
 const getFileBytes = (filePath) => fs.statSync(filePath).size;
 
-const buildInlineOutput = ({ appRuntime, buildVersion }) => {
+const buildInlineOutput = ({ appRuntime, buildVersion, lazyAssets = [] }) => {
   const html = buildBaseHtml({
     buildMode: BUILD_MODES.inline,
     buildVersion,
@@ -328,7 +448,8 @@ const buildInlineOutput = ({ appRuntime, buildVersion }) => {
     "/splash/apple-splash-1179x2556.png",
     "/splash/apple-splash-1170x2532.png",
   ];
-  writeGeneratedServiceWorker({ buildVersion, precachePaths });
+  const lazyPrecachePaths = lazyAssets.map((asset) => asset.rootPublicPath);
+  writeGeneratedServiceWorker({ buildVersion, precachePaths: [...precachePaths, ...lazyPrecachePaths] });
 
   return {
     mode: BUILD_MODES.inline,
@@ -336,7 +457,7 @@ const buildInlineOutput = ({ appRuntime, buildVersion }) => {
     htmlBytes: Buffer.byteLength(html),
     appBytes: Buffer.byteLength(appRuntime),
     vendorBytes: Buffer.byteLength(REACT) + Buffer.byteLength(REACT_DOM) + Buffer.byteLength(SUPABASE_UMD),
-    assetFiles: [],
+    assetFiles: lazyAssets,
   };
 };
 
@@ -353,7 +474,7 @@ const writeHashedAsset = (baseName, content) => {
   };
 };
 
-const buildSplitOutput = ({ appRuntime, buildVersion }) => {
+const buildSplitOutput = ({ appRuntime, buildVersion, lazyAssets = [] }) => {
   const reactAsset = writeHashedAsset("react.vendor", REACT);
   const reactDomAsset = writeHashedAsset("react-dom.vendor", REACT_DOM);
   const supabaseAsset = writeHashedAsset("supabase.vendor", SUPABASE_UMD);
@@ -394,7 +515,8 @@ const buildSplitOutput = ({ appRuntime, buildVersion }) => {
     supabaseAsset.rootPublicPath,
     appAsset.rootPublicPath,
   ];
-  writeGeneratedServiceWorker({ buildVersion, precachePaths });
+  const lazyPrecachePaths = lazyAssets.map((asset) => asset.rootPublicPath);
+  writeGeneratedServiceWorker({ buildVersion, precachePaths: [...precachePaths, ...lazyPrecachePaths] });
 
   return {
     mode: BUILD_MODES.split,
@@ -402,7 +524,7 @@ const buildSplitOutput = ({ appRuntime, buildVersion }) => {
     htmlBytes: Buffer.byteLength(html),
     appBytes: appAsset.bytes,
     vendorBytes: reactAsset.bytes + reactDomAsset.bytes + supabaseAsset.bytes,
-    assetFiles: [reactAsset, reactDomAsset, supabaseAsset, appAsset],
+    assetFiles: [reactAsset, reactDomAsset, supabaseAsset, appAsset, ...lazyAssets],
   };
 };
 
@@ -410,70 +532,103 @@ const writeBuildMeta = (meta) => {
   fs.writeFileSync(BUILD_META_OUT, JSON.stringify(meta, null, 2));
 };
 
-console.log(`Building FORMA (${BUILD_MODE})...`);
-console.log(
-  `Client Supabase build config: url=${CLIENT_SUPABASE_URL_CONFIG.source || "missing"} ` +
-  `host=${SUPABASE_URL_HOST || "missing"} anon=${CLIENT_SUPABASE_ANON_KEY_CONFIG.source || "missing"}`
-);
-execFileSync(process.execPath, [path.join(__dirname, "check-repo-hygiene.cjs")], { stdio: "inherit" });
-
-ensureCleanDist();
-writeStaticAssets();
-
-const moduleEntries = buildModuleEntries(SRC);
-const entryId = toModuleId(SRC);
-const sourceFingerprint = hashContent([
-  REACT,
-  REACT_DOM,
-  SUPABASE_UMD,
-  ...moduleEntries.map((entry) => `${entry.id}:${entry.code}`),
-].join("\n"));
-const appRuntime = buildAppRuntime({
-  moduleEntries,
-  entryId,
-  buildMode: BUILD_MODE,
-});
-
-const summary = BUILD_MODE === BUILD_MODES.inline
-  ? buildInlineOutput({ appRuntime, buildVersion: sourceFingerprint })
-  : buildSplitOutput({ appRuntime, buildVersion: sourceFingerprint });
-
-const buildMeta = {
-  mode: summary.mode,
-  buildVersion: summary.buildVersion,
-  builtAt: new Date().toISOString(),
-  entryId,
-  htmlBytes: summary.htmlBytes,
-  appBytes: summary.appBytes,
-  vendorBytes: summary.vendorBytes,
-  totalDistBytes: getFileBytes(OUT)
-    + summary.assetFiles.reduce((sum, asset) => sum + asset.bytes, 0),
-  clientSupabaseConfig: {
-    urlSource: CLIENT_SUPABASE_URL_CONFIG.source || "",
-    anonKeySource: CLIENT_SUPABASE_ANON_KEY_CONFIG.source || "",
-    urlConfigured: Boolean(SUPABASE_URL),
-    anonKeyConfigured: Boolean(SUPABASE_ANON_KEY),
-    urlHost: SUPABASE_URL_HOST,
-  },
-  assets: summary.assetFiles.map((asset) => ({
-    fileName: asset.fileName,
-    publicPath: asset.publicPath,
-    bytes: asset.bytes,
-  })),
-};
-writeBuildMeta(buildMeta);
-
-if (summary.mode === BUILD_MODES.inline) {
+const runBuild = async () => {
+  console.log(`Building FORMA (${BUILD_MODE})...`);
   console.log(
-    `Built legacy inline dist/index.html - ${formatKb(summary.htmlBytes)} ` +
-    `(vendor ${formatKb(summary.vendorBytes)}, app ${formatKb(summary.appBytes)})`
+    `Client Supabase build config: url=${CLIENT_SUPABASE_URL_CONFIG.source || "missing"} ` +
+    `host=${SUPABASE_URL_HOST || "missing"} anon=${CLIENT_SUPABASE_ANON_KEY_CONFIG.source || "missing"}`
   );
-} else {
-  console.log(
-    `Built cacheable split dist/index.html - ${formatKb(summary.htmlBytes)} ` +
-    `(vendor ${formatKb(summary.vendorBytes)}, app ${formatKb(summary.appBytes)})`
-  );
-  for (const asset of summary.assetFiles) {
-    console.log(`  asset ${asset.fileName} - ${formatKb(asset.bytes)}`);
+  execFileSync(process.execPath, [path.join(__dirname, "check-repo-hygiene.cjs")], { stdio: "inherit" });
+
+  ensureCleanDist();
+  writeStaticAssets();
+
+  const lazyChunkAssets = [];
+  const lazyChunkManifest = {};
+  for (const spec of LAZY_CHUNK_SPECS) {
+    if (!fs.existsSync(spec.entryFile)) continue;
+    const chunkModuleEntries = buildModuleEntries(spec.entryFile);
+    const rawChunkRuntime = buildChunkRuntime({
+      moduleEntries: chunkModuleEntries,
+      chunkName: spec.name,
+    });
+    const chunkRuntime = await minifyScript(rawChunkRuntime);
+    const asset = writeHashedAsset(spec.baseName, chunkRuntime);
+    lazyChunkAssets.push({
+      ...asset,
+      chunkName: spec.name,
+    });
+    lazyChunkManifest[spec.name] = asset.publicPath;
   }
-}
+
+  const moduleEntries = buildModuleEntries(SRC);
+  const entryId = toModuleId(SRC);
+  const sourceFingerprint = hashContent([
+    REACT,
+    REACT_DOM,
+    SUPABASE_UMD,
+    ...lazyChunkAssets.map((asset) => `${asset.chunkName}:${asset.fileName}`),
+    ...moduleEntries.map((entry) => `${entry.id}:${entry.code}`),
+  ].join("\n"));
+  const rawAppRuntime = buildAppRuntime({
+    moduleEntries,
+    entryId,
+    buildMode: BUILD_MODE,
+    lazyChunkManifest,
+  });
+  const rawAppBytes = Buffer.byteLength(rawAppRuntime);
+  const appRuntime = await minifyScript(rawAppRuntime);
+
+  const summary = BUILD_MODE === BUILD_MODES.inline
+    ? buildInlineOutput({ appRuntime, buildVersion: sourceFingerprint, lazyAssets: lazyChunkAssets })
+    : buildSplitOutput({ appRuntime, buildVersion: sourceFingerprint, lazyAssets: lazyChunkAssets });
+
+  const buildMeta = {
+    mode: summary.mode,
+    buildVersion: summary.buildVersion,
+    builtAt: new Date().toISOString(),
+    entryId,
+    rawAppBytes,
+    appBytes: summary.appBytes,
+    htmlBytes: summary.htmlBytes,
+    vendorBytes: summary.vendorBytes,
+    minifier: "terser",
+    totalDistBytes: getFileBytes(OUT)
+      + summary.assetFiles.reduce((sum, asset) => sum + asset.bytes, 0),
+    clientSupabaseConfig: {
+      urlSource: CLIENT_SUPABASE_URL_CONFIG.source || "",
+      anonKeySource: CLIENT_SUPABASE_ANON_KEY_CONFIG.source || "",
+      urlConfigured: Boolean(SUPABASE_URL),
+      anonKeyConfigured: Boolean(SUPABASE_ANON_KEY),
+      urlHost: SUPABASE_URL_HOST,
+    },
+    assets: summary.assetFiles.map((asset) => ({
+      fileName: asset.fileName,
+      publicPath: asset.publicPath,
+      bytes: asset.bytes,
+      chunkName: asset.chunkName || "",
+    })),
+  };
+  writeBuildMeta(buildMeta);
+
+  const shrinkLine = `raw app ${formatKb(rawAppBytes)} -> ${formatKb(summary.appBytes)}`;
+  if (summary.mode === BUILD_MODES.inline) {
+    console.log(
+      `Built legacy inline dist/index.html - ${formatKb(summary.htmlBytes)} ` +
+      `(vendor ${formatKb(summary.vendorBytes)}, app ${formatKb(summary.appBytes)}, ${shrinkLine})`
+    );
+  } else {
+    console.log(
+      `Built cacheable split dist/index.html - ${formatKb(summary.htmlBytes)} ` +
+      `(vendor ${formatKb(summary.vendorBytes)}, app ${formatKb(summary.appBytes)}, ${shrinkLine})`
+    );
+    for (const asset of summary.assetFiles) {
+      console.log(`  asset ${asset.fileName} - ${formatKb(asset.bytes)}`);
+    }
+  }
+};
+
+runBuild().catch((error) => {
+  console.error(error?.stack || error?.message || error);
+  process.exit(1);
+});

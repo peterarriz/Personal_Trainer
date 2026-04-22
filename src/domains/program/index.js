@@ -5,6 +5,7 @@ export * from "../../services/goal-resolution-service.js";
 export * from "../../services/goal-review-service.js";
 export * from "../../services/metrics-baselines-service.js";
 export * from "../../services/plan-day-service.js";
+export * from "../../services/plan-surface-service.js";
 export * from "../../services/plan-week-service.js";
 export * from "../../services/program-live-planning-service.js";
 export * from "../../services/support-tier-service.js";

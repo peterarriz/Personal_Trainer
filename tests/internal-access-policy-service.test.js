@@ -11,6 +11,7 @@ import {
 test("trusted internal tooling is limited to localhost-style hosts", () => {
   assert.equal(isTrustedLocalOperatorHost({ hostname: "localhost" }), true);
   assert.equal(isTrustedLocalOperatorHost({ hostname: "127.0.0.1" }), true);
+  assert.equal(isTrustedLocalOperatorHost({ hostname: "app.localhost" }), true);
   assert.equal(isTrustedLocalOperatorHost({ hostname: "beta.forma.run" }), false);
 });
 
@@ -60,4 +61,3 @@ test("client-supplied AI keys are disabled outside trusted local debug use", () 
     hostname: "localhost",
   }), true);
 });
-

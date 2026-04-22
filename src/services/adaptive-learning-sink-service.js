@@ -1,3 +1,9 @@
+import {
+  getTemporarilyUnavailableEndpoint,
+  isMissingEndpointResponseStatus,
+  markEndpointTemporarilyUnavailable,
+} from "./runtime-endpoint-availability-service.js";
+
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
 
@@ -32,13 +38,14 @@ export const ingestAdaptiveLearningEvents = async ({
 } = {}) => {
   const token = String(authSession?.access_token || "").trim();
   const safeEvents = toArray(events).filter(Boolean);
+  const pendingEventIds = safeEvents.map((event) => sanitizeText(event?.eventId || "", 160)).filter(Boolean);
   if (typeof safeFetchWithTimeout !== "function") {
     return {
       ok: false,
       skipped: true,
       reason: "missing_fetch",
       ingestedEventIds: [],
-      pendingEventIds: safeEvents.map((event) => sanitizeText(event?.eventId || "", 160)).filter(Boolean),
+      pendingEventIds,
     };
   }
   if (!token) {
@@ -47,7 +54,7 @@ export const ingestAdaptiveLearningEvents = async ({
       skipped: true,
       reason: "missing_auth",
       ingestedEventIds: [],
-      pendingEventIds: safeEvents.map((event) => sanitizeText(event?.eventId || "", 160)).filter(Boolean),
+      pendingEventIds,
     };
   }
   if (!safeEvents.length) {
@@ -57,6 +64,17 @@ export const ingestAdaptiveLearningEvents = async ({
       reason: "no_events",
       ingestedEventIds: [],
       pendingEventIds: [],
+    };
+  }
+  const unavailableEndpoint = getTemporarilyUnavailableEndpoint({ endpoint });
+  if (unavailableEndpoint) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "endpoint_unavailable",
+      ingestedEventIds: [],
+      pendingEventIds,
+      endpoint: sanitizeText(endpoint, 160),
     };
   }
 
@@ -76,20 +94,35 @@ export const ingestAdaptiveLearningEvents = async ({
   }, timeoutMs);
 
   const body = await response.json().catch(() => ({}));
+  if (isMissingEndpointResponseStatus(response?.status)) {
+    markEndpointTemporarilyUnavailable({
+      endpoint,
+      status: response?.status,
+      reason: sanitizeText(body?.code || body?.message || "endpoint_unavailable", 120),
+    });
+    return {
+      ok: false,
+      skipped: true,
+      reason: "endpoint_unavailable",
+      ingestedEventIds: [],
+      pendingEventIds,
+      endpoint: sanitizeText(endpoint, 160),
+    };
+  }
   const ingestedEventIds = toArray(body?.ingestedEventIds).map((eventId) => sanitizeText(eventId, 160)).filter(Boolean);
-  const pendingEventIds = toArray(body?.pendingEventIds).map((eventId) => sanitizeText(eventId, 160)).filter(Boolean);
+  const remainingPendingEventIds = toArray(body?.pendingEventIds).map((eventId) => sanitizeText(eventId, 160)).filter(Boolean);
   if (!response.ok || body?.ok === false) {
     const error = new Error(sanitizeText(body?.message || "Adaptive event ingestion failed.", 220) || "Adaptive event ingestion failed.");
     error.code = sanitizeText(body?.code || "", 80) || "adaptive_event_ingest_failed";
     error.httpStatus = Number(response.status || 0) || null;
     error.ingestedEventIds = ingestedEventIds;
-    error.pendingEventIds = pendingEventIds.length ? pendingEventIds : safeEvents.map((event) => sanitizeText(event?.eventId || "", 160)).filter(Boolean);
+    error.pendingEventIds = remainingPendingEventIds.length ? remainingPendingEventIds : pendingEventIds;
     throw error;
   }
   return {
     ok: true,
-    ingestedEventIds: ingestedEventIds.length ? ingestedEventIds : safeEvents.map((event) => sanitizeText(event?.eventId || "", 160)).filter(Boolean),
-    pendingEventIds,
+    ingestedEventIds: ingestedEventIds.length ? ingestedEventIds : pendingEventIds,
+    pendingEventIds: remainingPendingEventIds,
     transport: sanitizeText(body?.transport || "", 80),
     endpoint: sanitizeText(endpoint, 160),
   };

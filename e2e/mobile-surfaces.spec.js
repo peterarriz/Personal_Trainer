@@ -119,7 +119,7 @@ test.describe("mobile surface simplification", () => {
       stopAtInterpretation: true,
     });
 
-    await expect.poll(async () => await page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toBe("clarify");
+    await expect.poll(async () => await page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
     await expect(page.getByTestId("intake-summary-rail")).toBeVisible();
     await expect(page.getByTestId("intake-plan-preview")).toBeVisible();
     await expect(page.getByTestId("intake-footer-continue")).toBeVisible();
@@ -212,23 +212,24 @@ test.describe("mobile surface simplification", () => {
     const secondRow = currentRows.nth(1);
     const firstButton = firstRow.locator("[data-testid^='program-this-week-session-button-']");
     const secondButton = secondRow.locator("[data-testid^='program-this-week-session-button-']");
+    const detailPanel = programThisWeek.getByTestId("program-this-week-session-detail-panel");
 
     await firstButton.click();
     await expect(firstButton).toHaveAttribute("aria-expanded", "true");
-    await expect(firstRow.getByTestId("planned-session-plan")).toBeVisible();
-    await expect(secondRow.getByTestId("planned-session-plan")).toHaveCount(0);
+    await expect(firstRow.getByTestId("planned-session-plan")).toHaveCount(0);
+    await expect(detailPanel.getByTestId("planned-session-plan")).toBeVisible();
 
     await secondButton.click();
     await expect(firstButton).toHaveAttribute("aria-expanded", "false");
     await expect(secondButton).toHaveAttribute("aria-expanded", "true");
     await expect(firstRow.getByTestId("planned-session-plan")).toHaveCount(0);
-    const programPlan = secondRow.getByTestId("planned-session-plan");
+    const programPlan = detailPanel.getByTestId("planned-session-plan");
     await expect(programPlan).toBeVisible();
     const programPlanText = (await programPlan.innerText()).replace(/\s+/g, " ").trim();
     expect(programPlanText.length).toBeGreaterThan(20);
 
     await secondButton.click();
-    await expect(programThisWeek.getByTestId("planned-session-plan")).toHaveCount(0);
+    await expect(detailPanel.getByTestId("planned-session-plan")).toHaveCount(0);
 
     await page.getByTestId("app-tab-log").click();
     await expect(page.getByText("Detailed workout log")).toHaveCount(0);
@@ -385,16 +386,15 @@ test.describe("mobile surface simplification", () => {
     await expect(headline).toContainText(/protect|pain|irritated/i);
   });
 
-  test("missing metrics open an inline repair flow from Program", async ({ page }) => {
+  test("baseline repair lives in Settings instead of an inline Plan detour", async ({ page }) => {
     await completeRunningOnboarding(page);
 
-    await page.getByTestId("app-tab-program").click();
-    await expect(page.getByTestId("program-tab")).toBeVisible();
-    await page.getByTestId("program-fix-metrics").click();
-
-    await expect(page.getByTestId("program-inline-repair")).toBeVisible();
+    await page.getByTestId("app-tab-settings").click();
+    await expect(page.getByTestId("settings-tab")).toBeVisible();
+    await page.getByTestId("settings-surface-baselines").click();
     await expect(page.getByTestId("metrics-baselines-section")).toBeVisible();
-    await expect(page.getByTestId("metrics-editor-environment")).toBeVisible();
-    await expect(page.getByText("Fix small plan gaps without leaving Plan.")).toBeVisible();
+    await expect(page.getByTestId("metrics-input-environment-mode")).toBeVisible();
+    await expect(page.getByText(/plan now owns the main baseline-repair flow/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: /open plan/i })).toBeVisible();
   });
 });

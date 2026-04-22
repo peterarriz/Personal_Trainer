@@ -1,6 +1,9 @@
 import { dedupeStrings } from "../utils/collection-utils.js";
 import { projectResolvedGoalToPlanningGoal } from "./goal-resolution-service.js";
-import { deriveTrainingContextFromPersonalization } from "./training-context-service.js";
+import {
+  deriveTrainingContextFromPersonalization,
+  normalizeTrainingWeekdayAvailability,
+} from "./training-context-service.js";
 
 export const CANONICAL_ATHLETE_VERSION = "2026-04-athlete-v1";
 
@@ -35,6 +38,7 @@ const DEFAULT_CANONICAL_USER_PROFILE = {
   experienceLevel: "beginner",
   fitnessLevel: "unknown",
   daysPerWeek: 3,
+  availableTrainingDays: [],
   sessionLength: "30",
   equipmentAccess: [],
   constraints: [],
@@ -209,6 +213,11 @@ const buildCanonicalUserProfile = ({
       DEFAULT_CANONICAL_USER_PROFILE.fitnessLevel
     ),
     daysPerWeek: clampMinInt(legacyUserProfile?.days_per_week, DEFAULT_CANONICAL_USER_PROFILE.daysPerWeek),
+    availableTrainingDays: normalizeTrainingWeekdayAvailability(
+      trainingContext?.weekdayAvailability?.confirmed
+        ? (trainingContext?.weekdayAvailability?.value || [])
+        : (legacyUserProfile?.available_days || legacyUserProfile?.available_training_days || [])
+    ),
     sessionLength: pickFirstNonEmpty(
       legacyUserProfile?.session_length,
       environmentConfig?.base?.time,
@@ -328,6 +337,9 @@ export const buildLegacyGoalProfileCompatibilityFields = ({
       days_per_week: clampMinInt(
         canonicalUserProfile?.daysPerWeek,
         existingUserGoalProfile?.days_per_week || DEFAULT_CANONICAL_USER_PROFILE.daysPerWeek
+      ),
+      available_days: normalizeTrainingWeekdayAvailability(
+        canonicalUserProfile?.availableTrainingDays || existingUserGoalProfile?.available_days || existingUserGoalProfile?.available_training_days || []
       ),
       session_length: canonicalUserProfile?.sessionLength || existingUserGoalProfile?.session_length || DEFAULT_CANONICAL_USER_PROFILE.sessionLength,
       equipment_access: dedupeStrings(canonicalUserProfile?.equipmentAccess || existingUserGoalProfile?.equipment_access || []),

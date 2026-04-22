@@ -19,6 +19,13 @@ import {
   buildAuthLifecycleEventInput,
   buildSyncLifecycleEventInput,
 } from "./services/adaptive-learning-domain-service.js";
+import {
+  buildDeleteAccountEndpointUnavailableDiagnostics,
+  DELETE_ACCOUNT_DIAGNOSTICS_ENDPOINT,
+  getTemporarilyUnavailableEndpoint,
+  isMissingEndpointResponseStatus,
+  markEndpointTemporarilyUnavailable,
+} from "./services/runtime-endpoint-availability-service.js";
 
 export const SB_ROW = "trainer_v1";
 export const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
@@ -370,7 +377,10 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   let lastTransientPersistFailureUserId = "";
   let activePersistPromise = null;
   let activePersistUserId = "";
+  let activeLoadPromise = null;
+  let activeLoadUserId = "";
   let localCacheWriteFence = 0;
+  let persistenceLifecycleVersion = 0;
   const trackAnalytics = ({ flow = "sync", action = "storage", outcome = "observed", props = {} } = {}) => {
     try {
       analytics?.track?.({ flow, action, outcome, props });
@@ -481,6 +491,41 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     if (String(userId || "") !== lastTransientPersistFailureUserId) return false;
     return (Date.now() - lastTransientPersistFailureAt) < TRANSIENT_PERSIST_RETRY_COOLDOWN_MS;
   };
+  const isLifecycleCurrent = (version = 0) => Number(version || 0) === persistenceLifecycleVersion;
+  const resetInFlightPersistenceOperations = () => {
+    activePersistPromise = null;
+    activePersistUserId = "";
+    activeLoadPromise = null;
+    activeLoadUserId = "";
+  };
+  const invalidatePersistenceLifecycle = ({
+    resetFingerprints = true,
+    resetTransientCooldown = true,
+    bumpLocalFence = true,
+  } = {}) => {
+    persistenceLifecycleVersion += 1;
+    resetInFlightPersistenceOperations();
+    if (resetFingerprints) {
+      lastPersistedPayloadFingerprint = "";
+      lastPersistedUserId = "";
+      lastSyncedGoalsFingerprint = "";
+      lastSyncedCoachMemoryFingerprint = "";
+    }
+    if (resetTransientCooldown) {
+      resetTransientPersistCooldown();
+    }
+    if (bumpLocalFence) {
+      localCacheWriteFence += 1;
+    }
+    return persistenceLifecycleVersion;
+  };
+  const buildOperationLifecycle = (userId = "") => ({
+    userId: String(userId || "").trim(),
+    version: persistenceLifecycleVersion,
+    isCurrent() {
+      return isLifecycleCurrent(this.version);
+    },
+  });
   const SB_CONFIG_ERROR = !SB_URL
     ? "Missing Supabase URL. Set VITE_SUPABASE_URL or SUPABASE_URL for the client build."
     : !hasValidSupabaseUrl
@@ -634,7 +679,16 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
 
   const checkDeleteAccountAvailability = async (authToken = "") => {
     const startedAt = Date.now();
-    const res = await safeFetchWithTimeout("/api/auth/delete-account", {
+    const unavailableEndpoint = getTemporarilyUnavailableEndpoint({
+      endpoint: DELETE_ACCOUNT_DIAGNOSTICS_ENDPOINT,
+    });
+    if (unavailableEndpoint) {
+      return buildDeleteAccountEndpointUnavailableDiagnostics({
+        status: unavailableEndpoint?.status,
+        reason: unavailableEndpoint?.reason,
+      });
+    }
+    const res = await safeFetchWithTimeout(DELETE_ACCOUNT_DIAGNOSTICS_ENDPOINT, {
       method: "GET",
       headers: {
         "Accept": "application/json",
@@ -642,6 +696,17 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       },
     });
     const data = await res.json().catch(() => null);
+    if (isMissingEndpointResponseStatus(res?.status)) {
+      markEndpointTemporarilyUnavailable({
+        endpoint: DELETE_ACCOUNT_DIAGNOSTICS_ENDPOINT,
+        status: res?.status,
+        reason: String(data?.code || data?.message || "endpoint_unavailable"),
+      });
+      return buildDeleteAccountEndpointUnavailableDiagnostics({
+        status: res?.status,
+        reason: String(data?.code || data?.message || "endpoint_unavailable"),
+      });
+    }
     if (!res.ok) {
       throw buildStructuredError(
         String(data?.message || "Delete-account diagnostics could not be loaded."),
@@ -1316,6 +1381,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   const handleSignOut = async ({ authSession, setAuthSession, setStorageStatus }) => {
     const startedAt = Date.now();
     const existingUserId = String(authSession?.user?.id || "").trim();
+    invalidatePersistenceLifecycle();
     setAuthSession(null);
     lastSyncedGoalsFingerprint = "";
     lastSyncedCoachMemoryFingerprint = "";
@@ -1391,6 +1457,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   }) => {
     setAuthError("");
     const startedAt = Date.now();
+    invalidatePersistenceLifecycle();
     const { ensured, validSession } = await withFreshSession({
       authSession,
       setAuthSession,
@@ -1425,7 +1492,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       );
     }
 
-    const res = await safeFetchWithTimeout("/api/auth/delete-account", {
+    const res = await safeFetchWithTimeout(DELETE_ACCOUNT_DIAGNOSTICS_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1869,8 +1936,17 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   const sbLoad = async ({ authSession, setters, persistAll, setAuthSession }) => {
     const normalized = normalizeSession(authSession);
     const userId = normalized?.user?.id || authSession?.user?.id;
-    const cacheWriteFence = localCacheWriteFence;
     if (!userId) throw new Error(AUTH_REQUIRED);
+    while (activeLoadPromise && String(userId || "") === activeLoadUserId) {
+      try {
+        return await activeLoadPromise;
+      } catch {}
+    }
+    let loadOperation = null;
+    activeLoadUserId = String(userId || "");
+    loadOperation = (async () => {
+      const lifecycle = buildOperationLifecycle(userId);
+      const cacheWriteFence = localCacheWriteFence;
     const endpoint = `rest/v1/trainer_data?user_id=eq.${userId}`;
     pushSyncDiagnostic({
       type: SYNC_DIAGNOSTIC_EVENT_TYPES.trainerDataLoadAttempt,
@@ -1951,6 +2027,14 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       });
       const effectivePayload = preferPendingLocalCache ? cache : cloudPayload;
       try {
+        if (!lifecycle.isCurrent()) {
+          return {
+            ok: false,
+            skipped: true,
+            stale: true,
+            reason: "lifecycle_invalidated",
+          };
+        }
         syncAdaptiveIdentity({ authSession: sessionUsed || normalized, userId });
         adaptiveLearningStore?.importPersistedSnapshot?.({
           persistedSnapshot: effectivePayload?.adaptiveLearning || null,
@@ -2012,6 +2096,14 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
             authSession: sessionUsed || normalized,
             setAuthSession,
           });
+          if (!lifecycle.isCurrent()) {
+            return {
+              ok: false,
+              skipped: true,
+              stale: true,
+              reason: "lifecycle_invalidated",
+            };
+          }
           resetTransientPersistCooldown();
           lastPersistedPayloadFingerprint = createPersistedPayloadFingerprint(effectivePayload);
           lastPersistedUserId = String(userId || "");
@@ -2052,6 +2144,14 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           }),
         });
       }
+      if (!lifecycle.isCurrent()) {
+        return {
+          ok: false,
+          skipped: true,
+          stale: true,
+          reason: "lifecycle_invalidated",
+        };
+      }
       pushSyncDiagnostic({
         type: SYNC_DIAGNOSTIC_EVENT_TYPES.trainerDataLoadResult,
         ok: true,
@@ -2083,6 +2183,14 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         }),
       });
     } else {
+      if (!lifecycle.isCurrent()) {
+        return {
+          ok: false,
+          skipped: true,
+          stale: true,
+          reason: "lifecycle_invalidated",
+        };
+      }
       if (cache && typeof cache === "object") {
           adaptiveLearningStore?.importPersistedSnapshot?.({
             persistedSnapshot: cache?.adaptiveLearning || null,
@@ -2121,6 +2229,14 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
             authSession: sessionUsed || normalized,
             setAuthSession,
           });
+          if (!lifecycle.isCurrent()) {
+            return {
+              ok: false,
+              skipped: true,
+              stale: true,
+              reason: "lifecycle_invalidated",
+            };
+          }
           resetTransientPersistCooldown();
           const adaptiveSnapshot = adaptiveLearningStore?.buildPersistenceSnapshot?.();
           adaptiveLearningStore?.markEventsSynced?.({
@@ -2161,6 +2277,14 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           {}
         );
       }
+      if (!lifecycle.isCurrent()) {
+        return {
+          ok: false,
+          skipped: true,
+          stale: true,
+          reason: "lifecycle_invalidated",
+        };
+      }
       pushSyncDiagnostic({
         type: SYNC_DIAGNOSTIC_EVENT_TYPES.trainerDataLoadResult,
         ok: true,
@@ -2192,6 +2316,14 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         }),
       });
     }
+    if (!lifecycle.isCurrent()) {
+      return {
+        ok: false,
+        skipped: true,
+        stale: true,
+        reason: "lifecycle_invalidated",
+      };
+    }
     await replayAdaptiveLearningEventSink({
       authSession: sessionUsed || normalized,
       source: "sb_load",
@@ -2202,6 +2334,16 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       synced: true,
       session: sessionUsed || normalized,
     };
+    })();
+    let guardedLoadPromise = null;
+    guardedLoadPromise = loadOperation.finally(() => {
+      if (activeLoadPromise === guardedLoadPromise) {
+        activeLoadPromise = null;
+        activeLoadUserId = "";
+      }
+    });
+    activeLoadPromise = guardedLoadPromise;
+    return await guardedLoadPromise;
   };
 
   const persistAll = async ({
@@ -2211,6 +2353,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     setAuthSession,
   }) => {
     const startedAt = Date.now();
+    const lifecycle = buildOperationLifecycle(authSession?.user?.id || "");
     const cacheWriteFence = localCacheWriteFence;
     const payloadWithAdaptiveLearning = buildPayloadWithAdaptiveLearning(payload || {});
     const previousLocalPayload = localLoad();
@@ -2323,6 +2466,15 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       let persistOperation = null;
       activePersistUserId = currentUserId;
       persistOperation = (async () => {
+        if (!lifecycle.isCurrent()) {
+          return {
+            ok: false,
+            synced: false,
+            skipped: true,
+            stale: true,
+            reason: "lifecycle_invalidated",
+          };
+        }
         if (isWithinTransientPersistCooldown(currentUserId)) {
           const cooldownStatus = buildStorageStatus({
             mode: "local",
@@ -2365,6 +2517,15 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           };
         }
         if (payloadFingerprint === lastPersistedPayloadFingerprint && currentUserId === lastPersistedUserId) {
+          if (!lifecycle.isCurrent()) {
+            return {
+              ok: false,
+              synced: false,
+              skipped: true,
+              stale: true,
+              reason: "lifecycle_invalidated",
+            };
+          }
           resetTransientPersistCooldown();
           const alreadyCurrentStatus = buildStorageStatus({
             mode: "cloud",
@@ -2423,6 +2584,15 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         }
         const adaptiveSnapshotBeforeSave = adaptiveLearningStore?.buildPersistenceSnapshot?.();
         await sbSave({ payload: payloadWithAdaptiveLearning, authSession, setAuthSession });
+        if (!lifecycle.isCurrent()) {
+          return {
+            ok: false,
+            synced: false,
+            skipped: true,
+            stale: true,
+            reason: "lifecycle_invalidated",
+          };
+        }
         lastPersistedPayloadFingerprint = payloadFingerprint;
         lastPersistedUserId = currentUserId;
         resetTransientPersistCooldown();
@@ -2453,6 +2623,15 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           }
         } catch (e) {
           logDiag("coach memory sync failed", e?.message || "unknown");
+        }
+        if (!lifecycle.isCurrent()) {
+          return {
+            ok: false,
+            synced: false,
+            skipped: true,
+            stale: true,
+            reason: "lifecycle_invalidated",
+          };
         }
         const syncedStatus = buildStorageStatus({
           mode: "cloud",
@@ -2508,6 +2687,16 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       activePersistPromise = guardedPersistPromise;
       return await guardedPersistPromise;
     } catch (e) {
+      if (!lifecycle.isCurrent()) {
+        return {
+          ok: false,
+          synced: false,
+          skipped: true,
+          stale: true,
+          reason: "lifecycle_invalidated",
+          error: e,
+        };
+      }
       if (e?.message === AUTH_TRANSIENT) {
         logDiag("cloud.save.transient", "falling back to local while preserving session");
       }
@@ -2570,6 +2759,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     loadPasswordRecoverySession,
     savePasswordRecoverySession,
     clearPasswordRecoverySession,
+    invalidatePersistenceLifecycle,
     getClientCloudConfigDiagnostics,
     authRequest,
     ensureValidSession,

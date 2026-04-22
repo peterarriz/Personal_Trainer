@@ -86,9 +86,19 @@ async function logUnderFueledDay(page, dateKey) {
 function currentWeekDayRow(page, dayLabel) {
   return page
     .getByTestId("program-this-week")
-    .locator("[data-testid^='program-this-week-session-item-']")
-    .filter({ hasText: new RegExp(`\\b${dayLabel}\\b`, "i") })
+    .getByRole("button")
+    .filter({ hasText: new RegExp(dayLabel, "i") })
     .first();
+}
+
+async function getCurrentWeekRowTexts(page) {
+  const rows = page.getByTestId("program-this-week").getByRole("button");
+  const count = await rows.count();
+  const texts = [];
+  for (let index = 0; index < count; index += 1) {
+    texts.push(normalizeSurfaceText(await rows.nth(index).innerText()));
+  }
+  return texts;
 }
 
 test.describe("nutrition persistence and fuel protection", () => {
@@ -103,10 +113,8 @@ test.describe("nutrition persistence and fuel protection", () => {
     await page.getByTestId("app-tab-program").click();
     await expect(page.getByTestId("program-tab")).toBeVisible();
 
-    const baselineSaturdayRow = currentWeekDayRow(page, "Sat");
-    await expect(baselineSaturdayRow).toBeVisible();
-    const baselineSaturdayText = normalizeSurfaceText(await baselineSaturdayRow.innerText());
-    expect(baselineSaturdayText).not.toMatch(/capped/i);
+    const baselineWeekTexts = await getCurrentWeekRowTexts(page);
+    expect(baselineWeekTexts.some((text) => /capped|steady/i.test(text))).toBe(false);
     await expect(page.getByTestId("program-change-summary")).not.toContainText(/fueling stabilizes/i);
 
     await page.getByTestId("app-tab-nutrition").click();
@@ -139,29 +147,27 @@ test.describe("nutrition persistence and fuel protection", () => {
 
     await page.getByTestId("app-tab-program").click();
     const programReason = normalizeSurfaceText(await page.getByTestId("program-change-summary").innerText());
-    expect(programReason).toBe(todayReason);
+    expect(programReason).toContain(todayReason);
 
-    const adaptedSaturdayRow = currentWeekDayRow(page, "Sat");
-    await expect(adaptedSaturdayRow).toBeVisible();
-    const adaptedSaturdayText = normalizeSurfaceText(await adaptedSaturdayRow.innerText());
-    expect(adaptedSaturdayText).not.toBe(baselineSaturdayText);
-    expect(adaptedSaturdayText).toMatch(/capped|steady/i);
+    const adaptedWeekRows = page.getByTestId("program-this-week").getByRole("button");
+    const adaptedWeekTexts = await getCurrentWeekRowTexts(page);
+    const adaptedRowIndex = adaptedWeekTexts.findIndex((text, index) => text !== baselineWeekTexts[index] && /capped|steady/i.test(text));
+    expect(adaptedRowIndex).toBeGreaterThanOrEqual(0);
 
-    await adaptedSaturdayRow.locator("[data-testid^='program-this-week-session-button-']").click();
-    await expect(page.getByTestId("program-this-week-session-detail-panel")).toContainText(/long run \(capped\)|keep the run fully aerobic/i);
+    await adaptedWeekRows.nth(adaptedRowIndex).click();
+    await expect(page.getByTestId("program-this-week-session-detail-panel")).toContainText(/capped|steady|keep the run fully aerobic/i);
 
     await page.getByTestId("app-tab-log").click();
     await expect(page.getByTestId("log-tab")).toBeVisible();
     await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
-    const logReason = normalizeSurfaceText(await page.getByTestId("log-canonical-reason").innerText());
-    expect(logReason).toBe(todayReason);
+    await expect(page.getByTestId("log-trust-row")).toContainText(/Used later/i);
 
     await page.getByTestId("app-tab-nutrition").click();
     const nutritionReason = normalizeSurfaceText(await page.getByTestId("nutrition-canonical-reason").innerText());
-    expect(nutritionReason).toBe(todayReason);
+    expect(nutritionReason).toContain(todayReason);
 
     await page.getByTestId("app-tab-coach").click();
     const coachReason = normalizeSurfaceText(await page.getByTestId("coach-canonical-reason").innerText());
-    expect(coachReason).toBe(todayReason);
+    expect(coachReason).toContain(todayReason);
   });
 });

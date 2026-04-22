@@ -461,17 +461,24 @@ async function completeIntroQuestionnaire(page, {
       await expect(page.getByTestId("intake-goals-primary-input")).toBeVisible();
     }
     await page.getByTestId("intake-goals-primary-input").fill(goalText);
+    await page.getByTestId("intake-goals-add").click();
+    await commitPendingGoalSelection(page);
   } else {
     await page.getByTestId("intake-footer-foundation").click();
     return;
   }
 
   for (const goal of additionalGoals) {
-    await page.getByTestId("intake-goals-secondary-input").fill(String(goal));
+    if (await page.getByTestId("intake-goals-primary-input").count() === 0) {
+      await page.getByTestId("intake-goals-toggle-custom").click();
+      await expect(page.getByTestId("intake-goals-primary-input")).toBeVisible();
+    }
+    await page.getByTestId("intake-goals-primary-input").fill(String(goal));
     const addGoalButton = page.getByTestId("intake-goals-add");
     await expect(addGoalButton).toBeEnabled();
     await addGoalButton.click();
-    await expect(page.getByTestId("intake-goals-secondary-input")).toHaveValue("");
+    await commitPendingGoalSelection(page);
+    await expect(page.getByTestId("intake-goals-primary-input")).toHaveValue("");
   }
 
   await page.getByTestId(`intake-goals-option-experience-level-${toTestIdFragment(experienceLevelValue)}`).click();
@@ -500,7 +507,7 @@ async function completeIntroQuestionnaire(page, {
     await coachingChip.click();
   }
   await page.getByTestId("intake-footer-continue").click();
-  await expect.poll(async () => await getCurrentPhase(page), { timeout: 20_000 }).toMatch(/clarify|confirm/);
+  await expect.poll(async () => await getCurrentPhase(page), { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
   if (stopAtInterpretation) return;
   const phase = await getCurrentPhase(page);
   if (phase === "clarify") {
@@ -509,11 +516,15 @@ async function completeIntroQuestionnaire(page, {
   if (phase === "confirm") {
     await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
   }
+  if (phase === "building") {
+    await expect(page.getByTestId("intake-root")).toHaveAttribute("data-intake-phase", "building");
+  }
 }
 
 async function fillPlanningRealityInputs(page, {
   experienceLevel = "Intermediate",
   trainingDays = "3",
+  availableTrainingDays = [],
   sessionLength = "45 min",
   trainingLocation = "Gym",
   homeEquipment = [],
@@ -543,6 +554,10 @@ async function fillPlanningRealityInputs(page, {
     if (resolvedHomeEquipment.includes("Other") && homeEquipmentOther) {
       await page.getByTestId("intake-goals-input-home-equipment-other").fill(homeEquipmentOther);
     }
+  }
+
+  for (const day of Array.isArray(availableTrainingDays) ? availableTrainingDays : [availableTrainingDays].filter(Boolean)) {
+    await page.getByTestId(`intake-goals-option-available-days-${toTestIdFragment(day)}`).click();
   }
 
   if (String(injuryText || "").trim()) {
@@ -761,7 +776,6 @@ async function completeGoalLibraryIntakeStep(page, {
   templateId = "",
   quickMetrics = {},
   stopAtReview = false,
-  lockGoalOrder = false,
   ...planningOverrides
 } = {}) {
   const normalizedGoalType = GOAL_TYPE_ALIASES[goalType] || goalType;
@@ -780,16 +794,6 @@ async function completeGoalLibraryIntakeStep(page, {
   }
   await fillStarterMetricInputs(page, normalizedQuickMetrics);
   await fillPlanningRealityInputs(page, planningOverrides);
-  if (lockGoalOrder) {
-    const goalLockToggle = page.getByTestId("intake-goal-lock-toggle");
-    if (await goalLockToggle.isVisible().catch(() => false)) {
-      await expect(goalLockToggle).toBeEnabled();
-      if (!/locked/i.test(await goalLockToggle.innerText().catch(() => ""))) {
-        await goalLockToggle.click();
-        await expect(goalLockToggle).toContainText(/locked/i);
-      }
-    }
-  }
   await page.getByTestId("intake-footer-continue").click();
   let phaseState = "";
   await expect.poll(async () => {
@@ -852,9 +856,6 @@ async function completeStructuredIntakeOnOneScreen(page, {
   }
   await fillStarterMetricInputs(page, normalizedQuickMetrics);
   await fillPlanningRealityInputs(page, planningOverrides);
-  await expect(page.getByTestId("intake-goal-lock-toggle")).toBeEnabled();
-  await page.getByTestId("intake-goal-lock-toggle").click();
-  await expect(page.getByTestId("intake-goal-lock-toggle")).toContainText(/locked/i);
   await page.getByTestId("intake-footer-continue").click();
   await waitForPostOnboarding(page);
 }
@@ -1103,13 +1104,8 @@ async function waitForPostOnboarding(page) {
   }).toBe("success");
   const todayCard = page.getByTestId("today-session-card");
   if (await todayCard.isVisible().catch(() => false)) return;
-  const readyStart = page.getByTestId("post-intake-ready-start");
-  if (await readyStart.isVisible().catch(() => false)) {
-    await readyStart.click();
-  } else {
-    await expect(page.getByTestId("app-tab-today")).toBeVisible();
-    await page.getByTestId("app-tab-today").click();
-  }
+  await expect(page.getByTestId("app-tab-today")).toBeVisible();
+  await page.getByTestId("app-tab-today").click();
   await expect(page.getByTestId("today-session-card")).toBeVisible();
 }
 

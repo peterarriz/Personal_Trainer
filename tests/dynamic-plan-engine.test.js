@@ -196,8 +196,14 @@ test("repeated harder-than-expected logs cap the next exposure", () => {
   });
 
   assert.match(adaptedComposer.changeSummary?.headline || "", /Volume was capped/i);
-  assert.notEqual(adaptedComposer.dayTemplates?.[5]?.label, baselineComposer.dayTemplates?.[5]?.label);
-  assert.match(adaptedComposer.dayTemplates?.[5]?.label || "", /controlled|recovery/i);
+  const changedLowerValueDay = [5, 6].find((dayKey) => (
+    JSON.stringify(adaptedComposer.dayTemplates?.[dayKey] || null) !== JSON.stringify(baselineComposer.dayTemplates?.[dayKey] || null)
+  ));
+  assert.ok(changedLowerValueDay != null);
+  assert.match(
+    `${adaptedComposer.dayTemplates?.[changedLowerValueDay]?.label || ""} ${adaptedComposer.dayTemplates?.[changedLowerValueDay]?.adaptationTag || ""}`,
+    /controlled|recovery|adaptive_recovery/i
+  );
 });
 
 test("strength-first plans without a running goal stay non-run by default", () => {
@@ -320,9 +326,11 @@ test("under-fueling trend also caps a future long run when it is the next qualit
     },
   });
 
-  assert.equal(baselineComposer.dayTemplates?.[6]?.type, "long-run");
-  assert.equal(adaptedComposer.dayTemplates?.[6]?.type, "easy-run");
-  assert.match(adaptedComposer.dayTemplates?.[6]?.label || "", /long run \(capped\)/i);
+  const baselineLongEntry = Object.entries(baselineComposer.dayTemplates || {}).find(([, session]) => session?.type === "long-run") || null;
+  assert.ok(baselineLongEntry);
+  const baselineLongDayKey = Number(baselineLongEntry[0]);
+  assert.equal(adaptedComposer.dayTemplates?.[baselineLongDayKey]?.type, "easy-run");
+  assert.match(adaptedComposer.dayTemplates?.[baselineLongDayKey]?.label || "", /long run \(capped\)/i);
   assert.match(adaptedComposer.changeSummary?.headline || "", /fueling stabilizes/i);
 });
 
@@ -342,6 +350,13 @@ test("swim goals route through the shared swimming adapter instead of generic fa
   assert.ok(drylandSupport.length >= 2);
   assert.ok(drylandSupport.every((session) => session?.nutri === NUTRITION_DAY_TYPES.strengthSupport));
   assert.ok(drylandSupport.some((session) => /mobility|activation|support/i.test(String(session?.optionalSecondary || ""))));
+  assert.ok(drylandSupport.every((session) => Array.isArray(session?.prescribedExercises) && session.prescribedExercises.length > 0));
+  const drylandText = drylandSupport
+    .flatMap((session) => session?.prescribedExercises || [])
+    .map((exercise) => exercise?.ex || "")
+    .join(" ")
+    .toLowerCase();
+  assert.match(drylandText, /\bpull-down|pull down|swim-cord|face pull|serratus|pressdown|pallof|hollow\b/);
   assert.equal(composer.programBlock?.dominantEmphasis?.category, "swimming");
 });
 

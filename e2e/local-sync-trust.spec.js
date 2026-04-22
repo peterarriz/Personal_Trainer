@@ -232,19 +232,49 @@ async function saveTodayQuickLog(page, {
   feelLabel = "",
   note = "",
 } = {}) {
-  await domClick(page.getByTestId("app-tab-today"));
-  await domClick(page.getByTestId("today-primary-cta"));
-  const quickLog = page.getByTestId("today-quick-log");
-  await expect(quickLog).toBeVisible();
-  await domClick(quickLog.getByRole("button", { name: new RegExp(`^${escapeRegExp(statusLabel)}$`, "i") }));
+  await openDetailedWorkoutLog(page);
+  const normalizedStatus = String(statusLabel || "").trim().toLowerCase();
+  const completionTestId = normalizedStatus.includes("skipped")
+    ? "log-completion-skipped"
+    : normalizedStatus.includes("swapped")
+    ? "log-completion-swapped"
+    : normalizedStatus.includes("partial")
+    ? "log-completion-partial"
+    : "log-completion-completed";
+  await domClick(page.getByTestId(completionTestId));
   if (feelLabel) {
-    await domClick(quickLog.getByRole("button", { name: new RegExp(`^${escapeRegExp(feelLabel)}$`, "i") }));
+    const normalizedFeel = String(feelLabel || "").trim().toLowerCase();
+    const feelChip = normalizedFeel.includes("harder")
+      ? "log-feel-chip-2"
+      : normalizedFeel.includes("easier")
+      ? "log-feel-chip-4"
+      : normalizedFeel.includes("best")
+      ? "log-feel-chip-5"
+      : normalizedFeel.includes("rough")
+      ? "log-feel-chip-1"
+      : "log-feel-chip-3";
+    await domClick(page.getByTestId(feelChip));
+  }
+  if (normalizedStatus.includes("modified")) {
+    const runDuration = page.getByTestId("log-run-duration");
+    if (await runDuration.count()) {
+      const currentValue = Number.parseFloat(await runDuration.inputValue()) || 0;
+      await runDuration.fill(String(Math.max(1, currentValue + 2)));
+    } else if (await page.getByTestId("log-strength-row-reps-0").count()) {
+      const repsField = page.getByTestId("log-strength-row-reps-0");
+      const currentValue = Number.parseInt(await repsField.inputValue(), 10) || 0;
+      await repsField.fill(String(Math.max(0, currentValue - 1)));
+    }
+  }
+  const advancedFields = page.getByTestId("log-advanced-fields");
+  if (!await advancedFields.evaluate((node) => node.open)) {
+    await advancedFields.locator("summary").click();
   }
   if (note) {
-    await quickLog.getByPlaceholder("Optional note").fill(note);
+    await page.getByLabel("Session note").fill(note);
   }
-  await domClick(page.getByTestId("today-save-log"));
-  await expect(page.getByTestId("today-save-status")).toContainText(/saved|marked/i);
+  await domClick(page.getByTestId("log-save-quick"));
+  await expect(page.getByTestId("log-save-status")).toContainText(/saved/i);
 }
 
 async function logUnderFueledDay(page, dateKey, note) {
@@ -285,10 +315,19 @@ async function signInFromSettings(page, {
   await expect(page.getByTestId("auth-gate")).toHaveCount(0);
 }
 
+async function openDetailedWorkoutLog(page) {
+  await domClick(page.getByTestId("app-tab-log"));
+  await expect(page.getByTestId("log-tab")).toBeVisible();
+  await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
+}
+
 async function expectTodayQuickLogNote(page, expectedValue) {
-  await domClick(page.getByTestId("app-tab-today"));
-  await domClick(page.getByTestId("today-primary-cta"));
-  await expect(page.getByTestId("today-quick-log").getByPlaceholder("Optional note")).toHaveValue(expectedValue);
+  await openDetailedWorkoutLog(page);
+  const advancedFields = page.getByTestId("log-advanced-fields");
+  if (!await advancedFields.evaluate((node) => node.open)) {
+    await advancedFields.locator("summary").click();
+  }
+  await expect(page.getByLabel("Session note")).toHaveValue(expectedValue);
 }
 
 async function expectNutritionQuickLogNote(page, { dateKey, expectedValue }) {
@@ -329,10 +368,6 @@ function currentWeekDayRow(page, dayLabel) {
     .locator("[data-testid^='program-this-week-session-item-']")
     .filter({ hasText: new RegExp(`\\b${dayLabel}\\b`, "i") })
     .first();
-}
-
-function escapeRegExp(value = "") {
-  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 test.describe("local-first and sync trust paths", () => {

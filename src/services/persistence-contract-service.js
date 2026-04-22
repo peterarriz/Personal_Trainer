@@ -75,6 +75,42 @@ const sanitizeStructuredStringArray = (items = [], maxItems = 8, maxLength = 180
   toArray(items).map((item) => sanitizeText(item, maxLength)).filter(Boolean).slice(0, maxItems)
 );
 
+const sanitizeDriverEntries = (drivers = [], maxItems = 10) => (
+  toArray(drivers)
+    .map((driver) => {
+      const id = sanitizeText(driver?.id || "", 80).toLowerCase();
+      const label = sanitizeText(driver?.label || "", 120);
+      if (!id || !label) return null;
+      return {
+        id,
+        label,
+        ...(Number.isFinite(Number(driver?.weight)) ? { weight: Math.max(0.05, Math.min(1, Number(Number(driver.weight).toFixed(2)))) } : {}),
+        ...(sanitizeText(driver?.rationale || "", 180) ? { rationale: sanitizeText(driver.rationale, 180) } : {}),
+      };
+    })
+    .filter(Boolean)
+    .slice(0, maxItems)
+);
+
+const sanitizeGoalDriverProfile = (profile = null) => {
+  if (!profile || typeof profile !== "object") return null;
+  const directDrivers = sanitizeDriverEntries(profile?.directDrivers || [], 10);
+  const supportDrivers = sanitizeDriverEntries(profile?.supportDrivers || [], 12);
+  const protectiveDrivers = sanitizeDriverEntries(profile?.protectiveDrivers || [], 8);
+  if (!directDrivers.length && !supportDrivers.length && !protectiveDrivers.length) return null;
+  return {
+    ...(sanitizeText(profile?.version || "", 40) ? { version: sanitizeText(profile.version, 40) } : {}),
+    ...(sanitizeText(profile?.primaryDomain || "", 80) ? { primaryDomain: sanitizeText(profile.primaryDomain, 80).toLowerCase() } : {}),
+    ...(sanitizeText(profile?.primaryOutcomeId || "", 80) ? { primaryOutcomeId: sanitizeText(profile.primaryOutcomeId, 80).toLowerCase() } : {}),
+    ...(sanitizeText(profile?.primaryOutcomeLabel || "", 120) ? { primaryOutcomeLabel: sanitizeText(profile.primaryOutcomeLabel, 120) } : {}),
+    ...(sanitizeText(profile?.focusLabel || "", 120) ? { focusLabel: sanitizeText(profile.focusLabel, 120) } : {}),
+    directDrivers,
+    supportDrivers,
+    protectiveDrivers,
+    transferNotes: sanitizeStructuredStringArray(profile?.transferNotes || [], 6, 180),
+  };
+};
+
 const sanitizeWeeklyStructureTemplate = (template = null) => {
   if (!template || typeof template !== "object") return null;
   return {
@@ -151,6 +187,7 @@ const sanitizeResolvedGoal = (resolvedGoal = null) => {
     ...(sanitizePlanningStrategy(resolvedGoal?.progressionStrategy) ? { progressionStrategy: sanitizePlanningStrategy(resolvedGoal.progressionStrategy) } : {}),
     ...(sanitizePlanningStrategy(resolvedGoal?.fatigueManagementStrategy) ? { fatigueManagementStrategy: sanitizePlanningStrategy(resolvedGoal.fatigueManagementStrategy) } : {}),
     ...(sanitizePlanningStrategy(resolvedGoal?.deloadStrategy) ? { deloadStrategy: sanitizePlanningStrategy(resolvedGoal.deloadStrategy) } : {}),
+    ...(sanitizeGoalDriverProfile(resolvedGoal?.driverProfile) ? { driverProfile: sanitizeGoalDriverProfile(resolvedGoal.driverProfile) } : {}),
   };
 };
 

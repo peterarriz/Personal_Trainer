@@ -4,6 +4,14 @@ const sanitizeText = (value = "", maxLength = 240) => sanitizeDisplayCopy(String
 
 const normalizeLookupLabel = (value = "") => sanitizeText(value, 160).toLowerCase();
 
+const DEMO_WORTHY_LABEL = /\b(bench|press|row|squat|deadlift|hinge|rdl|lunge|split squat|step-up|step up|push-up|pushup|pull-up|pull up|chin-up|chin up|pulldown|raise|carry|plank|dead bug|hollow body|bridge|thrust|tempo|interval|run|swim|circuit|prehab|durability)\b/i;
+
+const buildMovementDemoUrl = (label = "", { force = false } = {}) => {
+  const safeLabel = sanitizeText(label, 120);
+  if (!safeLabel || (!force && !DEMO_WORTHY_LABEL.test(safeLabel))) return "";
+  return `https://www.youtube.com/results?search_query=${encodeURIComponent(`${safeLabel} exercise tutorial`)}`;
+};
+
 const createExplanation = ({
   canonicalLabel = "",
   matchedLabel = "",
@@ -25,9 +33,94 @@ const createExplanation = ({
     .slice(0, 4),
   cautionNotes: sanitizeText(cautionNotes, 180),
   setupNotes: sanitizeText(setupNotes, 180),
+  demoSearchUrl: buildMovementDemoUrl(matchedLabel || canonicalLabel, { force: true }),
 });
 
 const MOVEMENT_EXPLANATIONS = [
+  {
+    key: "incline-press",
+    patterns: [/^incline (?:db|dumbbell|barbell )?press$/i, /^incline db press$/i, /^incline dumbbell press$/i, /^incline bench press$/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Incline Press",
+      matchedLabel: label,
+      whatItIs: "An angled press that trains upper chest, shoulders, and pressing support.",
+      howToDoIt: "Set the bench to a low incline, keep the shoulder blades tucked, and press up without shrugging.",
+      repCountsAs: "Each clean press from the chest-side start to a locked or nearly locked finish counts as one rep.",
+      commonSubstitutions: ["Low-incline machine press", "Landmine press", "Push-up variation"],
+      cautionNotes: "Do not let the elbows flare wildly or the shoulders roll forward at the bottom.",
+      setupNotes: "Use an incline angle that still lets you press through the upper chest instead of turning it into a strict shoulder press.",
+    }),
+  },
+  {
+    key: "bench-press",
+    patterns: [/^bench press$/i, /^barbell bench press$/i, /^dumbbell bench press$/i, /^db bench press$/i, /^flat db press$/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Bench Press",
+      matchedLabel: label,
+      whatItIs: "A horizontal press that trains chest, triceps, shoulders, and pressing strength.",
+      howToDoIt: "Set the shoulders down and back, plant the feet, lower the bar or dumbbells under control, then press back up in a straight strong path.",
+      repCountsAs: "One rep is a full controlled lower plus one clean press to the top position.",
+      commonSubstitutions: ["Dumbbell bench press", "Push-up", "Machine chest press"],
+      cautionNotes: "Keep the shoulder position stable and do not bounce the bar or lose wrist position.",
+      setupNotes: "Feet planted, upper back tight, and a repeatable touch point on the chest matter more than forcing a huge arch.",
+    }),
+  },
+  {
+    key: "push-up",
+    patterns: [/^push-up$/i, /^pushup$/i, /^push up$/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Push-Up",
+      matchedLabel: label,
+      whatItIs: "A bodyweight horizontal press that trains chest, shoulders, triceps, and trunk control.",
+      howToDoIt: "Start in a straight plank, lower the chest and hips together, then press back up without letting the midline sag.",
+      repCountsAs: "One clean lower and press back to a straight-arm plank is one rep.",
+      commonSubstitutions: ["Incline push-up", "Knee push-up", "DB bench press"],
+      cautionNotes: "Stop the set when the hips start sagging or the range of motion shrinks badly.",
+      setupNotes: "Hands just outside shoulder width usually gives the cleanest line.",
+    }),
+  },
+  {
+    key: "shoulder-press",
+    patterns: [/^overhead press$/i, /^strict press$/i, /^shoulder press$/i, /^dumbbell shoulder press$/i, /^db shoulder press$/i, /^landmine press$/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Shoulder Press",
+      matchedLabel: label,
+      whatItIs: "A vertical press that trains shoulders, triceps, and overhead control.",
+      howToDoIt: "Brace the trunk, keep the ribs down, press overhead in a smooth line, and finish with the biceps near the ears.",
+      repCountsAs: "One controlled press from shoulder height to the overhead finish is one rep.",
+      commonSubstitutions: ["Landmine press", "Seated dumbbell press", "Machine shoulder press"],
+      cautionNotes: "Do not lean back and turn the press into a standing incline bench.",
+      setupNotes: "A slightly staggered stance or seated setup is fine if it keeps the trunk cleaner.",
+    }),
+  },
+  {
+    key: "row",
+    patterns: [/^row$/i, /^cable row$/i, /^barbell row$/i, /^dumbbell row$/i, /^db row$/i, /^chest-supported row$/i, /^band bent-over row$/i, /row$/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Row",
+      matchedLabel: label,
+      whatItIs: "A pulling movement that trains upper back, lats, and shoulder stability.",
+      howToDoIt: "Set the torso, pull the handle or weight toward the lower ribs, and lower it back without shrugging or twisting.",
+      repCountsAs: "Each full pull plus controlled lower is one rep.",
+      commonSubstitutions: ["Chest-supported row", "Cable row", "Band row"],
+      cautionNotes: "Keep the neck relaxed and avoid yanking the weight with momentum.",
+      setupNotes: "Think elbows back and shoulder blades moving smoothly instead of cranking the traps up.",
+    }),
+  },
+  {
+    key: "vertical-pull",
+    patterns: [/^pull-up$/i, /^pull up$/i, /^chin-up$/i, /^chin up$/i, /^lat pulldown$/i, /^pulldown$/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Vertical Pull",
+      matchedLabel: label,
+      whatItIs: "A vertical pulling movement that trains lats, upper back, biceps, and shoulder control.",
+      howToDoIt: "Start from a long hang or long reach, pull the elbows down toward the ribs, then lower under control to full range.",
+      repCountsAs: "One full pull plus a controlled return to the start is one rep.",
+      commonSubstitutions: ["Assisted pull-up", "Lat pulldown", "Band-assisted chin-up"],
+      cautionNotes: "Do not turn every rep into a kip or half-rep shrug.",
+      setupNotes: "Use the grip and assistance level that lets you move through clean full range.",
+    }),
+  },
   {
     key: "push-up-complex",
     patterns: [/^push-up complex$/i, /^pushup complex$/i, /^push up complex$/i],
@@ -140,6 +233,118 @@ const MOVEMENT_EXPLANATIONS = [
       setupNotes: "Good for weak links like calves, hips, trunk, shoulders, and feet.",
     }),
   },
+  {
+    key: "squat",
+    patterns: [/^squat$/i, /^back squat$/i, /^front squat$/i, /^goblet squat$/i, /^box squat$/i, /back squat/i, /front squat/i, /goblet squat/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Squat",
+      matchedLabel: label,
+      whatItIs: "A squat pattern that trains legs, hips, trunk stiffness, and lower-body strength.",
+      howToDoIt: "Brace before the descent, sit down between the hips with balanced foot pressure, then stand up by driving through the floor.",
+      repCountsAs: "One full lower to the planned depth and one clean stand back up is one rep.",
+      commonSubstitutions: ["Goblet squat", "Box squat", "Leg press"],
+      cautionNotes: "Do not chase depth by collapsing the trunk or losing foot pressure.",
+      setupNotes: "Pick the stance and squat variation that lets you keep the chest and pelvis organized.",
+    }),
+  },
+  {
+    key: "hinge",
+    patterns: [/^deadlift$/i, /^trap bar deadlift$/i, /^romanian deadlift$/i, /^rdl$/i, /^hinge$/i, /deadlift/i, /romanian deadlift/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Hinge / Deadlift",
+      matchedLabel: label,
+      whatItIs: "A hip-dominant pull that trains glutes, hamstrings, trunk stiffness, and posterior-chain strength.",
+      howToDoIt: "Set the ribs and hips, push the hips back for the hinge, keep the weight close, and stand tall without overextending at the top.",
+      repCountsAs: "One clean pull from the floor or hinge start to lockout and back down is one rep.",
+      commonSubstitutions: ["Trap bar deadlift", "DB RDL", "Hip hinge pattern with kettlebells"],
+      cautionNotes: "Do not let the lower back round just to squeeze out extra reps.",
+      setupNotes: "If the floor start is ugly, use blocks, dumbbells, or a trap bar and keep the hinge clean.",
+    }),
+  },
+  {
+    key: "single-leg",
+    patterns: [/^split squat$/i, /^bulgarian split squat$/i, /^walking lunge$/i, /^reverse lunge$/i, /^lunge$/i, /^step-up$/i, /^step up$/i, /split squat/i, /lunge/i, /step-up/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Single-Leg Lower Body",
+      matchedLabel: label,
+      whatItIs: "A single-leg pattern that builds leg strength, balance, and pelvis control side to side.",
+      howToDoIt: "Keep the front foot rooted, lower under control, and drive through the working leg without folding the trunk.",
+      repCountsAs: "One full rep per side counts when the set alternates legs; otherwise each rep is counted on the working side.",
+      commonSubstitutions: ["Split squat", "Reverse lunge", "Step-up"],
+      cautionNotes: "Do not rush the bottom if the knee or hip loses alignment.",
+      setupNotes: "Shorten the range or reduce load if control disappears before the target reps.",
+    }),
+  },
+  {
+    key: "lateral-raise",
+    patterns: [/^lateral raise$/i, /^db lateral raise$/i, /^dumbbell lateral raise$/i, /^rear delt fly$/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Lateral Raise",
+      matchedLabel: label,
+      whatItIs: "A shoulder accessory that builds the side delts and supports pressing balance.",
+      howToDoIt: "Raise the weights out to the side with soft elbows, stop around shoulder height, and lower them without swinging.",
+      repCountsAs: "One controlled raise and lower is one rep.",
+      commonSubstitutions: ["Cable lateral raise", "Machine lateral raise", "Rear-delt fly"],
+      cautionNotes: "If you have to heave the weight, it is too heavy for the point of the exercise.",
+      setupNotes: "A small torso lean is fine if the motion stays shoulder-led instead of trap-led.",
+    }),
+  },
+  {
+    key: "bridge-thrust",
+    patterns: [/^glute bridge$/i, /^hip thrust$/i, /glute bridge/i, /hip thrust/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Glute Bridge / Hip Thrust",
+      matchedLabel: label,
+      whatItIs: "A hip-extension movement that builds glutes and supports hinge and sprint mechanics.",
+      howToDoIt: "Drive through the heels, lift the hips until the trunk and thighs line up, and lower with control.",
+      repCountsAs: "One full lift and lower is one rep.",
+      commonSubstitutions: ["Bodyweight glute bridge", "Hip thrust", "Single-leg bridge"],
+      cautionNotes: "Do not crank the lower back at the top to fake extra range.",
+      setupNotes: "Keep the ribs stacked and finish with the hips, not the low back.",
+    }),
+  },
+  {
+    key: "carry",
+    patterns: [/^carry$/i, /^farmer carry$/i, /^farmer's carry$/i, /^suitcase carry$/i, /carry$/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Carry",
+      matchedLabel: label,
+      whatItIs: "A loaded carry that trains grip, trunk stiffness, posture, and conditioning support.",
+      howToDoIt: "Stand tall, brace the midline, and walk under control without letting the weight pull you out of position.",
+      repCountsAs: "The full written distance or time counts as one carry set.",
+      commonSubstitutions: ["Farmer carry", "Suitcase carry", "Trap-bar carry"],
+      cautionNotes: "Do not turn it into a sloppy sprint or a side bend contest.",
+      setupNotes: "Choose a load that makes you work without making the posture collapse.",
+    }),
+  },
+  {
+    key: "calf-raise",
+    patterns: [/^calf raise$/i, /^standing calf raise$/i, /^seated calf raise$/i, /calf raise/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Calf Raise",
+      matchedLabel: label,
+      whatItIs: "A lower-leg accessory that builds calves, ankle stiffness, and run-support durability.",
+      howToDoIt: "Lower under control, drive up through the ball of the foot, and finish tall without bouncing every rep.",
+      repCountsAs: "One full controlled lower and raise is one rep.",
+      commonSubstitutions: ["Standing calf raise", "Seated calf raise", "Eccentric heel drop"],
+      cautionNotes: "Do not rush the bottom if the Achilles or arch starts to feel sketchy.",
+      setupNotes: "A brief pause at the bottom and top usually makes the set more honest.",
+    }),
+  },
+  {
+    key: "trunk-stability",
+    patterns: [/^plank$/i, /^side plank$/i, /^dead bug$/i, /^hollow body hold$/i, /plank/i, /dead bug/i, /hollow body/i],
+    build: ({ label }) => createExplanation({
+      canonicalLabel: "Trunk Stability Drill",
+      matchedLabel: label,
+      whatItIs: "A trunk-control drill that teaches position, bracing, and clean force transfer.",
+      howToDoIt: "Hold or move slowly while keeping the ribs down, pelvis controlled, and breathing calm.",
+      repCountsAs: "Timed drills count by seconds; dynamic drills count one full controlled rep per side or rep.",
+      commonSubstitutions: ["Plank", "Side plank", "Dead bug"],
+      cautionNotes: "Stop if you can only hold the position by arching the lower back.",
+      setupNotes: "Short, high-quality sets usually teach the position better than ugly long ones.",
+    }),
+  },
 ];
 
 const FALLBACK_EXPLANATIONS = [
@@ -201,6 +406,7 @@ export const getMovementExplanation = (input = "") => {
       commonSubstitutions: [],
       cautionNotes: "",
       setupNotes: "",
+      demoSearchUrl: "",
     };
   }
 
@@ -220,6 +426,7 @@ export const getMovementExplanation = (input = "") => {
       commonSubstitutions: [],
       cautionNotes: "",
       setupNotes: "",
+      demoSearchUrl: buildMovementDemoUrl(label),
     };
   }
 

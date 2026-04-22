@@ -34,6 +34,23 @@ test("buildNutritionSurfaceModel gives strength days a protein-and-lift biased s
       targets: { p: 205, c: 220 },
     },
     realWorldNutrition: {
+      executionPlan: {
+        title: "Monday - Execution Plan",
+        focusLine: "High protein, steady carbs, and a real recovery dinner.",
+        whyLine: "The lift is the money work today, so protein stays high and carbs stay close to the lift.",
+        macroTargets: [
+          { label: "Calories", value: "~2,250-2,450" },
+          { label: "Protein", value: "195-215g", suffix: " (must hit)" },
+        ],
+        sections: [
+          {
+            key: "breakfast",
+            label: "Breakfast",
+            title: "Egg Bowl",
+            buildItems: ["2 whole eggs", "1 cup egg whites", "Spinach + onions"],
+          },
+        ],
+      },
       performanceGuidance: {
         dayOf: "Land a mixed meal 2-4 hours before the lift with protein and steady carbs.",
         recovery: "Get 30-40g protein plus carbs in the first recovery meal after the lift.",
@@ -49,6 +66,7 @@ test("buildNutritionSurfaceModel gives strength days a protein-and-lift biased s
   });
 
   assert.equal(model.laneKey, NUTRITION_SURFACE_LANES.strengthOnly);
+  assert.equal(model.executionPlan.sections[0].title, "Egg Bowl");
   assert.match(model.heroTitle, /lift/i);
   assert.match(model.targetBiasLine, /205g protein/i);
   assert.equal(model.strategyRows[1].label, "Before lift");

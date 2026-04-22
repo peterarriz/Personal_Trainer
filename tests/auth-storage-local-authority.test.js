@@ -922,3 +922,213 @@ test("sbLoad reports when a newer pending local cache outranks the cloud row", a
   assert.equal(authorityDecision?.localTs, 1714000000000);
   assert.equal(authorityDecision?.cloudTs, 1713990000000);
 });
+
+test("sbLoad coalesces concurrent cloud reloads for the same signed-in user", async () => {
+  const session = buildSession();
+  installLocalStorage();
+
+  let trainerDataGetRequests = 0;
+  let resolveTrainerDataGet;
+  const trainerDataGetPromise = new Promise((resolve) => {
+    resolveTrainerDataGet = resolve;
+  });
+
+  const module = createModule({
+    fetchImpl: async (url) => {
+      if (/\/rest\/v1\/trainer_data\?user_id=eq\./.test(url)) {
+        trainerDataGetRequests += 1;
+        await trainerDataGetPromise;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [{ id: "trainer_v1_user", user_id: session.user.id, data: buildPayload({ label: "Cloud Tempo Run" }) }],
+          text: async () => "",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+  });
+
+  const firstLoad = module.sbLoad({
+    authSession: session,
+    setters: {},
+    persistAll: noop,
+    setAuthSession: noop,
+  });
+  const secondLoad = module.sbLoad({
+    authSession: session,
+    setters: {},
+    persistAll: noop,
+    setAuthSession: noop,
+  });
+
+  resolveTrainerDataGet();
+  const [firstResult, secondResult] = await Promise.all([firstLoad, secondLoad]);
+
+  assert.equal(trainerDataGetRequests, 1);
+  assert.equal(firstResult?.synced, true);
+  assert.equal(secondResult?.synced, true);
+});
+
+test("sign out invalidates an in-flight cloud save so stale success cannot overwrite signed-out state", async () => {
+  const session = buildSession();
+  const localStore = installLocalStorage({
+    trainer_auth_session_v1: session,
+  });
+  const statuses = [];
+
+  let resolveTrainerDataPost;
+  const trainerDataPostPromise = new Promise((resolve) => {
+    resolveTrainerDataPost = resolve;
+  });
+
+  const module = createModule({
+    fetchImpl: async (url, options = {}) => {
+      const method = options.method || "GET";
+      if (/\/rest\/v1\/trainer_data$/.test(url) && method === "POST") {
+        await trainerDataPostPromise;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ([]),
+          text: async () => "",
+        };
+      }
+      if (/\/auth\/v1\/logout$/.test(url) && method === "POST") {
+        return {
+          ok: true,
+          status: 204,
+          json: async () => ({}),
+          text: async () => "",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+  });
+
+  const persistPromise = module.persistAll({
+    payload: buildPayload(),
+    authSession: session,
+    setStorageStatus: (status) => statuses.push(status),
+    setAuthSession: noop,
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  let nextSession = session;
+  await module.handleSignOut({
+    authSession: session,
+    setAuthSession: (value) => {
+      nextSession = value;
+    },
+    setStorageStatus: (status) => statuses.push(status),
+  });
+
+  resolveTrainerDataPost();
+  const persistResult = await persistPromise;
+
+  assert.equal(persistResult?.stale, true);
+  assert.equal(nextSession, null);
+  assert.equal(statuses.at(-1)?.reason, "signed_out");
+  assert.equal(localStore.get("trainer_auth_session_v1"), "null");
+  assert.ok(localStore.has("trainer_local_cache_v4"));
+});
+
+test("delete account invalidates an in-flight cloud save so cleared device state stays cleared", async () => {
+  const session = buildSession();
+  const localStore = installLocalStorage({
+    trainer_auth_session_v1: session,
+    trainer_local_cache_v4: buildPayload(),
+  });
+  const statuses = [];
+
+  let resolveTrainerDataPost;
+  const trainerDataPostPromise = new Promise((resolve) => {
+    resolveTrainerDataPost = resolve;
+  });
+
+  const module = createModule({
+    fetchImpl: async (url, options = {}) => {
+      const method = options.method || "GET";
+      if (/\/rest\/v1\/trainer_data$/.test(url) && method === "POST") {
+        await trainerDataPostPromise;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ([]),
+          text: async () => "",
+        };
+      }
+      if (url === "/api/auth/delete-account" && method === "GET") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            code: "delete_account_configured",
+            configured: true,
+            required: [],
+            missing: [],
+            message: "Permanent account delete is available for this signed-in account on this deployment.",
+            detail: "The deployment can verify the signed-in account and perform the delete.",
+            fix: "",
+          }),
+          text: async () => "",
+        };
+      }
+      if (url === "/api/auth/delete-account" && method === "POST") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, code: "delete_account_deleted", message: "Account deleted." }),
+          text: async () => "",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+  });
+
+  const persistPromise = module.persistAll({
+    payload: buildPayload(),
+    authSession: session,
+    setStorageStatus: (status) => statuses.push(status),
+    setAuthSession: noop,
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  let nextSession = session;
+  await module.handleDeleteAccount({
+    authSession: session,
+    setAuthSession: (value) => {
+      nextSession = value;
+    },
+    setStorageStatus: (status) => statuses.push(status),
+    setAuthError: noop,
+    clearLocalData: async () => {},
+  });
+
+  resolveTrainerDataPost();
+  const persistResult = await persistPromise;
+
+  assert.equal(persistResult?.stale, true);
+  assert.equal(nextSession, null);
+  assert.equal(statuses.at(-1)?.reason, "account_deleted");
+  assert.equal(localStore.get("trainer_auth_session_v1"), undefined);
+  assert.equal(localStore.get("trainer_local_cache_v4"), undefined);
+});

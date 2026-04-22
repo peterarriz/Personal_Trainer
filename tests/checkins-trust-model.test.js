@@ -64,6 +64,32 @@ test("modified completion keeps planned-vs-actual separation", () => {
   assert.equal(plannedDayRecord.resolved.training.label, "Lower A");
 });
 
+test("explicit swapped sessions stay custom instead of collapsing into generic modified", () => {
+  const plannedDayRecord = buildStrengthPlanRecord({
+    label: "Easy Run",
+    type: "hard-run",
+  });
+  const comparison = comparePlannedDayToActual({
+    dateKey: "2026-04-05",
+    plannedDayRecord,
+    dailyCheckin: { status: "completed_modified" },
+    actualLog: {
+      actualSession: {
+        status: "completed_modified",
+        userSelection: "swapped",
+        swapFromPlan: true,
+        sessionType: "bike",
+        sessionLabel: "Bike substitute",
+      },
+    },
+  });
+
+  assert.equal(comparison.completionKind, "custom_session");
+  assert.equal(comparison.differenceKind, "custom_session");
+  assert.equal(comparison.customSession, true);
+  assert.match(comparison.summary, /swapped from plan/i);
+});
+
 test("skipped, grace, and expired states stay distinct", () => {
   const plannedDayRecord = buildStrengthPlanRecord();
 

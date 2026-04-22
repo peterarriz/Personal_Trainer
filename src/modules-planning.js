@@ -23,6 +23,8 @@ import { assessGoalFeasibility } from "./services/goal-feasibility-service.js";
 import {
  deriveActiveIssueContextFromPersonalization,
  deriveTrainingContextFromPersonalization,
+ normalizeTrainingWeekdayAvailability,
+ TRAINING_WEEKDAY_OPTIONS,
  TRAINING_EQUIPMENT_VALUES,
  TRAINING_INTENSITY_VALUES,
  TRAINING_SESSION_DURATION_VALUES,
@@ -37,7 +39,23 @@ import {
  buildPreferenceEffectLine,
  resolveTrainingPreferencePolicy,
 } from "./services/planning-effect-matrix-service.js";
-import { deriveLiveProgramPlanningBasis, PROGRAM_RUNTIME_FIDELITY } from "./services/program-live-planning-service.js";
+import {
+ deriveLiveProgramPlanningBasis,
+ PROGRAM_RUNTIME_FIDELITY,
+ buildEquipmentProfile,
+ buildExercise,
+ buildFoundationStrengthA,
+ buildFoundationStrengthB,
+ buildStrengthFoundationA,
+ buildStrengthFoundationB,
+ buildPowerbuildingLowerStrength,
+ buildPowerbuildingUpperStrength,
+ buildPowerbuildingLowerHypertrophy,
+ buildPowerbuildingUpperHypertrophy,
+ buildTravelStrengthA,
+ buildTravelStrengthB,
+ buildMinimalEquipmentStrength,
+} from "./services/program-live-planning-service.js";
 import {
  applyPlanningBaselineInfluence,
  buildPlanningBaselineInfluence,
@@ -62,6 +80,16 @@ import {
 import {
   buildHybridAdaptiveContext,
 } from "./services/hybrid-adaptive-service.js";
+import {
+  buildGoalSupportPlanningContext,
+} from "./services/goal-support-planning-service.js";
+import {
+  applyExercisePreferenceRows,
+  buildHabitAdaptationContext,
+} from "./services/habit-adaptation-service.js";
+import {
+  buildExerciseTransferProfile,
+} from "./services/exercise-transfer-profile-service.js";
 import { dedupeStrings } from "./utils/collection-utils.js";
 
 export { daysUntil, deriveCanonicalGoalProfileState, getActiveTimeBoundGoal, getGoalBuckets, inferGoalType, normalizeGoalObject, normalizeGoals };
@@ -139,6 +167,1677 @@ const buildConditioningSession = ({
   environmentNote: lowImpact ? "Use any low-impact aerobic setup available." : "",
 });
 
+const GOAL_ROLE_ORDER = Object.freeze({
+ primary: 4,
+ maintained: 3,
+ background: 2,
+ deferred: 1,
+});
+
+const resolvePlanningGoalRole = (goal = null, index = 0) => {
+ const explicitRole = sanitizeText(
+  goal?.intakeConfirmedRole
+   || goal?.goalArbitrationRole
+   || goal?.goalRole
+   || goal?.resolvedGoal?.intakeConfirmedRole
+   || goal?.resolvedGoal?.goalArbitrationRole
+   || "",
+  40
+ ).toLowerCase();
+ if (GOAL_ROLE_ORDER[explicitRole]) return explicitRole;
+ if (index === 0) return "primary";
+ if (index === 1) return "maintained";
+ if (index === 2) return "background";
+ return "deferred";
+};
+
+const normalizePlanningLaneCategory = (goal = null) => {
+ const category = sanitizeText(
+  goal?.category
+   || goal?.resolvedGoal?.planningCategory
+   || goal?.resolvedGoal?.goalFamily
+   || "",
+  60
+ ).toLowerCase();
+ if (["body_comp", "fat_loss", "appearance", "physique"].includes(category)) return "body_comp";
+ if (["strength", "muscle_gain"].includes(category)) return "strength";
+ if (["running", "run", "endurance"].includes(category)) return "running";
+ return category || "general_fitness";
+};
+
+const resolvePlanningLaneDescriptors = (goal = null, index = 0) => {
+ const primaryCategory = normalizePlanningLaneCategory(goal);
+ const resolvedGoal = goal?.resolvedGoal || null;
+ const defaultRole = resolvePlanningGoalRole(goal, index);
+ const goalFamily = sanitizeText(
+  resolvedGoal?.goalFamily
+   || resolvedGoal?.planArchetypeFamily
+   || goal?.goalFamily
+   || "",
+  40
+ ).toLowerCase();
+ const archetypeId = sanitizeText(resolvedGoal?.planArchetypeId || "", 80).toLowerCase();
+ const primaryDomain = sanitizeText(resolvedGoal?.primaryDomain || "", 80).toLowerCase();
+ const hybridMultiDomain = primaryDomain === "hybrid_multi_domain";
+ const descriptors = primaryCategory ? [{ category: primaryCategory, role: defaultRole }] : [];
+ const upsertDescriptor = (category = "", role = defaultRole) => {
+  if (!category) return;
+  const existingIndex = descriptors.findIndex((entry) => entry.category === category);
+  if (existingIndex < 0) {
+   descriptors.push({ category, role });
+   return;
+  }
+  const nextWeight = GOAL_ROLE_ORDER[role] || 0;
+  const currentWeight = GOAL_ROLE_ORDER[descriptors[existingIndex]?.role] || 0;
+  if (nextWeight > currentWeight) {
+   descriptors[existingIndex] = { category, role };
+  }
+ };
+
+ if (/run_lift_running_priority/.test(archetypeId)) {
+  upsertDescriptor("running", defaultRole);
+  upsertDescriptor("strength", defaultRole === "primary" ? "maintained" : defaultRole);
+ } else if (/run_lift_strength_priority/.test(archetypeId)) {
+  upsertDescriptor("strength", defaultRole);
+  upsertDescriptor("running", defaultRole === "primary" ? "maintained" : defaultRole);
+ } else if (/aesthetic_endurance/.test(archetypeId)) {
+  upsertDescriptor("body_comp", defaultRole);
+  upsertDescriptor("running", defaultRole === "primary" ? "maintained" : defaultRole);
+  upsertDescriptor("strength", "background");
+ } else if (/strength_conditioning_balanced/.test(archetypeId)) {
+  upsertDescriptor(primaryCategory || "strength", defaultRole);
+  upsertDescriptor(primaryCategory === "running" ? "strength" : "running", defaultRole === "primary" ? "maintained" : defaultRole);
+ } else if (/sport_support/.test(archetypeId)) {
+  upsertDescriptor("strength", defaultRole);
+  upsertDescriptor("running", defaultRole === "primary" ? "maintained" : defaultRole);
+ } else if (goalFamily === "hybrid" && hybridMultiDomain) {
+  if (primaryCategory === "running") {
+   upsertDescriptor("strength", defaultRole === "primary" ? "maintained" : defaultRole);
+  } else if (primaryCategory === "strength") {
+   upsertDescriptor("running", defaultRole === "primary" ? "maintained" : defaultRole);
+  } else if (primaryCategory === "body_comp") {
+   upsertDescriptor("running", defaultRole === "primary" ? "maintained" : defaultRole);
+   upsertDescriptor("strength", "background");
+  }
+ }
+
+ return descriptors;
+};
+
+const cloneExercises = (exercises = []) => clonePlainValue(exercises || []) || [];
+
+const buildUniqueExerciseRows = (rows = [], maxRows = 4) => {
+ const seen = new Set();
+ return (Array.isArray(rows) ? rows : [])
+  .filter(Boolean)
+  .filter((row) => {
+   const key = sanitizeText(row?.ex || "", 120).toLowerCase();
+   if (!key) return false;
+   if (seen.has(key)) return false;
+   seen.add(key);
+   return true;
+  })
+  .slice(0, maxRows);
+};
+
+const buildUpperSupportRow = ({
+ driverId = "",
+ equipmentProfile = {},
+} = {}) => {
+ const safeDriverId = sanitizeText(driverId, 80).toLowerCase();
+ switch (safeDriverId) {
+  case "upper_back_stability":
+  case "lat_strength":
+   return buildExercise(
+    equipmentProfile.hasCable ? "Chest-supported row or cable row" : equipmentProfile.hasPullup ? "Pull-up or pull-down" : "One-arm DB row",
+    "3-4 sets",
+    "8-12 reps",
+    "Stable pulling supports better pressing and upper-body positions."
+   );
+  case "scapular_control":
+   return buildExercise("Face pull or band external rotation", "2-3 sets", "12-15 reps", "Keep the shoulder blade organized.");
+  case "anterior_delt_strength":
+   return buildExercise("Lateral raise or DB shoulder press", "3 sets", "10-15 reps", "Shoulders often unlock stuck pressing.");
+  case "triceps_strength":
+   return buildExercise(equipmentProfile.hasCable ? "Cable pressdown or skull crusher" : "DB triceps extension or close-grip push-up", "2-3 sets", "10-12 reps", "Support the lockout without turning the session into arm day.");
+  case "pressing_hypertrophy":
+   return buildExercise(equipmentProfile.hasBench ? "Incline bench or DB incline press" : "DB incline press", "3-4 sets", "8-12 reps", "Extra pressing tissue can support the main lift.");
+  case "trunk_bracing":
+  case "trunk_stiffness":
+   return buildExercise("Loaded carry or hard plank", "2-3 sets", "30-45 sec", "Keep tension transfer honest.");
+  case "shoulder_tolerance":
+  case "shoulder_rotation_endurance":
+   return buildExercise("Serratus wall slide or band external rotation", "2-3 sets", "10-15 reps", "Durable shoulders keep the lane trainable.");
+  case "elbow_tolerance":
+   return buildExercise("Light triceps extension or push-up support", "2 sets", "12-15 reps", "Keep the joints calm while volume stays productive.");
+  default:
+   return null;
+ }
+};
+
+const buildLowerDurabilityRow = ({
+ driverId = "",
+ equipmentProfile = {},
+} = {}) => {
+ const safeDriverId = sanitizeText(driverId, 80).toLowerCase();
+ switch (safeDriverId) {
+  case "calf_soleus_capacity":
+   return buildExercise("Standing calf raise or bent-knee calf raise", "3 sets", "10-15 reps", "Lower-leg support matters more than it looks.");
+  case "ankle_stiffness":
+   return buildExercise("Calf raise or heel drop", "2-3 sets", "10-15 reps", "Clean force transfer starts at the ankle.");
+  case "single_leg_control":
+  case "hip_stability":
+   return buildExercise("Split squat or step-up", "2-3 sets", "8 reps/side", "Single-leg control supports durable running and balanced lifting.");
+  case "hamstring_durability":
+  case "posterior_chain_strength":
+  case "hip_extension_support":
+   return buildExercise(equipmentProfile.hasFullGym ? "Hamstring curl or Romanian deadlift" : "DB Romanian deadlift or bridge", "2-3 sets", "8-12 reps", "Posterior-chain support without junk fatigue.");
+  case "trunk_stiffness":
+  case "trunk_bracing":
+   return buildExercise("Carry or trunk hold", "2-3 sets", "30-45 sec", "Organize the trunk before adding more fatigue.");
+  case "lower_leg_tolerance":
+  case "tendon_tolerance":
+  case "impact_tolerance":
+   return buildExercise("Heel drop or tib raise", "2-3 sets", "10-15 reps", "Tissue tolerance keeps the next run credible.");
+  default:
+   return null;
+ }
+};
+
+const buildSwimDrylandRow = ({
+ driverId = "",
+ equipmentProfile = {},
+} = {}) => {
+ const safeDriverId = sanitizeText(driverId, 80).toLowerCase();
+ switch (safeDriverId) {
+  case "lat_strength":
+   return buildExercise(equipmentProfile.hasCable ? "Straight-arm pull-down or swim-cord pull" : equipmentProfile.hasPullup ? "Pull-up or pull-down" : "One-arm row", "3-4 sets", "8-12 reps", "Tie dryland pulling back to the stroke.");
+  case "scapular_control":
+   return buildExercise("Face pull or serratus wall slide", "2-3 sets", "12-15 reps", "Keep the shoulder blade moving cleanly.");
+  case "triceps_strength":
+   return buildExercise(equipmentProfile.hasCable ? "Cable pressdown" : "Close-grip push-up", "2-3 sets", "10-12 reps", "Support the finish of the stroke.");
+  case "trunk_stiffness":
+   return buildExercise("Pallof press or hollow hold", "2-3 sets", "20-40 sec", "Keep the trunk connected to the pull.");
+  case "shoulder_rotation_endurance":
+  case "shoulder_tolerance":
+   return buildExercise("Band external rotation or wall slide", "2-3 sets", "10-15 reps", "Shoulder durability protects swim consistency.");
+  case "neck_upper_back_tolerance":
+   return buildExercise("Prone Y/T raise or face pull", "2-3 sets", "10-15 reps", "Upper-back tolerance supports longer swim work.");
+  case "hip_extension_support":
+   return buildExercise("Glute bridge or kick-support hinge", "2-3 sets", "10-12 reps", "Hip support helps body line and kick mechanics.");
+  default:
+   return null;
+ }
+};
+
+const buildBenchSupportPacketA = ({
+ supportPlanningContext = null,
+ equipmentProfile = {},
+} = {}) => buildUniqueExerciseRows([
+ buildExercise(equipmentProfile.hasBench ? "Bench press top set" : "DB bench press", "1 top set + 3 backoff sets", "4-6 reps", "Heavy press stays central."),
+ buildExercise(equipmentProfile.hasCable || equipmentProfile.hasPullup ? "Weighted pull-up or pull-down" : "One-arm DB row", "4 sets", "6-8 reps", "Pair heavy pressing with strong pulling."),
+ ...(supportPlanningContext?.strengthFocusDriverIds || []).map((driverId) => buildUpperSupportRow({ driverId, equipmentProfile })),
+], 4);
+
+const buildBenchSupportPacketB = ({
+ supportPlanningContext = null,
+ equipmentProfile = {},
+} = {}) => buildUniqueExerciseRows([
+ buildExercise(equipmentProfile.hasBench ? "Incline bench or DB incline press" : "DB incline press", "4 sets", "8-12 reps", "Pressing volume supports the main lift without grinding."),
+ ...(supportPlanningContext?.strengthFocusDriverIds || []).map((driverId) => buildUpperSupportRow({ driverId, equipmentProfile })),
+], 4);
+
+const buildUpperMaintenancePacket = ({
+ supportPlanningContext = null,
+ equipmentProfile = {},
+} = {}) => buildUniqueExerciseRows([
+ buildExercise(equipmentProfile.hasBench ? "DB bench press or incline press" : "Push-up or DB press", "3 sets", "6-10 reps", "Keep the pressing pattern alive without overfilling the week."),
+ ...(supportPlanningContext?.strengthFocusDriverIds || []).map((driverId) => buildUpperSupportRow({ driverId, equipmentProfile })),
+], 4);
+
+const buildLowerDurabilityPacket = ({
+ supportPlanningContext = null,
+ equipmentProfile = {},
+} = {}) => buildUniqueExerciseRows([
+ buildExercise("Split squat or step-up", "2-3 sets", "8 reps/side", "Single-leg control keeps the support work athletic."),
+ ...(supportPlanningContext?.durabilityFocusDriverIds || []).map((driverId) => buildLowerDurabilityRow({ driverId, equipmentProfile })),
+], 4);
+
+const buildSwimDrylandPacket = ({
+ supportPlanningContext = null,
+ equipmentProfile = {},
+} = {}) => buildUniqueExerciseRows([
+ buildExercise(equipmentProfile.hasCable ? "Straight-arm pull-down or swim-cord pull" : equipmentProfile.hasPullup ? "Pull-up or pull-down" : "One-arm row", "3-4 sets", "8-12 reps", "Dryland pulling should still look like support for the stroke."),
+ ...(supportPlanningContext?.swimDrylandFocusDriverIds || []).map((driverId) => buildSwimDrylandRow({ driverId, equipmentProfile })),
+], 4);
+
+const buildSessionExercisePacket = ({
+ emphasis = "full_body_a",
+ equipmentProfile = {},
+} = {}) => {
+ switch (String(emphasis || "").toLowerCase()) {
+  case "bench_focus_a":
+   return cloneExercises(buildPowerbuildingUpperStrength(equipmentProfile));
+  case "bench_focus_b":
+   return cloneExercises(buildPowerbuildingUpperHypertrophy(equipmentProfile));
+  case "upper_maintenance":
+   return [
+    ...cloneExercises(buildPowerbuildingUpperStrength(equipmentProfile)).slice(0, 2),
+    buildExercise("Lateral raise or face pull", "2-3 sets", "12-15 reps", "Keep shoulders and scap control fresh."),
+    buildExercise("Triceps or curls", "2 sets", "10-15 reps", "Leave a little in reserve."),
+   ];
+  case "lower_support":
+   return [
+    buildExercise(equipmentProfile.hasFullGym ? "Squat variation" : "Goblet squat", "3 sets", "5-6 reps", "Controlled loading. Do not chase fatigue."),
+    buildExercise(equipmentProfile.hasFullGym ? "Romanian deadlift" : "DB Romanian deadlift", "3 sets", "6-8 reps", "Posterior-chain support without frying the run lane."),
+    buildExercise("Split squat or step-up", "2-3 sets", "8 reps/side", "Keep the dose athletic and repeatable."),
+    buildExercise("Trunk or calf support", "2 sets", "30-45 sec / 10-15 reps", "Finish organized, not cooked."),
+   ];
+  case "strength_maintenance":
+   return cloneExercises(buildFoundationStrengthB(equipmentProfile)).slice(0, 4);
+  case "body_comp_a":
+   return [
+    buildExercise(equipmentProfile.hasFullGym ? "DB bench press" : "Push-up or DB bench press", "3 sets", "8-10 reps", "Quality reps, short rest."),
+    buildExercise(equipmentProfile.hasFullGym ? "Squat variation" : "Goblet squat", "3 sets", "8-10 reps", "Repeatable effort."),
+    buildExercise("Row or pull-down", "3 sets", "10-12 reps", "Keep pulling volume honest."),
+    buildExercise("Carry or trunk finisher", "2-3 rounds", "30-45 sec", "Finish with posture and tension."),
+   ];
+  case "body_comp_b":
+   return [
+    buildExercise(equipmentProfile.hasFullGym ? "Romanian deadlift" : "DB hinge", "3 sets", "8 reps", "Posterior-chain support."),
+    buildExercise("DB overhead press", "3 sets", "8-10 reps", "Clean pressing volume."),
+    buildExercise("Split squat or walking lunge", "3 sets", "8 reps/side", "Controlled lower-body volume."),
+    buildExercise("Arms or trunk", "2-3 rounds", "10-15 reps", "Simple finishing work."),
+   ];
+  case "minimal":
+   return cloneExercises(buildMinimalEquipmentStrength());
+  case "travel_a":
+   return cloneExercises(buildTravelStrengthA());
+  case "travel_b":
+   return cloneExercises(buildTravelStrengthB());
+  case "full_body_b":
+   return cloneExercises(buildFoundationStrengthB(equipmentProfile));
+  case "lower_strength":
+   return cloneExercises(buildPowerbuildingLowerStrength(equipmentProfile));
+  case "lower_hypertrophy":
+   return cloneExercises(buildPowerbuildingLowerHypertrophy(equipmentProfile));
+  case "strength_foundation_a":
+   return cloneExercises(buildStrengthFoundationA(equipmentProfile));
+  case "strength_foundation_b":
+   return cloneExercises(buildStrengthFoundationB(equipmentProfile));
+  case "full_body_a":
+  default:
+   return cloneExercises(buildFoundationStrengthA(equipmentProfile));
+ }
+};
+
+const buildRoleAwareStrengthSession = ({
+ label = "Strength",
+ strSess = "A",
+ strengthDose = "35-45 min strength",
+ prescribedExercises = [],
+ upperBodyBias = false,
+ lowerBodyLoad = "moderate",
+ intensityGuidance = "Controlled strength work",
+ optionalSecondary = "",
+ nutri = NUTRITION_DAY_TYPES.strengthSupport,
+ keySession = false,
+ planningPriority = 3,
+ laneRole = "support",
+ primaryLane = "strength",
+} = {}) => ({
+ type: "strength+prehab",
+ label,
+ strSess,
+ strengthDose,
+ strengthDuration: strengthDose,
+ prescribedExercises: cloneExercises(prescribedExercises),
+ upperBodyBias,
+ lowerBodyLoad,
+ stressClass: keySession || lowerBodyLoad === "high" ? "hard" : lowerBodyLoad === "none" ? "easy" : "moderate",
+ intensityGuidance,
+ optionalSecondary,
+ nutri,
+ keySession,
+ planningPriority,
+ laneRole,
+ primaryLane,
+});
+
+const buildRoleAwareRunSession = ({
+ type = "easy-run",
+ label = "Easy Run",
+ run = null,
+ nutri = NUTRITION_DAY_TYPES.runEasy,
+ optionalSecondary = "",
+ keySession = false,
+ planningPriority = 2,
+ laneRole = "support",
+ primaryLane = "running",
+} = {}) => ({
+ type,
+ label,
+ run: clonePlainValue(run || null),
+ nutri,
+ optionalSecondary,
+ keySession,
+ planningPriority,
+ laneRole,
+ primaryLane,
+ lowerBodyLoad: type === "long-run" || type === "hard-run" ? "high" : "moderate",
+ stressClass: type === "long-run" || type === "hard-run" ? "hard" : "moderate",
+});
+
+const buildRoleAwareMixedSession = ({
+ label = "Easy Run + Strength Finish",
+ run = null,
+ strSess = "A",
+ strengthDose = "20-30 min upper-body support",
+ prescribedExercises = [],
+ upperBodyBias = true,
+ optionalSecondary = "",
+ nutri = NUTRITION_DAY_TYPES.hybridSupport,
+ keySession = false,
+ planningPriority = 2,
+ laneRole = "maintained",
+} = {}) => ({
+ type: "run+strength",
+ label,
+ run: clonePlainValue(run || null),
+ strSess,
+ strengthDose,
+ strengthDuration: strengthDose,
+ prescribedExercises: cloneExercises(prescribedExercises),
+ upperBodyBias,
+ lowerBodyLoad: upperBodyBias ? "moderate" : "high",
+ stressClass: keySession ? "hard" : "moderate",
+ optionalSecondary,
+ nutri,
+ keySession,
+ planningPriority,
+ laneRole,
+ primaryLane: "hybrid",
+});
+
+const buildGoalLaneModel = ({ activeGoals = [] } = {}) => {
+ const safeGoals = Array.isArray(activeGoals) ? activeGoals.filter(Boolean) : [];
+ const dedupeGoals = (items = []) => {
+  const seen = new Set();
+  return (Array.isArray(items) ? items : []).filter((goal) => {
+   const key = sanitizeText(goal?.id || goal?.name || "", 160).toLowerCase();
+   if (!key) return true;
+   if (seen.has(key)) return false;
+   seen.add(key);
+   return true;
+  });
+ };
+ const goalsWithRoles = safeGoals.flatMap((goal, index) => (
+  resolvePlanningLaneDescriptors(goal, index).map(({ category, role }) => ({
+   goal,
+   role,
+   category,
+   roleWeight: GOAL_ROLE_ORDER[role] || 0,
+  }))
+ ));
+ const primaryGoal = goalsWithRoles.find((entry) => entry.role === "primary")?.goal || safeGoals[0] || null;
+ const maintainedGoals = dedupeGoals(goalsWithRoles.filter((entry) => entry.role === "maintained").map((entry) => entry.goal)).filter((goal) => goal?.id !== primaryGoal?.id);
+ const supportGoals = dedupeGoals(goalsWithRoles.filter((entry) => entry.role === "background").map((entry) => entry.goal)).filter((goal) => goal?.id !== primaryGoal?.id);
+ const deferredGoals = dedupeGoals(goalsWithRoles.filter((entry) => entry.role === "deferred").map((entry) => entry.goal)).filter((goal) => goal?.id !== primaryGoal?.id);
+ const pickLane = (category = "") => {
+  const laneGoals = goalsWithRoles.filter((entry) => entry.category === category).sort((left, right) => right.roleWeight - left.roleWeight);
+  const top = laneGoals[0] || null;
+  return {
+   active: Boolean(top),
+   role: top?.role || "",
+   roleWeight: top?.roleWeight || 0,
+   goals: laneGoals.map((entry) => entry.goal),
+   leadGoal: top?.goal || null,
+   summary: laneGoals.map((entry) => entry.goal?.name).filter(Boolean),
+  };
+ };
+ const runningLane = pickLane("running");
+ const strengthLane = pickLane("strength");
+ const bodyCompLane = pickLane("body_comp");
+ return {
+  primaryGoal,
+  maintainedGoals,
+  supportGoals,
+  deferredGoals,
+  runningLane,
+  strengthLane,
+  bodyCompLane,
+  meaningfulHybrid: Boolean(runningLane.active && (strengthLane.active || bodyCompLane.active)),
+  upperBodyStrengthBias: Boolean(strengthLane.leadGoal && goalLooksUpperBodyFocused(strengthLane.leadGoal)),
+  maintainedGoalLabels: maintainedGoals.map((goal) => goal?.name).filter(Boolean),
+  supportGoalLabels: supportGoals.map((goal) => goal?.name).filter(Boolean),
+  deferredGoalLabels: deferredGoals.map((goal) => goal?.name).filter(Boolean),
+ };
+};
+
+const buildLaneDrivenRunSupportTemplate = ({
+ architecture = "race_prep_dominant",
+ baseWeek = {},
+ laneModel = {},
+ equipmentProfile = {},
+ raceNear = false,
+ bodyCompActive = false,
+ timeCrunched = false,
+} = {}) => {
+ const upperMaintenanceA = buildSessionExercisePacket({
+  emphasis: laneModel.upperBodyStrengthBias ? "bench_focus_a" : "upper_maintenance",
+  equipmentProfile,
+ });
+ const upperMaintenanceB = buildSessionExercisePacket({
+  emphasis: laneModel.upperBodyStrengthBias ? "bench_focus_b" : "strength_maintenance",
+  equipmentProfile,
+ });
+ const recoverySecondary = bodyCompActive ? "Optional: short trunk or carry finisher." : "Optional: mobility reset if recovery is good.";
+ const easySupportRun = baseWeek?.fri || { t: "Easy", d: raceNear ? "30-40 min" : "25-35 min" };
+ return {
+  1: buildRoleAwareRunSession({
+   type: "easy-run",
+   label: "Easy Run",
+   run: baseWeek?.mon || { t: "Easy", d: "30-40 min" },
+   nutri: NUTRITION_DAY_TYPES.runEasy,
+   planningPriority: 2,
+   laneRole: laneModel.runningLane?.role || "primary",
+   optionalSecondary: timeCrunched ? "Optional: stop after the run if the day is busy." : "Optional: 4-6 relaxed strides only if recovery is clearly good.",
+  }),
+  2: buildRoleAwareStrengthSession({
+   label: laneModel.upperBodyStrengthBias ? "Bench Maintenance A" : "Upper-Body Maintenance A",
+   strSess: "A",
+   strengthDose: timeCrunched ? "20-25 min upper-body maintenance" : "25-35 min upper-body maintenance",
+   prescribedExercises: upperMaintenanceA,
+   upperBodyBias: true,
+   lowerBodyLoad: "none",
+   intensityGuidance: "Keep the lift lane alive without adding lower-body fatigue.",
+   optionalSecondary: recoverySecondary,
+   nutri: NUTRITION_DAY_TYPES.hybridSupport,
+   planningPriority: 3,
+   laneRole: laneModel.strengthLane?.role || "maintained",
+  }),
+  3: buildRoleAwareRunSession({
+   type: "easy-run",
+   label: raceNear ? "Aerobic Support Run" : "Easy Support Run",
+   run: easySupportRun,
+   nutri: NUTRITION_DAY_TYPES.runEasy,
+   planningPriority: 3,
+   laneRole: laneModel.runningLane?.role || "primary",
+   optionalSecondary: "Optional: 5-10 min mobility reset.",
+  }),
+  4: buildRoleAwareRunSession({
+   type: "hard-run",
+   label: `${baseWeek?.thu?.t || "Tempo"} Run`,
+   run: baseWeek?.thu || { t: "Tempo", d: "25-35 min" },
+   nutri: NUTRITION_DAY_TYPES.runQuality,
+   keySession: true,
+   planningPriority: 1,
+   laneRole: laneModel.runningLane?.role || "primary",
+   optionalSecondary: "Optional: short fueling and calf reset after the main work.",
+  }),
+  5: buildRoleAwareStrengthSession({
+   label: laneModel.upperBodyStrengthBias ? "Bench Maintenance B" : "Upper-Body Maintenance B",
+   strSess: "B",
+   strengthDose: timeCrunched ? "20-25 min upper-body maintenance" : "20-30 min upper-body maintenance",
+   prescribedExercises: upperMaintenanceB,
+   upperBodyBias: true,
+   lowerBodyLoad: "none",
+   intensityGuidance: "Keep pressing and pulling quality without stealing from the run lane.",
+   optionalSecondary: bodyCompActive ? "Optional: arms or trunk finisher." : "Optional: cuff or scap stability finisher.",
+   planningPriority: 3,
+   laneRole: laneModel.strengthLane?.role || "maintained",
+  }),
+  6: buildRoleAwareRunSession({
+   type: "long-run",
+   label: "Long Run",
+   run: baseWeek?.sat || { t: "Long", d: "60-75 min" },
+   nutri: NUTRITION_DAY_TYPES.runLong,
+   keySession: true,
+   planningPriority: 1,
+   laneRole: laneModel.runningLane?.role || "primary",
+   optionalSecondary: "Optional: walk cooldown and fueling reset after the long session.",
+  }),
+  0: buildScheduleBufferRecovery("Active Recovery"),
+ };
+};
+
+const buildLaneDrivenStrengthHybridTemplate = ({
+ baseWeek = {},
+ laneModel = {},
+ equipmentProfile = {},
+ timeCrunched = false,
+ bodyCompActive = false,
+} = {}) => {
+ const benchA = buildSessionExercisePacket({
+  emphasis: equipmentProfile.hasFullGym || equipmentProfile.hasBench ? "bench_focus_a" : equipmentProfile.isHotel ? "travel_a" : "minimal",
+  equipmentProfile,
+ });
+ const benchB = buildSessionExercisePacket({
+  emphasis: equipmentProfile.hasFullGym || equipmentProfile.hasBench ? "bench_focus_b" : equipmentProfile.isHotel ? "travel_b" : "minimal",
+  equipmentProfile,
+ });
+ const lowerSupport = buildSessionExercisePacket({
+  emphasis: equipmentProfile.hasFullGym ? "lower_support" : equipmentProfile.isHotel ? "travel_b" : "minimal",
+  equipmentProfile,
+ });
+ return {
+  1: buildRoleAwareStrengthSession({
+   label: laneModel.upperBodyStrengthBias ? "Bench Focus A" : "Upper-Body Strength",
+   strSess: "A",
+   strengthDose: timeCrunched ? "30-40 min upper-body strength" : "40-55 min upper-body strength",
+   prescribedExercises: benchA,
+   upperBodyBias: true,
+   lowerBodyLoad: "none",
+   intensityGuidance: "Heavy but repeatable upper-body work.",
+   optionalSecondary: bodyCompActive ? "Optional: short arm finisher." : "Optional: upper-back support work.",
+   planningPriority: 1,
+   keySession: true,
+   laneRole: laneModel.strengthLane?.role || "primary",
+  }),
+  2: buildRoleAwareRunSession({
+   type: "hard-run",
+   label: `${baseWeek?.thu?.t || "Tempo"} Run`,
+   run: baseWeek?.thu || { t: "Tempo", d: "20-30 min" },
+   nutri: NUTRITION_DAY_TYPES.runQuality,
+   keySession: true,
+   planningPriority: 1,
+   laneRole: laneModel.runningLane?.role || "maintained",
+   optionalSecondary: "Optional: easy cooldown walk only.",
+  }),
+  3: buildScheduleBufferRecovery("Recovery / mobility"),
+  4: buildRoleAwareStrengthSession({
+   label: "Lower-Body Support + Pulling",
+   strSess: "B",
+   strengthDose: timeCrunched ? "25-35 min lower-body support" : "30-40 min lower-body support",
+   prescribedExercises: lowerSupport,
+   upperBodyBias: false,
+   lowerBodyLoad: "moderate",
+   intensityGuidance: "Keep the lower-body lane strong without stealing from the run anchors.",
+   optionalSecondary: "Optional: trunk or calf support only.",
+   planningPriority: 2,
+   laneRole: laneModel.strengthLane?.role || "primary",
+  }),
+  5: buildRoleAwareRunSession({
+   type: "easy-run",
+   label: "Easy Run",
+   run: baseWeek?.fri || { t: "Easy", d: "25-35 min" },
+   nutri: NUTRITION_DAY_TYPES.runEasy,
+   planningPriority: 3,
+   laneRole: laneModel.runningLane?.role || "maintained",
+   optionalSecondary: "Optional: mobility reset or relaxed strides if recovery is clearly good.",
+  }),
+  6: buildRoleAwareMixedSession({
+   label: laneModel.upperBodyStrengthBias ? "Long Aerobic + Bench Volume" : "Long Aerobic + Strength Finish",
+   run: baseWeek?.sat || { t: "Long", d: "45-60 min" },
+   strSess: "A",
+   strengthDose: timeCrunched ? "15-20 min upper-body support" : "20-25 min upper-body support",
+   prescribedExercises: benchB,
+   upperBodyBias: true,
+   optionalSecondary: "Optional: walk cooldown and refuel before adding any accessory work.",
+   planningPriority: 2,
+   laneRole: "maintained",
+  }),
+  0: buildScheduleBufferRecovery("Active Recovery"),
+ };
+};
+
+const buildLaneDrivenBalancedHybridTemplate = ({
+ baseWeek = {},
+ laneModel = {},
+ equipmentProfile = {},
+ timeCrunched = false,
+ bodyCompActive = false,
+} = {}) => {
+ const hybridFuelingSupport = Boolean(
+  laneModel.meaningfulHybrid
+  || (laneModel.runningLane?.active && laneModel.strengthLane?.active)
+  || (laneModel.runningLane?.active && bodyCompActive)
+ );
+ const fullBodyA = buildSessionExercisePacket({
+  emphasis: equipmentProfile.isHotel ? "travel_a" : equipmentProfile.hasFullGym ? "full_body_a" : "minimal",
+  equipmentProfile,
+ });
+ const upperSupport = buildSessionExercisePacket({
+  emphasis: laneModel.upperBodyStrengthBias ? "bench_focus_b" : "upper_maintenance",
+  equipmentProfile,
+ });
+ return {
+  1: buildRoleAwareStrengthSession({
+   label: laneModel.upperBodyStrengthBias ? "Bench + Pull Strength" : "Full-Body Strength A",
+   strSess: "A",
+   strengthDose: timeCrunched ? "30-40 min strength" : "35-50 min strength",
+   prescribedExercises: laneModel.upperBodyStrengthBias ? upperSupport : fullBodyA,
+   upperBodyBias: laneModel.upperBodyStrengthBias,
+   lowerBodyLoad: laneModel.upperBodyStrengthBias ? "low" : "moderate",
+   intensityGuidance: "Start the week with quality strength, not accumulated fatigue.",
+   optionalSecondary: bodyCompActive ? "Optional: short trunk finisher." : "Optional: carry or mobility finisher.",
+   keySession: true,
+   planningPriority: 1,
+   laneRole: laneModel.strengthLane?.role || "maintained",
+  }),
+  2: buildRoleAwareRunSession({
+   type: "easy-run",
+   label: "Easy Aerobic Run",
+   run: baseWeek?.mon || { t: "Easy", d: "25-35 min" },
+   nutri: NUTRITION_DAY_TYPES.runEasy,
+   planningPriority: 3,
+   laneRole: laneModel.runningLane?.role || "maintained",
+   optionalSecondary: "Optional: short mobility reset.",
+  }),
+  3: buildRoleAwareStrengthSession({
+   label: "Upper-Body Support",
+   strSess: "B",
+   strengthDose: timeCrunched ? "20-25 min support strength" : "25-35 min support strength",
+   prescribedExercises: upperSupport,
+   upperBodyBias: true,
+   lowerBodyLoad: "none",
+   intensityGuidance: "Keep the strength lane alive without overfilling the week.",
+   optionalSecondary: "Optional: cuff, scap, or arm support only.",
+   planningPriority: 3,
+   laneRole: laneModel.strengthLane?.role || "maintained",
+   nutri: hybridFuelingSupport ? NUTRITION_DAY_TYPES.hybridSupport : NUTRITION_DAY_TYPES.strengthSupport,
+  }),
+  4: buildRoleAwareRunSession({
+   type: "hard-run",
+   label: `${baseWeek?.thu?.t || "Tempo"} Run`,
+   run: baseWeek?.thu || { t: "Tempo", d: "20-30 min" },
+   nutri: NUTRITION_DAY_TYPES.runQuality,
+   keySession: true,
+   planningPriority: 1,
+   laneRole: laneModel.runningLane?.role || "maintained",
+   optionalSecondary: "Optional: fueling and calf reset after the main set.",
+  }),
+  5: buildScheduleBufferRecovery("Recovery / walk"),
+  6: buildRoleAwareRunSession({
+   type: "long-run",
+   label: laneModel.runningLane?.active ? "Long Aerobic Support" : "Long Conditioning Support",
+   run: baseWeek?.sat || { t: "Long", d: "45-60 min" },
+   nutri: laneModel.runningLane?.active ? NUTRITION_DAY_TYPES.runLong : NUTRITION_DAY_TYPES.conditioningMixed,
+   keySession: laneModel.runningLane?.roleWeight >= 3,
+   planningPriority: 2,
+   laneRole: laneModel.runningLane?.role || "support",
+   optionalSecondary: "Optional: easy walk cooldown and refuel.",
+  }),
+  0: buildScheduleBufferRecovery("Active Recovery"),
+ };
+};
+
+const buildLaneDrivenBodyCompTemplate = ({
+ baseWeek = {},
+ laneModel = {},
+ equipmentProfile = {},
+ hasRunningGoal = false,
+ timeCrunched = false,
+} = {}) => ({
+ 1: buildRoleAwareStrengthSession({
+  label: "Strength Retention A",
+  strSess: "A",
+  strengthDose: timeCrunched ? "25-35 min strength" : "30-40 min strength",
+  prescribedExercises: buildSessionExercisePacket({ emphasis: "body_comp_a", equipmentProfile }),
+  lowerBodyLoad: "moderate",
+  intensityGuidance: "Keep muscle and performance while the body-comp lane leads.",
+  optionalSecondary: "Optional: short trunk finisher.",
+  planningPriority: 1,
+  keySession: true,
+  laneRole: laneModel.strengthLane?.role || "maintained",
+ }),
+ 2: hasRunningGoal
+  ? buildRoleAwareRunSession({
+    type: "easy-run",
+    label: "Easy Aerobic Support",
+    run: baseWeek?.mon || { t: "Easy", d: "25-35 min" },
+    nutri: NUTRITION_DAY_TYPES.runEasy,
+    planningPriority: 3,
+    laneRole: laneModel.runningLane?.role || "support",
+    optionalSecondary: "Optional: mobility reset.",
+   })
+  : buildConditioningSession({ label: "Easy Aerobic Support", detail: "20-30 min low-impact aerobic work", lowImpact: true }),
+ 3: buildRoleAwareStrengthSession({
+  label: "Strength Retention B",
+  strSess: "B",
+  strengthDose: timeCrunched ? "25-35 min strength" : "30-40 min strength",
+  prescribedExercises: buildSessionExercisePacket({ emphasis: "body_comp_b", equipmentProfile }),
+  lowerBodyLoad: "moderate",
+  intensityGuidance: "Keep the work dense and repeatable, not crushing.",
+  optionalSecondary: "Optional: short carry or trunk finisher.",
+  planningPriority: 1,
+  laneRole: laneModel.strengthLane?.role || "maintained",
+ }),
+ 4: buildConditioningSession({
+  label: hasRunningGoal ? "Tempo Conditioning" : "Conditioning Intervals",
+  detail: hasRunningGoal ? "20-30 min tempo conditioning or controlled threshold intervals" : "20-30 min controlled intervals or mixed conditioning",
+ }),
+ 5: buildScheduleBufferRecovery("Recovery / walk"),
+ 6: hasRunningGoal
+  ? buildRoleAwareRunSession({
+    type: "easy-run",
+    label: "Long Aerobic Support",
+    run: baseWeek?.sat || { t: "Easy", d: "35-50 min" },
+    nutri: NUTRITION_DAY_TYPES.runEasy,
+    planningPriority: 3,
+    laneRole: laneModel.runningLane?.role || "support",
+    optionalSecondary: "Optional: easy mobility finish.",
+   })
+  : buildConditioningSession({ label: "Long Aerobic Support", detail: "25-40 min easy conditioning, incline walk, or bike", lowImpact: true }),
+ 0: buildScheduleBufferRecovery("Active Recovery"),
+});
+
+const buildRoleAwareHybridWeek = ({
+ architecture = "hybrid_performance",
+ baseWeek = {},
+ laneModel = {},
+ trainingContext = null,
+ hasRunningGoal = false,
+ bodyCompActive = false,
+ timeCrunched = false,
+ raceNear = false,
+ travelHeavy = false,
+} = {}) => {
+ const equipmentProfile = buildEquipmentProfile({
+  trainingContext,
+  userProfile: { trainingContext },
+ }, { trainingContext });
+ if (architecture === "event_prep_upper_body_maintenance") {
+  return buildLaneDrivenRunSupportTemplate({
+   architecture,
+   baseWeek,
+   laneModel,
+   equipmentProfile,
+   raceNear: true,
+   bodyCompActive,
+   timeCrunched,
+  });
+ }
+ if (architecture === "race_prep_dominant") {
+  return buildLaneDrivenRunSupportTemplate({
+   architecture,
+   baseWeek,
+   laneModel,
+   equipmentProfile,
+   raceNear,
+   bodyCompActive,
+   timeCrunched,
+  });
+ }
+ if (architecture === "strength_dominant" && hasRunningGoal) {
+  return buildLaneDrivenStrengthHybridTemplate({
+   baseWeek,
+   laneModel,
+   equipmentProfile,
+   timeCrunched,
+   bodyCompActive,
+  });
+ }
+ if (architecture === "strength_dominant") {
+  const primaryStrengthA = buildSessionExercisePacket({
+   emphasis: laneModel.upperBodyStrengthBias ? "bench_focus_a" : equipmentProfile.hasFullGym ? "strength_foundation_a" : travelHeavy ? "travel_a" : "minimal",
+   equipmentProfile,
+  });
+  const primaryStrengthB = buildSessionExercisePacket({
+   emphasis: laneModel.upperBodyStrengthBias ? "bench_focus_b" : equipmentProfile.hasFullGym ? "strength_foundation_b" : travelHeavy ? "travel_b" : "minimal",
+   equipmentProfile,
+  });
+  return {
+   1: buildRoleAwareStrengthSession({
+    label: laneModel.upperBodyStrengthBias ? "Bench Focus A" : "Primary Strength A",
+    strSess: "A",
+    strengthDose: timeCrunched ? "30-40 min strength" : "40-55 min strength",
+    prescribedExercises: primaryStrengthA,
+    upperBodyBias: laneModel.upperBodyStrengthBias,
+    lowerBodyLoad: laneModel.upperBodyStrengthBias ? "low" : "high",
+    intensityGuidance: "This is the clearest strength driver of the week.",
+    optionalSecondary: "Optional: short trunk finisher.",
+    keySession: true,
+    planningPriority: 1,
+    laneRole: laneModel.strengthLane?.role || "primary",
+   }),
+   2: buildConditioningSession({ label: "Easy Conditioning", detail: "20-30 min easy bike, rower, incline walk, or mixed conditioning", lowImpact: true }),
+   3: buildRoleAwareStrengthSession({
+    label: laneModel.upperBodyStrengthBias ? "Lower-Body Support" : "Primary Strength B",
+    strSess: "B",
+    strengthDose: timeCrunched ? "25-35 min strength" : "35-45 min strength",
+    prescribedExercises: laneModel.upperBodyStrengthBias
+     ? buildSessionExercisePacket({ emphasis: "lower_support", equipmentProfile })
+     : primaryStrengthB,
+    upperBodyBias: false,
+    lowerBodyLoad: laneModel.upperBodyStrengthBias ? "moderate" : "high",
+    intensityGuidance: "Keep the second strength touch productive, not redundant.",
+    optionalSecondary: "Optional: carry or mobility finisher.",
+    planningPriority: 1,
+    keySession: true,
+    laneRole: laneModel.strengthLane?.role || "primary",
+   }),
+   4: buildScheduleBufferRecovery("Recovery / walk"),
+   5: buildRoleAwareStrengthSession({
+    label: laneModel.upperBodyStrengthBias ? "Bench Volume + Pulling" : "Strength Volume",
+    strSess: "A",
+    strengthDose: timeCrunched ? "25-35 min support strength" : "30-40 min support strength",
+    prescribedExercises: laneModel.upperBodyStrengthBias
+     ? buildSessionExercisePacket({ emphasis: "bench_focus_b", equipmentProfile })
+     : buildSessionExercisePacket({ emphasis: "full_body_b", equipmentProfile }),
+    upperBodyBias: laneModel.upperBodyStrengthBias,
+    lowerBodyLoad: laneModel.upperBodyStrengthBias ? "low" : "moderate",
+    intensityGuidance: "Accumulate useful work without turning the week into junk fatigue.",
+    optionalSecondary: "Optional: easy aerobic cooldown.",
+    planningPriority: 2,
+    laneRole: laneModel.strengthLane?.role || "primary",
+   }),
+   6: buildConditioningSession({ label: "Supportive Conditioning", detail: "20-25 min easy conditioning to keep work capacity alive", lowImpact: true }),
+   0: buildScheduleBufferRecovery("Active Recovery"),
+  };
+ }
+ if (architecture === "body_comp_conditioning") {
+  return buildLaneDrivenBodyCompTemplate({
+   baseWeek,
+   laneModel,
+   equipmentProfile,
+   hasRunningGoal,
+   timeCrunched,
+  });
+ }
+ if (architecture === "hybrid_performance" && laneModel.runningLane?.roleWeight > laneModel.strengthLane?.roleWeight) {
+  return {
+   ...buildLaneDrivenRunSupportTemplate({
+    architecture,
+    baseWeek,
+    laneModel,
+    equipmentProfile,
+    raceNear,
+    bodyCompActive,
+    timeCrunched,
+   }),
+   1: buildRoleAwareMixedSession({
+    label: laneModel.upperBodyStrengthBias ? "Easy Run + Bench Maintenance" : "Easy Run + Strength Finish",
+    run: baseWeek?.mon || { t: "Easy", d: "30-40 min" },
+    strSess: "A",
+    strengthDose: timeCrunched ? "15-20 min upper-body support" : "20-25 min upper-body support",
+    prescribedExercises: buildSessionExercisePacket({
+     emphasis: laneModel.upperBodyStrengthBias ? "bench_focus_a" : "upper_maintenance",
+     equipmentProfile,
+    }),
+    upperBodyBias: true,
+    optionalSecondary: "Optional: stop after the run if the day is busy.",
+    planningPriority: 2,
+    laneRole: "maintained",
+   }),
+   2: buildScheduleBufferRecovery("Recovery / mobility"),
+  };
+ }
+ if (architecture === "hybrid_performance" && laneModel.strengthLane?.roleWeight > laneModel.runningLane?.roleWeight) {
+  return buildLaneDrivenStrengthHybridTemplate({
+   baseWeek,
+   laneModel,
+   equipmentProfile,
+   timeCrunched,
+   bodyCompActive,
+  });
+ }
+ if (architecture === "hybrid_performance") {
+  return buildLaneDrivenBalancedHybridTemplate({
+   baseWeek,
+   laneModel,
+   equipmentProfile,
+   timeCrunched,
+   bodyCompActive,
+  });
+ }
+ return null;
+};
+
+const isStrengthLikeSession = (session = null) => ["run+strength", "strength+prehab"].includes(String(session?.type || "").toLowerCase());
+
+const resolveSupportAwarePacketForSession = ({
+ session = null,
+ supportPlanningContext = null,
+ equipmentProfile = {},
+ hasRunningGoal = false,
+ domainAdapterId = "",
+} = {}) => {
+ if (!isStrengthLikeSession(session) || !supportPlanningContext) return null;
+ const label = sanitizeText(session?.label || "", 160).toLowerCase();
+ const leadDomain = sanitizeText(domainAdapterId || supportPlanningContext?.leadDomain || "", 80).toLowerCase();
+ const existingRows = cloneExercises(session?.prescribedExercises || []);
+ const rowCount = existingRows.length;
+ const swimDryland = leadDomain === "swimming_endurance_technique" || /\bdryland|shoulder \/ core support|shoulder durability\b/.test(label);
+ const benchFocused = /\bbench\b/.test(label);
+ const upperSupport = Boolean(session?.upperBodyBias) || /\bupper-body|push\/pull|maintenance|volume|support\b/.test(label);
+ const lowerDurability = /\blower-body support|durability\b/.test(label) || (hasRunningGoal && !session?.upperBodyBias && /\bstrength\b/.test(label));
+
+ if (swimDryland) return buildSwimDrylandPacket({ supportPlanningContext, equipmentProfile });
+ if (benchFocused && /\ba\b|focus a|maintenance a/.test(label)) return buildBenchSupportPacketA({ supportPlanningContext, equipmentProfile });
+ if (benchFocused && /\bb\b|focus b|maintenance b|volume/.test(label)) return buildBenchSupportPacketB({ supportPlanningContext, equipmentProfile });
+ if (benchFocused) return buildUpperMaintenancePacket({ supportPlanningContext, equipmentProfile });
+ if (lowerDurability) return buildLowerDurabilityPacket({ supportPlanningContext, equipmentProfile });
+ if (upperSupport) return buildUpperMaintenancePacket({ supportPlanningContext, equipmentProfile });
+ if (!rowCount && leadDomain === "swimming_endurance_technique") return buildSwimDrylandPacket({ supportPlanningContext, equipmentProfile });
+ if (!rowCount && hasRunningGoal) return buildLowerDurabilityPacket({ supportPlanningContext, equipmentProfile });
+ if (!rowCount) return buildUpperMaintenancePacket({ supportPlanningContext, equipmentProfile });
+ return null;
+};
+
+const applyGoalSupportExerciseSelection = ({
+ dayTemplates = {},
+ supportPlanningContext = null,
+ equipmentProfile = {},
+ hasRunningGoal = false,
+ domainAdapterId = "",
+} = {}) => {
+ if (!supportPlanningContext?.summaries?.length) return clonePlainValue(dayTemplates || {});
+ return Object.fromEntries(
+  Object.entries(dayTemplates || {}).map(([dayKey, session]) => {
+   if (!session || !isStrengthLikeSession(session)) return [dayKey, session];
+   const packet = resolveSupportAwarePacketForSession({
+    session,
+    supportPlanningContext,
+    equipmentProfile,
+    hasRunningGoal,
+    domainAdapterId,
+   });
+   if (!packet?.length) return [dayKey, session];
+   return [dayKey, normalizeSessionEntryLabel({
+    ...session,
+    prescribedExercises: packet,
+    supportFocus: {
+     source: "goal_driver_graph",
+     leadDomain: sanitizeText(domainAdapterId || supportPlanningContext?.leadDomain || "", 80).toLowerCase(),
+    },
+   })];
+ })
+ );
+};
+
+const WEEKDAY_LABELS = Object.freeze({
+  0: "Sunday",
+  1: "Monday",
+  2: "Tuesday",
+  3: "Wednesday",
+  4: "Thursday",
+  5: "Friday",
+  6: "Saturday",
+});
+const PLANNER_DAY_ORDER = Object.freeze([1, 2, 3, 4, 5, 6, 0]);
+const TRAINING_WEEKDAY_TO_PLANNER_DAY = Object.freeze(
+ Object.fromEntries(
+  TRAINING_WEEKDAY_OPTIONS.map((option) => [option.value, option.plannerDayKey])
+ )
+);
+
+const resolveWeekdayLabel = (dayKey = null) => WEEKDAY_LABELS?.[Number(dayKey)] || "that day";
+const resolveWeekdayLabelList = (dayKeys = []) => (
+ dedupeStrings(
+  (Array.isArray(dayKeys) ? dayKeys : [])
+   .map((dayKey) => resolveWeekdayLabel(dayKey))
+   .filter(Boolean)
+ )
+);
+
+const isHabitShiftCandidate = (session = null, { architecture = "hybrid_performance" } = {}) => {
+ if (!session || session?.type === "rest" || session?.isRecoverySlot) return false;
+ const planningPriority = Number(session?.planningPriority ?? 99);
+ const priorityScore = resolveSessionPriorityScore({ session, architecture });
+ return Boolean(session?.keySession) || planningPriority <= 1 || priorityScore >= 84;
+};
+
+const resolveHabitShiftTargetScore = ({
+ session = null,
+ targetDayKey = null,
+ targetStats = {},
+ architecture = "hybrid_performance",
+} = {}) => {
+ const safeDayKey = Number(targetDayKey);
+ const completionRate = Number(targetStats?.completionRate || 0);
+ const completedCount = Number(targetStats?.completedCount || 0);
+ if (!session || session?.type === "rest" || session?.isRecoverySlot) {
+  return 120 + (completionRate * 20) + completedCount + (safeDayKey === 0 ? 3 : 0);
+ }
+ const type = String(session?.type || "").toLowerCase();
+ const planningPriority = Number(session?.planningPriority ?? 4);
+ const priorityScore = resolveSessionPriorityScore({ session, architecture });
+ const easyReplacement = ["conditioning", "easy-run"].includes(type) || planningPriority >= 3 || priorityScore <= 60;
+ if (!easyReplacement) return -Infinity;
+ return 60 + (completionRate * 20) + completedCount - priorityScore + (safeDayKey === 0 ? 3 : 0);
+};
+
+const applyHabitDrivenScheduleShift = ({
+ dayTemplates = {},
+ habitAdaptationContext = null,
+ architecture = "hybrid_performance",
+ allowedDayKeys = null,
+} = {}) => {
+ const rawSourceDayKey = habitAdaptationContext?.chronicMissDayKey;
+ if (!Number.isInteger(rawSourceDayKey)) {
+  return {
+   dayTemplates: clonePlainValue(dayTemplates || {}),
+   changed: false,
+   effects: [],
+  };
+ }
+ const sourceDayKey = Number(rawSourceDayKey);
+
+ const next = clonePlainValue(dayTemplates || {});
+ const sourceSession = next?.[sourceDayKey] || null;
+ if (!isHabitShiftCandidate(sourceSession, { architecture })) {
+  return {
+   dayTemplates: next,
+   changed: false,
+   effects: [],
+  };
+ }
+
+ const weekdayStats = habitAdaptationContext?.weekdayStats || {};
+ const sourceStats = weekdayStats?.[sourceDayKey] || {};
+ const sourceCompletionRate = Number(sourceStats?.completionRate || 0);
+ const reliableDayOrder = Array.isArray(habitAdaptationContext?.reliableDayOrder)
+  ? habitAdaptationContext.reliableDayOrder
+  : [];
+ const allowedDayKeySet = Array.isArray(allowedDayKeys) && allowedDayKeys.length
+  ? new Set(allowedDayKeys.map((dayKey) => Number(dayKey)).filter((dayKey) => Number.isInteger(dayKey)))
+  : null;
+ const candidates = reliableDayOrder
+  .filter((dayKey) => (
+   Number.isInteger(dayKey)
+   && dayKey !== sourceDayKey
+   && (!allowedDayKeySet || allowedDayKeySet.has(Number(dayKey)))
+  ))
+  .map((dayKey) => {
+   const targetSession = next?.[dayKey] || null;
+   const targetStats = weekdayStats?.[dayKey] || {};
+   const targetCompletionRate = Number(targetStats?.completionRate || 0);
+   const betterEvidence = targetCompletionRate >= (sourceCompletionRate + 0.2);
+   const recoveryFallback = !targetSession || targetSession?.type === "rest" || targetSession?.isRecoverySlot;
+   if (!betterEvidence && !recoveryFallback) return null;
+   return {
+    dayKey,
+    targetSession,
+    targetStats,
+    score: resolveHabitShiftTargetScore({
+     session: targetSession,
+     targetDayKey: dayKey,
+     targetStats,
+     architecture,
+    }),
+   };
+  })
+  .filter((entry) => Number.isFinite(entry?.score))
+  .sort((left, right) => right.score - left.score);
+
+ const target = candidates[0] || null;
+ if (!target) {
+  return {
+   dayTemplates: next,
+   changed: false,
+   effects: [],
+  };
+ }
+
+ const movedSession = normalizeSessionEntryLabel({
+  ...sourceSession,
+  habitAdaptation: {
+   source: "weekday_reliability",
+   fromDayKey: sourceDayKey,
+   toDayKey: target.dayKey,
+  },
+ });
+ const replacementSession = target?.targetSession && target.targetSession.type !== "rest" && !target.targetSession.isRecoverySlot
+  ? normalizeSessionEntryLabel({
+   ...target.targetSession,
+   habitAdaptation: {
+    source: "weekday_reliability_backfill",
+    fromDayKey: target.dayKey,
+    toDayKey: sourceDayKey,
+   },
+  })
+  : buildScheduleBufferRecovery("Recovery / schedule buffer");
+
+ next[target.dayKey] = movedSession;
+ next[sourceDayKey] = replacementSession;
+
+ return {
+  dayTemplates: next,
+  changed: true,
+  effects: [
+   `Key work moved from ${resolveWeekdayLabel(sourceDayKey)} to ${resolveWeekdayLabel(target.dayKey)} because ${resolveWeekdayLabel(sourceDayKey)} has been unreliable lately.`,
+  ],
+ };
+};
+
+const buildCardioPreferenceDetail = (mode = "", { longSession = false } = {}) => {
+ const safeMode = sanitizeText(mode, 40).toLowerCase();
+ if (safeMode === "bike") return longSession ? "45-75 min steady bike instead of a default long run slot" : "20-35 min steady bike or spin";
+ if (safeMode === "elliptical") return longSession ? "45-70 min steady elliptical session" : "20-35 min steady elliptical session";
+ if (safeMode === "incline_walk") return longSession ? "40-70 min incline walk" : "20-35 min incline walk";
+ if (safeMode === "rower") return longSession ? "35-55 min easy rower session" : "15-30 min controlled rower work";
+ if (safeMode === "treadmill") return longSession ? "45-75 min treadmill long aerobic session" : "20-35 min treadmill run or walk";
+ if (safeMode === "run_walk") return longSession ? "45-75 min easy run/walk" : "20-35 min easy run/walk";
+ if (safeMode === "outdoor_run") return longSession ? "45-75 min outdoor long aerobic session" : "20-35 min outdoor easy run";
+ if (safeMode === "swim") return longSession ? "35-55 min easy swim or pool aerobic work" : "20-35 min easy swim or pool aerobic work";
+ return longSession ? "45-75 min easy aerobic work in the mode you usually keep" : "20-35 min easy aerobic work in the mode you usually keep";
+};
+
+const buildCardioPreferenceLabel = (mode = "", { longSession = false, conditioning = false } = {}) => {
+ const safeMode = sanitizeText(mode, 40).toLowerCase();
+ if (conditioning) {
+  if (safeMode === "bike") return "Bike Conditioning";
+  if (safeMode === "elliptical") return "Elliptical Conditioning";
+  if (safeMode === "incline_walk") return "Incline Walk Conditioning";
+  if (safeMode === "rower") return "Rower Conditioning";
+  if (safeMode === "treadmill") return "Treadmill Conditioning";
+  if (safeMode === "swim") return "Swim Conditioning";
+  return "Conditioning";
+ }
+ if (longSession) {
+  if (safeMode === "treadmill") return "Treadmill Long Aerobic";
+  if (safeMode === "run_walk") return "Long Run/Walk";
+  if (safeMode === "outdoor_run") return "Outdoor Long Run";
+  return "Long Aerobic Support";
+ }
+ if (safeMode === "run_walk") return "Easy Run/Walk";
+ if (safeMode === "treadmill") return "Treadmill Easy Run";
+ if (safeMode === "outdoor_run") return "Outdoor Easy Run";
+ if (safeMode === "bike") return "Bike Aerobic Support";
+ if (safeMode === "elliptical") return "Elliptical Aerobic Support";
+ if (safeMode === "incline_walk") return "Incline Walk Support";
+ if (safeMode === "rower") return "Rower Aerobic Support";
+ if (safeMode === "swim") return "Swim Aerobic Support";
+ return "Aerobic Support";
+};
+
+const appendDistinctSecondaryLine = (current = "", addition = "") => {
+ const safeCurrent = sanitizeText(current, 180);
+ const safeAddition = sanitizeText(addition, 180);
+ if (!safeAddition) return safeCurrent;
+ if (!safeCurrent) return safeAddition;
+ if (safeCurrent.toLowerCase().includes(safeAddition.toLowerCase())) return safeCurrent;
+ return `${safeCurrent} ${safeAddition}`.trim();
+};
+
+const applyPreferredLongSessionDayShift = ({
+ dayTemplates = {},
+ habitAdaptationContext = null,
+ allowedDayKeys = null,
+} = {}) => {
+ const preferredDayKey = Number(habitAdaptationContext?.preferredLongSessionDayKey);
+ if (!Number.isInteger(preferredDayKey)) {
+  return {
+   dayTemplates: clonePlainValue(dayTemplates || {}),
+   changed: false,
+   effects: [],
+  };
+ }
+ const allowedDayKeySet = Array.isArray(allowedDayKeys) && allowedDayKeys.length
+  ? new Set(allowedDayKeys.map((dayKey) => Number(dayKey)).filter((dayKey) => Number.isInteger(dayKey)))
+  : null;
+ if (allowedDayKeySet && !allowedDayKeySet.has(preferredDayKey)) {
+  return {
+   dayTemplates: clonePlainValue(dayTemplates || {}),
+   changed: false,
+   effects: [],
+  };
+ }
+ const next = clonePlainValue(dayTemplates || {});
+ const currentLongEntry = Object.entries(next).find(([, session]) => inspectSessionCapabilities(session).longSession) || null;
+ if (!currentLongEntry) {
+  return {
+   dayTemplates: next,
+   changed: false,
+   effects: [],
+  };
+ }
+ const sourceDayKey = Number(currentLongEntry[0]);
+ if (sourceDayKey === preferredDayKey) {
+  return {
+   dayTemplates: next,
+   changed: false,
+   effects: [],
+  };
+ }
+ const targetSession = next?.[preferredDayKey] || null;
+ if (targetSession && inspectSessionCapabilities(targetSession).longSession) {
+  return {
+   dayTemplates: next,
+   changed: false,
+   effects: [],
+  };
+ }
+ if (targetSession && resolveSessionPriorityScore({ session: targetSession, architecture: "hybrid_performance" }) >= 84) {
+  return {
+   dayTemplates: next,
+   changed: false,
+   effects: [],
+  };
+ }
+
+ const movedLongSession = normalizeSessionEntryLabel({
+  ...currentLongEntry[1],
+  habitAdaptation: {
+   source: "preferred_long_session_day",
+   fromDayKey: sourceDayKey,
+   toDayKey: preferredDayKey,
+  },
+ });
+ const replacementSession = targetSession && targetSession.type !== "rest" && !targetSession.isRecoverySlot
+  ? normalizeSessionEntryLabel({
+     ...targetSession,
+     habitAdaptation: {
+      source: "preferred_long_session_backfill",
+      fromDayKey: preferredDayKey,
+      toDayKey: sourceDayKey,
+     },
+    })
+  : buildScheduleBufferRecovery("Recovery / schedule buffer");
+
+ next[preferredDayKey] = movedLongSession;
+ next[sourceDayKey] = replacementSession;
+
+ return {
+  dayTemplates: next,
+  changed: true,
+  effects: [
+   `Long-session work moved to ${resolveWeekdayLabel(preferredDayKey)} because that is where it actually gets done most often.`,
+  ],
+ };
+};
+
+const applyHabitDrivenCardioPreferences = ({
+ dayTemplates = {},
+ habitAdaptationContext = null,
+ architecture = "hybrid_performance",
+ hasRunningGoal = false,
+} = {}) => {
+ const cardioPreferences = habitAdaptationContext?.cardioPreferences || {};
+ if (!cardioPreferences?.easyAerobic && !cardioPreferences?.conditioning && !cardioPreferences?.longSession && !habitAdaptationContext?.lowImpactBias) {
+  return {
+   dayTemplates: clonePlainValue(dayTemplates || {}),
+   changed: false,
+   effects: [],
+  };
+ }
+
+ const effectLines = [];
+ const next = Object.fromEntries(
+  Object.entries(dayTemplates || {}).map(([dayKey, session]) => {
+   if (!session || session.type === "rest") return [dayKey, session];
+   const capabilities = inspectSessionCapabilities(session);
+   if (!capabilities.enduranceCapable) return [dayKey, session];
+
+   const longSession = capabilities.longSession;
+   const preference = longSession
+    ? cardioPreferences.longSession || cardioPreferences.easyAerobic || null
+    : session.type === "conditioning"
+    ? cardioPreferences.conditioning || cardioPreferences.easyAerobic || null
+    : session.type === "easy-run"
+    ? cardioPreferences.easyAerobic || cardioPreferences.conditioning || null
+    : null;
+   if (!preference?.mode) return [dayKey, session];
+
+   const mode = preference.mode;
+   let nextSession = clonePlainValue(session);
+   let changed = false;
+
+   if (longSession) {
+    if (["treadmill", "run_walk", "outdoor_run"].includes(mode)) {
+      nextSession.label = buildCardioPreferenceLabel(mode, { longSession: true });
+      nextSession.run = {
+       ...(nextSession.run || {}),
+       t: mode === "run_walk" ? "Run/Walk" : mode === "treadmill" ? "Treadmill" : "Outdoor",
+      };
+      nextSession.environmentNote = appendDistinctSecondaryLine(nextSession.environmentNote, `Habit preference: ${preference.label} is the long-session mode you keep choosing.`);
+      changed = true;
+    }
+   } else if (session.type === "conditioning") {
+    nextSession.label = buildCardioPreferenceLabel(mode, { conditioning: true });
+    nextSession.fallback = buildCardioPreferenceDetail(mode, { longSession: false });
+    if (habitAdaptationContext?.lowImpactBias || preference.lowImpact) {
+      nextSession.intensityGuidance = "easy aerobic only";
+      nextSession.environmentNote = "Low-impact modes have been the most repeatable lately.";
+    }
+    changed = true;
+   } else if (session.type === "easy-run") {
+    if (["treadmill", "run_walk", "outdoor_run"].includes(mode)) {
+      nextSession.label = buildCardioPreferenceLabel(mode, { longSession: false });
+      nextSession.run = {
+       ...(nextSession.run || {}),
+       t: mode === "run_walk" ? "Run/Walk" : mode === "treadmill" ? "Treadmill" : "Outdoor",
+      };
+      nextSession.environmentNote = appendDistinctSecondaryLine(nextSession.environmentNote, `Habit preference: ${preference.label} is the easy aerobic mode you usually keep.`);
+      changed = true;
+    } else if ((habitAdaptationContext?.lowImpactBias || preference.lowImpact) && (!hasRunningGoal || (!session.keySession && Number(session?.planningPriority || 99) >= 3 && !["race_prep_dominant", "event_prep_upper_body_maintenance"].includes(architecture)))) {
+      nextSession = buildConditioningSession({
+       label: buildCardioPreferenceLabel(mode, { conditioning: false }),
+       detail: buildCardioPreferenceDetail(mode, { longSession: false }),
+       nutri: nextSession?.nutri || NUTRITION_DAY_TYPES.runEasy,
+       lowImpact: true,
+      });
+      nextSession.habitAdaptation = {
+       source: "preferred_cardio_mode",
+       mode,
+       dayKey: Number(dayKey),
+      };
+      changed = true;
+    } else {
+      nextSession.environmentNote = appendDistinctSecondaryLine(nextSession.environmentNote, `Fallback: ${preference.label} works well when you want the option you usually keep.`);
+      changed = true;
+    }
+   }
+
+   if (!changed) return [dayKey, session];
+   effectLines.push(
+    longSession
+     ? `Long aerobic work now leans into ${preference.label} when that stays true to the session intent.`
+     : session.type === "conditioning"
+     ? `Conditioning sessions now bias toward ${preference.label}, which is what keeps showing up in the logs.`
+     : `Supportive aerobic sessions now respect the ${preference.label} option you keep choosing.`
+   );
+   return [dayKey, normalizeSessionEntryLabel(nextSession)];
+  })
+ );
+
+ return {
+  dayTemplates: next,
+  changed: effectLines.length > 0,
+  effects: dedupeStrings(effectLines).slice(0, 2),
+ };
+};
+
+const resolveHabitAccessoryPrescription = (pattern = "", preferredExercise = "") => {
+ const safePattern = sanitizeText(pattern, 80).toLowerCase();
+ const safeExercise = sanitizeText(preferredExercise, 120);
+ if (safePattern === "trunk") return { ex: safeExercise, sets: "2-3 sets", reps: "8-12 reps or 30-45 sec", note: "Your usual trunk add-on stays visible." };
+ if (safePattern === "lower_leg_support") return { ex: safeExercise, sets: "3 sets", reps: "12-20 reps", note: "Your usual lower-leg support work stays visible." };
+ if (safePattern === "single_leg") return { ex: safeExercise, sets: "2-3 sets", reps: "8-12 reps / side", note: "Your usual single-leg support work stays visible." };
+ if (safePattern === "posterior_chain_support") return { ex: safeExercise, sets: "2-3 sets", reps: "8-12 reps", note: "Your usual posterior-chain support work stays visible." };
+ if (safePattern === "swim_dryland") return { ex: safeExercise, sets: "2-3 sets", reps: "10-15 reps", note: "Your usual dryland support work stays visible." };
+ return { ex: safeExercise, sets: "2-3 sets", reps: "10-15 reps", note: "You keep adding this, so it now stays in the support packet." };
+};
+
+const isHabitAddOnCompatible = ({
+ session = null,
+ pattern = "",
+ hasRunningGoal = false,
+} = {}) => {
+ const safePattern = sanitizeText(pattern, 80).toLowerCase();
+ const labelText = sanitizeText(`${session?.label || ""} ${session?.optionalSecondary || ""}`, 200).toLowerCase();
+ const upperBodyBias = Boolean(session?.upperBodyBias) || /upper|bench|press|push\/pull|shoulder/.test(labelText);
+ if (["trunk"].includes(safePattern)) return true;
+ if (["shoulder_isolation", "scap_support", "triceps_support", "upper_pull", "upper_press_support", "shoulder_tolerance"].includes(safePattern)) return upperBodyBias;
+ if (["lower_leg_support", "single_leg", "posterior_chain_support"].includes(safePattern)) return !upperBodyBias || hasRunningGoal || /durability|run|lower|leg/.test(labelText);
+ if (safePattern === "swim_dryland") return /swim/.test(labelText);
+ return false;
+};
+
+const applyHabitDrivenExercisePreferences = ({
+ dayTemplates = {},
+ habitAdaptationContext = null,
+ hasRunningGoal = false,
+} = {}) => {
+ if (
+  !habitAdaptationContext?.exercisePreferences?.length
+  && !habitAdaptationContext?.accessoryAddOnPreferences?.length
+  && !habitAdaptationContext?.avoidAccessoryPatterns?.length
+ ) {
+  return {
+   dayTemplates: clonePlainValue(dayTemplates || {}),
+   changed: false,
+   effects: [],
+  };
+ }
+
+ const effectRows = [];
+ const addOnRows = [];
+ const removedPatterns = [];
+ const avoidPatterns = new Set((habitAdaptationContext?.avoidAccessoryPatterns || []).map((entry) => sanitizeText(entry?.pattern || "", 80).toLowerCase()).filter(Boolean));
+ const addOnPreferences = Array.isArray(habitAdaptationContext?.accessoryAddOnPreferences)
+  ? [...habitAdaptationContext.accessoryAddOnPreferences].sort((left, right) => Number(right?.evidenceCount || 0) - Number(left?.evidenceCount || 0))
+  : [];
+  const next = Object.fromEntries(
+  Object.entries(dayTemplates || {}).map(([dayKey, session]) => {
+   if (!session || !isStrengthLikeSession(session) || !Array.isArray(session?.prescribedExercises) || !session.prescribedExercises.length) {
+    return [dayKey, session];
+   }
+   const result = applyExercisePreferenceRows({
+    rows: session.prescribedExercises,
+    exercisePreferences: habitAdaptationContext.exercisePreferences,
+   });
+   let nextRows = Array.isArray(result.rows) ? result.rows : session.prescribedExercises;
+   if (avoidPatterns.size && nextRows.length > 3) {
+    const beforeCount = nextRows.length;
+    nextRows = nextRows.filter((row) => {
+      const profile = row?.transferProfile || buildExerciseTransferProfile({ exerciseName: row?.ex || "", note: row?.note || "" });
+      const primaryPattern = sanitizeText(profile?.primaryPattern || "", 80).toLowerCase();
+      if (!primaryPattern || !avoidPatterns.has(primaryPattern)) return true;
+      if ((profile?.directDriverIds || []).length > 0) return true;
+      removedPatterns.push(primaryPattern);
+      return false;
+    });
+    if (!nextRows.length) nextRows = Array.isArray(result.rows) ? result.rows : session.prescribedExercises;
+    if (nextRows.length < beforeCount) {
+      result.changed = true;
+    }
+   }
+
+   if (addOnPreferences.length && nextRows.length < 5) {
+    const existingPatterns = new Set(
+      nextRows
+        .map((row) => sanitizeText((row?.transferProfile || buildExerciseTransferProfile({ exerciseName: row?.ex || "", note: row?.note || "" }))?.primaryPattern || "", 80).toLowerCase())
+        .filter(Boolean)
+    );
+    const preferredAddOn = addOnPreferences.find((entry) => (
+      entry?.preferredExercise
+      && !existingPatterns.has(sanitizeText(entry?.pattern || "", 80).toLowerCase())
+      && isHabitAddOnCompatible({ session, pattern: entry?.pattern, hasRunningGoal })
+    )) || null;
+    if (preferredAddOn) {
+      nextRows = [
+        ...nextRows,
+        resolveHabitAccessoryPrescription(preferredAddOn.pattern, preferredAddOn.preferredExercise),
+      ];
+      addOnRows.push(preferredAddOn);
+      result.changed = true;
+    }
+   }
+
+   if (!result.changed) return [dayKey, session];
+   effectRows.push(...(result.replacements || []));
+   return [dayKey, normalizeSessionEntryLabel({
+    ...session,
+    prescribedExercises: nextRows,
+    habitPreferenceSummary: result.replacements,
+   })];
+  })
+ );
+
+ const effectLines = dedupeStrings(
+  [
+   ...effectRows.map((entry) => (
+    entry?.to && entry?.from
+     ? `Accessory choices now lean into ${entry.to} after repeated swaps away from ${entry.from}.`
+     : ""
+   )),
+   ...addOnRows.map((entry) => (
+    entry?.preferredExercise
+     ? `${entry.preferredExercise} now stays in the support packet because you keep adding it.`
+     : ""
+   )),
+   ...removedPatterns.map((pattern) => (
+    pattern
+     ? `${pattern.replace(/_/g, " ")} no longer gets forced when it keeps being skipped.`
+     : ""
+   )),
+  ].filter(Boolean)
+ ).slice(0, 3);
+
+ return {
+  dayTemplates: next,
+  changed: effectRows.length > 0 || addOnRows.length > 0 || removedPatterns.length > 0,
+  effects: effectLines,
+ };
+};
+
+const summarizeLogText = (entry = null) => sanitizeText([
+ entry?.actualSession?.sessionLabel || "",
+ entry?.actualSession?.sessionType || "",
+ entry?.actualSession?.modality || "",
+ entry?.actualSession?.swapLabel || "",
+ entry?.actualSession?.bodyStatus || "",
+ entry?.actualSession?.recoveryState || "",
+ entry?.checkin?.sessionFeel || "",
+ entry?.label || "",
+ entry?.type || "",
+ entry?.notes || "",
+].join(" "), 320).toLowerCase();
+
+const buildRecentHybridLoadContext = ({
+ logs = {},
+ todayKey = "",
+ lookbackDays = 4,
+} = {}) => {
+ const safeToday = sanitizeText(todayKey || new Date().toISOString().split("T")[0], 24);
+ const anchor = new Date(`${safeToday}T12:00:00`);
+ if (Number.isNaN(anchor.getTime())) {
+  return {
+   hardRunCount: 0,
+   lowerBodyLoadCount: 0,
+   lowRecoveryCount: 0,
+   recentLegSoreness: false,
+  };
+ }
+ const entries = [];
+ for (let offset = 1; offset <= lookbackDays; offset += 1) {
+  const cursor = new Date(anchor);
+  cursor.setDate(anchor.getDate() - offset);
+  const dateKey = cursor.toISOString().split("T")[0];
+  if (logs?.[dateKey]) entries.push(logs[dateKey]);
+ }
+ const profile = entries.reduce((acc, entry) => {
+  const text = summarizeLogText(entry);
+  const bodyStatus = sanitizeText(entry?.actualSession?.bodyStatus || "", 40).toLowerCase();
+  const recoveryState = sanitizeText(entry?.actualSession?.recoveryState || "", 40).toLowerCase();
+  const feel = sanitizeText(entry?.checkin?.sessionFeel || entry?.actualSession?.sessionFeel || "", 40).toLowerCase();
+  const hardRunLike = /\btempo|interval|threshold|quality|long run|race pace\b/.test(text);
+  const lowerBodyLike = /\blegs_sore|beat_up|squat|deadlift|lunge|split squat|long run|tempo\b/.test(text) || ["legs_sore", "beat_up"].includes(bodyStatus);
+  const lowRecoveryLike = ["low"].includes(recoveryState) || ["harder_than_expected"].includes(feel) || ["beat_up"].includes(bodyStatus);
+  return {
+   hardRunCount: acc.hardRunCount + (hardRunLike ? 1 : 0),
+   lowerBodyLoadCount: acc.lowerBodyLoadCount + (lowerBodyLike ? 1 : 0),
+   lowRecoveryCount: acc.lowRecoveryCount + (lowRecoveryLike ? 1 : 0),
+   recentLegSoreness: acc.recentLegSoreness || ["legs_sore", "beat_up"].includes(bodyStatus),
+  };
+ }, {
+  hardRunCount: 0,
+  lowerBodyLoadCount: 0,
+  lowRecoveryCount: 0,
+  recentLegSoreness: false,
+ });
+ return {
+  ...profile,
+  protectiveLowerBodyBias: profile.lowerBodyLoadCount >= 2 || profile.recentLegSoreness || profile.lowRecoveryCount >= 2,
+  capNextQualityRun: profile.hardRunCount >= 2 && profile.lowRecoveryCount >= 1,
+ };
+};
+
+const capRunSessionToSupportive = (session = null, { labelSuffix = "(capped)" } = {}) => {
+ if (!session || !isRunSessionType(session?.type)) return session;
+ return normalizeSessionEntryLabel({
+  ...session,
+  type: "easy-run",
+  label: `${sanitizeText(session?.label || "Run", 100)} ${labelSuffix}`.trim(),
+  nutri: NUTRITION_DAY_TYPES.runEasy,
+  run: {
+   ...(clonePlainValue(session?.run || {}) || {}),
+   t: "Easy",
+  },
+  optionalSecondary: "Optional: mobility reset and refuel before pushing later in the week.",
+  stressClass: "moderate",
+  lowerBodyLoad: "moderate",
+ });
+};
+
+const rewriteToUpperBodySupport = (session = null, { laneModel = {}, trainingContext = null } = {}) => {
+ if (!session || session?.type === "rest") return session;
+ const equipmentProfile = buildEquipmentProfile({
+  trainingContext,
+  userProfile: { trainingContext },
+ }, { trainingContext });
+ return normalizeSessionEntryLabel({
+  ...buildRoleAwareStrengthSession({
+   label: laneModel.upperBodyStrengthBias ? "Bench Support" : "Upper-Body Support",
+   strSess: session?.strSess || "B",
+   strengthDose: "20-30 min upper-body support",
+   prescribedExercises: buildSessionExercisePacket({
+    emphasis: laneModel.upperBodyStrengthBias ? "bench_focus_b" : "upper_maintenance",
+    equipmentProfile,
+   }),
+   upperBodyBias: true,
+   lowerBodyLoad: "none",
+   intensityGuidance: "Recent lower-body stress kept this touch upper-body biased.",
+   optionalSecondary: "Optional: cuff, scap, or arm support only.",
+   laneRole: laneModel.strengthLane?.role || "maintained",
+  }),
+ });
+};
+
+const applyHybridFatigueGuards = ({
+ dayTemplates = {},
+ architecture = "",
+ laneModel = {},
+ logs = {},
+ todayKey = "",
+ currentDayOfWeek = 0,
+ trainingContext = null,
+} = {}) => {
+ const next = clonePlainValue(dayTemplates || {});
+ const effects = [];
+ const loadContext = buildRecentHybridLoadContext({ logs, todayKey });
+ const futureDayKeys = Object.keys(next)
+  .map((value) => Number(value))
+  .filter((value) => Number.isInteger(value) && value >= currentDayOfWeek)
+  .sort((left, right) => left - right);
+ const futureQualityDay = futureDayKeys.find((dayKey) => ["hard-run", "long-run"].includes(String(next?.[dayKey]?.type || "").toLowerCase()));
+
+ if (laneModel.meaningfulHybrid) {
+  futureDayKeys.forEach((dayKey) => {
+   const session = next?.[dayKey];
+   if (!session || session?.type === "rest") return;
+   const lowerBodyLoad = sanitizeText(session?.lowerBodyLoad || "", 20).toLowerCase();
+   const prevType = sanitizeText(next?.[dayKey - 1]?.type || "", 40).toLowerCase();
+   const nextType = sanitizeText(next?.[dayKey + 1]?.type || "", 40).toLowerCase();
+   const adjacentHardRun = ["hard-run", "long-run"].includes(prevType) || ["hard-run", "long-run"].includes(nextType);
+   if (adjacentHardRun && ["moderate", "high"].includes(lowerBodyLoad)) {
+    next[dayKey] = rewriteToUpperBodySupport(session, { laneModel, trainingContext });
+    effects.push("Lower-body loading was biased away from the sessions surrounding the quality run anchors.");
+   }
+  });
+ }
+
+ if (loadContext.protectiveLowerBodyBias) {
+  const nextLowerBodyDay = futureDayKeys.find((dayKey) => ["moderate", "high"].includes(sanitizeText(next?.[dayKey]?.lowerBodyLoad || "", 20).toLowerCase()));
+  if (Number.isInteger(nextLowerBodyDay)) {
+   next[nextLowerBodyDay] = rewriteToUpperBodySupport(next[nextLowerBodyDay], { laneModel, trainingContext });
+   effects.push("Recent lower-body stress kept the next strength touch upper-body biased.");
+  }
+ }
+
+ if (loadContext.capNextQualityRun && Number.isInteger(futureQualityDay) && String(next?.[futureQualityDay]?.type || "").toLowerCase() === "hard-run") {
+  next[futureQualityDay] = capRunSessionToSupportive(next[futureQualityDay]);
+  effects.push("Recent run strain capped the next quality run so the week can keep moving.");
+ }
+
+ return {
+  dayTemplates: next,
+  effects: dedupeStrings(effects),
+  loadContext,
+ };
+};
+
+const buildActualSplitFromDayTemplates = (dayTemplates = {}) => ({
+ run: Object.values(dayTemplates || {}).filter((session) => ["easy-run", "hard-run", "long-run", "run+strength"].includes(String(session?.type || "").toLowerCase())).length,
+ strength: Object.values(dayTemplates || {}).filter((session) => ["strength+prehab", "run+strength"].includes(String(session?.type || "").toLowerCase())).length,
+ conditioning: Object.values(dayTemplates || {}).filter((session) => String(session?.type || "").toLowerCase() === "conditioning").length,
+ recovery: Object.values(dayTemplates || {}).filter((session) => ["rest", "recovery"].includes(String(session?.type || "").toLowerCase()) || session?.isRecoverySlot).length,
+ swim: Object.values(dayTemplates || {}).filter((session) => /^swim-/.test(String(session?.type || "").toLowerCase())).length,
+ power: Object.values(dayTemplates || {}).filter((session) => ["power-skill", "reactive-plyo", "sprint-support"].includes(String(session?.type || "").toLowerCase())).length,
+});
+
 const convertRunSessionForStrengthFirstPlan = (session = null) => {
   if (!session || typeof session !== "object") return session;
   const type = String(session?.type || "").toLowerCase();
@@ -174,11 +1873,14 @@ const convertRunSessionForStrengthFirstPlan = (session = null) => {
   });
 };
 
+const DEFAULT_RECOVERY_OPTIONAL_SECONDARY = "Optional: 20-30 min easy walk, mobility reset, or light bike if you want to move.";
+
 const buildScheduleBufferRecovery = (label = "Recovery / schedule buffer") => ({
  type: "rest",
  label,
  nutri: NUTRITION_DAY_TYPES.recovery,
  isRecoverySlot: true,
+ optionalSecondary: DEFAULT_RECOVERY_OPTIONAL_SECONDARY,
 });
 
 const resolveSessionPriorityScore = ({ session = null, architecture = "hybrid_performance" } = {}) => {
@@ -251,11 +1953,17 @@ const inspectSessionCapabilities = (session = null) => {
  runCapable,
  swimCapable,
  rideCapable,
+ brickLike: Boolean(/\bbrick|transition\b/.test(text)),
+ qualityLike: Boolean(
+  /hard-run/.test(type)
+  || /^swim-threshold/.test(type)
+  || /\btempo|threshold|interval|race-pace|quality\b/.test(text)
+ ),
  longSession: Boolean(/long-run/.test(type) || /\blong run|long ride|brick\b/.test(text)),
  };
 };
 
-const chooseHybridScheduleSubset = (entries = [], targetCount = 0) => {
+const chooseHybridScheduleSubset = (entries = [], targetCount = 0, { laneModel = null } = {}) => {
  const safeEntries = Array.isArray(entries) ? entries : [];
  const safeTargetCount = Number.isFinite(Number(targetCount)) ? Math.max(0, Math.min(safeEntries.length, Math.round(Number(targetCount)))) : 0;
  if (!safeTargetCount || safeEntries.length <= safeTargetCount) {
@@ -265,25 +1973,52 @@ const chooseHybridScheduleSubset = (entries = [], targetCount = 0) => {
  const availableRun = safeEntries.some((entry) => entry.runCapable);
  const availableSwim = safeEntries.some((entry) => entry.swimCapable);
  const availableRide = safeEntries.some((entry) => entry.rideCapable);
+ const runningWeight = Number(laneModel?.runningLane?.roleWeight || 0);
+ const strengthWeight = Number(laneModel?.strengthLane?.roleWeight || 0);
+ const bodyCompWeight = Number(laneModel?.bodyCompLane?.roleWeight || 0);
+ const runningLead = runningWeight > Math.max(strengthWeight, bodyCompWeight);
+ const strengthLead = strengthWeight > Math.max(runningWeight, bodyCompWeight);
+ const bodyCompLead = bodyCompWeight >= Math.max(runningWeight, strengthWeight) && bodyCompWeight > 0;
  let bestScore = -Infinity;
  let bestSet = new Set();
 
  const scoreSelection = (selection = []) => {
- const hasStrength = selection.some((entry) => entry.strengthCapable);
- const hasRun = selection.some((entry) => entry.runCapable);
- const hasSwim = selection.some((entry) => entry.swimCapable);
- const hasRide = selection.some((entry) => entry.rideCapable);
- const hasLongSession = selection.some((entry) => entry.longSession);
- const enduranceLaneCount = [hasRun, hasSwim, hasRide].filter(Boolean).length;
- let score = selection.reduce((sum, entry) => sum + Number(entry.score || 0), 0);
- if (availableStrength && hasStrength) score += 80;
- if (availableRun && hasRun) score += 140;
- if (availableSwim && hasSwim) score += 150;
- if (availableRide && hasRide) score += 140;
- if (hasStrength && enduranceLaneCount > 0) score += 56;
- if (enduranceLaneCount >= 2) score += 44 * enduranceLaneCount;
- if (hasLongSession) score += 24;
- return score;
+  const hasStrength = selection.some((entry) => entry.strengthCapable);
+  const hasRun = selection.some((entry) => entry.runCapable);
+  const hasSwim = selection.some((entry) => entry.swimCapable);
+  const hasRide = selection.some((entry) => entry.rideCapable);
+  const hasLongSession = selection.some((entry) => entry.longSession);
+  const qualityCount = selection.filter((entry) => entry.qualityLike).length;
+  const longCount = selection.filter((entry) => entry.longSession).length;
+  const strengthCount = selection.filter((entry) => entry.strengthCapable).length;
+  const enduranceLaneCount = [hasRun, hasSwim, hasRide].filter(Boolean).length;
+  let score = selection.reduce((sum, entry) => sum + Number(entry.score || 0), 0);
+  if (availableStrength && hasStrength) score += 80;
+  if (availableRun && hasRun) score += 140;
+  if (availableSwim && hasSwim) score += 150;
+  if (availableRide && hasRide) score += 140;
+  if (hasStrength && enduranceLaneCount > 0) score += 56;
+  if (enduranceLaneCount >= 2) score += 44 * enduranceLaneCount;
+  if (hasLongSession) score += 24;
+  if (runningLead) {
+   if (hasLongSession) score += 55;
+   if (qualityCount >= 1 && safeTargetCount >= 3) score += 35;
+   if (safeTargetCount <= 2 && hasStrength) score += 35;
+  }
+  if (strengthLead) {
+   score += strengthCount * 65;
+   if (strengthCount >= Math.min(2, safeTargetCount)) score += 180;
+   if (enduranceLaneCount > 0) score += 45;
+   score -= longCount * 60;
+   if (safeTargetCount <= 2 && strengthCount < 2) score -= 260;
+  }
+  if (bodyCompLead) {
+   score += strengthCount * 55;
+   if (strengthCount >= Math.min(2, safeTargetCount)) score += 170;
+   if (enduranceLaneCount > 0) score += 55;
+   if (safeTargetCount <= 3) score -= longCount * 75;
+  }
+  return score;
  };
 
  const search = (index = 0, selection = []) => {
@@ -348,10 +2083,190 @@ const chooseBodyCompScheduleSubset = (entries = [], targetCount = 0) => {
  return bestSet;
 };
 
+const chooseEnduranceScheduleSubset = (entries = [], targetCount = 0) => {
+ const safeEntries = Array.isArray(entries) ? entries : [];
+ const safeTargetCount = Number.isFinite(Number(targetCount)) ? Math.max(0, Math.min(safeEntries.length, Math.round(Number(targetCount)))) : 0;
+ if (!safeTargetCount || safeEntries.length <= safeTargetCount) {
+  return new Set(safeEntries.map((entry) => entry.dayKey));
+ }
+ let bestScore = -Infinity;
+ let bestSet = new Set();
+
+ const scoreSelection = (selection = []) => {
+  const enduranceCount = selection.filter((entry) => entry.enduranceCapable).length;
+  const supportRunCount = selection.filter((entry) => entry.runCapable && !entry.qualityLike && !entry.longSession).length;
+  const qualityCount = selection.filter((entry) => entry.qualityLike).length;
+  const longCount = selection.filter((entry) => entry.longSession).length;
+  const strengthCount = selection.filter((entry) => entry.strengthCapable).length;
+  let score = selection.reduce((sum, entry) => sum + Number(entry.score || 0), 0);
+  score += enduranceCount * 120;
+  if (enduranceCount >= Math.min(2, safeTargetCount)) score += 110;
+  if (longCount >= 1) score += 85;
+  if (safeTargetCount <= 2 && supportRunCount >= 1) score += 45;
+  if (safeTargetCount >= 3 && qualityCount >= 1) score += 55;
+  if (safeTargetCount <= 2 && qualityCount >= 1) score -= 45;
+  score -= strengthCount * 70;
+  return score;
+ };
+
+ const search = (index = 0, selection = []) => {
+  if (selection.length === safeTargetCount) {
+   const score = scoreSelection(selection);
+   if (score > bestScore) {
+    bestScore = score;
+    bestSet = new Set(selection.map((entry) => entry.dayKey));
+   }
+   return;
+  }
+  if (index >= safeEntries.length) return;
+  const remainingSlots = safeTargetCount - selection.length;
+  const remainingEntries = safeEntries.length - index;
+  if (remainingEntries < remainingSlots) return;
+  search(index + 1, [...selection, safeEntries[index]]);
+  search(index + 1, selection);
+ };
+
+ search(0, []);
+ return bestSet;
+};
+
+const chooseStrengthScheduleSubset = (entries = [], targetCount = 0) => {
+ const safeEntries = Array.isArray(entries) ? entries : [];
+ const safeTargetCount = Number.isFinite(Number(targetCount)) ? Math.max(0, Math.min(safeEntries.length, Math.round(Number(targetCount)))) : 0;
+ if (!safeTargetCount || safeEntries.length <= safeTargetCount) {
+  return new Set(safeEntries.map((entry) => entry.dayKey));
+ }
+ let bestScore = -Infinity;
+ let bestSet = new Set();
+
+ const scoreSelection = (selection = []) => {
+  const strengthCount = selection.filter((entry) => entry.strengthCapable).length;
+  const conditioningCount = selection.filter((entry) => entry.enduranceCapable && !entry.strengthCapable).length;
+  let score = selection.reduce((sum, entry) => sum + Number(entry.score || 0), 0);
+  score += strengthCount * 140;
+  if (strengthCount >= Math.min(3, safeTargetCount)) score += 120;
+  if (safeTargetCount >= 3 && strengthCount >= 2) score += 90;
+  if (conditioningCount >= 1) score += 18;
+  if (conditioningCount > 1) score -= (conditioningCount - 1) * 18;
+  return score;
+ };
+
+ const search = (index = 0, selection = []) => {
+  if (selection.length === safeTargetCount) {
+   const score = scoreSelection(selection);
+   if (score > bestScore) {
+    bestScore = score;
+    bestSet = new Set(selection.map((entry) => entry.dayKey));
+   }
+   return;
+  }
+  if (index >= safeEntries.length) return;
+  const remainingSlots = safeTargetCount - selection.length;
+  const remainingEntries = safeEntries.length - index;
+  if (remainingEntries < remainingSlots) return;
+  search(index + 1, [...selection, safeEntries[index]]);
+  search(index + 1, selection);
+ };
+
+ search(0, []);
+ return bestSet;
+};
+
+const chooseTriathlonScheduleSubset = (entries = [], targetCount = 0) => {
+ const safeEntries = Array.isArray(entries) ? entries : [];
+ const safeTargetCount = Number.isFinite(Number(targetCount)) ? Math.max(0, Math.min(safeEntries.length, Math.round(Number(targetCount)))) : 0;
+ if (!safeTargetCount || safeEntries.length <= safeTargetCount) {
+  return new Set(safeEntries.map((entry) => entry.dayKey));
+ }
+ let bestScore = -Infinity;
+ let bestSet = new Set();
+
+ const scoreSelection = (selection = []) => {
+  const hasSwim = selection.some((entry) => entry.swimCapable);
+  const hasRide = selection.some((entry) => entry.rideCapable);
+  const hasRun = selection.some((entry) => entry.runCapable);
+  const hasBrick = selection.some((entry) => entry.brickLike);
+  const strengthCount = selection.filter((entry) => entry.strengthCapable).length;
+  let score = selection.reduce((sum, entry) => sum + Number(entry.score || 0), 0);
+  if (hasSwim) score += 150;
+  if (hasRide) score += 150;
+  if (hasRun) score += 150;
+  if (hasSwim && hasRide && hasRun) score += 220;
+  if (hasBrick) score += 55;
+  if (strengthCount >= 1) score += 18;
+  return score;
+ };
+
+ const search = (index = 0, selection = []) => {
+  if (selection.length === safeTargetCount) {
+   const score = scoreSelection(selection);
+   if (score > bestScore) {
+    bestScore = score;
+    bestSet = new Set(selection.map((entry) => entry.dayKey));
+   }
+   return;
+  }
+  if (index >= safeEntries.length) return;
+  const remainingSlots = safeTargetCount - selection.length;
+  const remainingEntries = safeEntries.length - index;
+  if (remainingEntries < remainingSlots) return;
+  search(index + 1, [...selection, safeEntries[index]]);
+  search(index + 1, selection);
+ };
+
+ search(0, []);
+ return bestSet;
+};
+
+const resolveScheduleSubsetKeepSet = ({
+ scoredEntries = [],
+ targetCount = 0,
+ architecture = "hybrid_performance",
+ goalLaneModel = null,
+ primaryGoalFamily = "",
+ primaryDomain = "",
+} = {}) => {
+ const safeEntries = Array.isArray(scoredEntries) ? scoredEntries : [];
+ const safeTargetCount = Number.isFinite(Number(targetCount)) ? Math.max(0, Math.min(safeEntries.length, Math.round(Number(targetCount)))) : 0;
+ if (!safeTargetCount || safeEntries.length <= safeTargetCount) {
+  return new Set(safeEntries.map((entry) => entry.dayKey));
+ }
+ const hybridLikeWeek = Boolean(primaryGoalFamily === "hybrid" || goalLaneModel?.meaningfulHybrid);
+ const pureRunningWeek = !hybridLikeWeek
+  && goalLaneModel?.runningLane?.active
+  && !goalLaneModel?.strengthLane?.active
+  && !goalLaneModel?.bodyCompLane?.active;
+ const pureStrengthWeek = !hybridLikeWeek
+  && goalLaneModel?.strengthLane?.active
+  && !goalLaneModel?.runningLane?.active
+  && !goalLaneModel?.bodyCompLane?.active;
+ const pureBodyCompWeek = !hybridLikeWeek
+  && goalLaneModel?.bodyCompLane?.active
+  && !goalLaneModel?.runningLane?.active;
+ return hybridLikeWeek
+  ? chooseHybridScheduleSubset(safeEntries, safeTargetCount, { laneModel: goalLaneModel })
+  : primaryDomain === "triathlon_multisport"
+  ? chooseTriathlonScheduleSubset(safeEntries, safeTargetCount)
+  : pureRunningWeek
+  ? chooseEnduranceScheduleSubset(safeEntries, safeTargetCount)
+  : pureStrengthWeek
+  ? chooseStrengthScheduleSubset(safeEntries, safeTargetCount)
+  : pureBodyCompWeek || architecture === "body_comp_conditioning"
+  ? chooseBodyCompScheduleSubset(safeEntries, safeTargetCount)
+  : new Set(
+   safeEntries
+    .slice(Math.max(0, safeEntries.length - safeTargetCount))
+    .map((entry) => entry.dayKey)
+  );
+};
+
 const limitDayTemplatesToScheduleReality = ({
  dayTemplates = {},
  targetDays = 0,
  architecture = "hybrid_performance",
+ goalLaneModel = null,
+ primaryGoalFamily = "",
+ primaryDomain = "",
 } = {}) => {
  const safeTargetDays = Number.isFinite(Number(targetDays)) ? Math.max(0, Math.min(7, Math.round(Number(targetDays)))) : 0;
  if (safeTargetDays < 2) return { dayTemplates, effects: [], changed: false };
@@ -369,15 +2284,14 @@ const limitDayTemplatesToScheduleReality = ({
  ...inspectSessionCapabilities(session),
  }))
  .sort((left, right) => left.score - right.score);
- const keepSet = architecture === "hybrid_performance"
- ? chooseHybridScheduleSubset(scoredEntries, safeTargetDays)
- : architecture === "body_comp_conditioning"
- ? chooseBodyCompScheduleSubset(scoredEntries, safeTargetDays)
- : new Set(
- scoredEntries
- .slice(Math.max(0, scoredEntries.length - safeTargetDays))
- .map((entry) => entry.dayKey)
- );
+ const keepSet = resolveScheduleSubsetKeepSet({
+  scoredEntries,
+  targetCount: safeTargetDays,
+  architecture,
+  goalLaneModel,
+  primaryGoalFamily,
+  primaryDomain,
+ });
  scoredEntries
  .filter(({ dayKey }) => !keepSet.has(dayKey))
  .forEach(({ dayKey }) => {
@@ -387,6 +2301,204 @@ const limitDayTemplatesToScheduleReality = ({
  dayTemplates: next,
  effects: [`The week was trimmed to match a realistic ${safeTargetDays}-day schedule.`],
  changed: true,
+ };
+};
+
+const resolveExplicitAvailableTrainingDayKeys = (trainingContext = null) => (
+ normalizeTrainingWeekdayAvailability(
+  trainingContext?.weekdayAvailability?.confirmed
+   ? (trainingContext?.weekdayAvailability?.value || [])
+   : []
+ )
+  .map((value) => TRAINING_WEEKDAY_TO_PLANNER_DAY?.[value])
+  .filter((dayKey) => Number.isInteger(dayKey))
+);
+
+const resolveExplicitAvailabilityDayPreferenceOrder = (session = null) => {
+ const capabilities = inspectSessionCapabilities(session);
+ const type = String(session?.type || "").toLowerCase();
+ if (capabilities.longSession) return [6, 0, 5, 4, 1, 3, 2];
+ if (capabilities.qualityLike) return [4, 2, 3, 5, 1, 6, 0];
+ if (type === "run+strength") return [1, 3, 2, 4, 5, 6, 0];
+ if (type === "strength+prehab") return [1, 3, 5, 2, 4, 6, 0];
+ if (type === "conditioning") return [2, 4, 3, 5, 1, 6, 0];
+ if (capabilities.enduranceCapable) return [2, 4, 1, 3, 5, 6, 0];
+ return [...PLANNER_DAY_ORDER];
+};
+
+const scoreExplicitAvailabilityPlacement = ({
+ session = null,
+ sourceDayKey = null,
+ targetDayKey = null,
+ assignedSessions = {},
+ selectedDayKeys = [],
+} = {}) => {
+ if (!Number.isInteger(Number(targetDayKey))) return -Infinity;
+ const safeTargetDayKey = Number(targetDayKey);
+ const safeSelectedKeys = Array.isArray(selectedDayKeys) ? selectedDayKeys : [];
+ if (!safeSelectedKeys.includes(safeTargetDayKey)) return -Infinity;
+
+ const capabilities = inspectSessionCapabilities(session);
+ const type = String(session?.type || "").toLowerCase();
+ const preferenceOrder = resolveExplicitAvailabilityDayPreferenceOrder(session);
+ const preferenceIndex = preferenceOrder.indexOf(safeTargetDayKey);
+ let score = preferenceIndex >= 0 ? 120 - (preferenceIndex * 10) : 40;
+
+ if (Number(sourceDayKey) === safeTargetDayKey) score += 8;
+ if (capabilities.longSession) {
+  if ([6, 0].includes(safeTargetDayKey)) score += 36;
+  else if (safeTargetDayKey === 5) score += 18;
+  else score -= 20;
+ }
+ if (capabilities.qualityLike && [2, 4].includes(safeTargetDayKey)) score += 18;
+ if (type === "strength+prehab" && [1, 3, 5].includes(safeTargetDayKey)) score += 10;
+ if (type === "run+strength" && [1, 3].includes(safeTargetDayKey)) score += 12;
+
+ const previousSession = assignedSessions?.[safeTargetDayKey - 1] || null;
+ const nextSession = assignedSessions?.[safeTargetDayKey + 1] || null;
+ const adjacentSessions = [previousSession, nextSession].filter(Boolean);
+ const lowerBodyLoad = String(session?.lowerBodyLoad || "").toLowerCase();
+ adjacentSessions.forEach((adjacent) => {
+  const adjacentCapabilities = inspectSessionCapabilities(adjacent);
+  const adjacentLowerBodyLoad = String(adjacent?.lowerBodyLoad || "").toLowerCase();
+  if (capabilities.longSession && adjacentCapabilities.qualityLike) score -= 24;
+  if (capabilities.qualityLike && adjacentCapabilities.longSession) score -= 24;
+  if (["moderate", "high"].includes(lowerBodyLoad) && (adjacentCapabilities.qualityLike || adjacentCapabilities.longSession)) score -= 16;
+  if ((capabilities.qualityLike || capabilities.longSession) && ["moderate", "high"].includes(adjacentLowerBodyLoad)) score -= 16;
+ });
+
+ return score;
+};
+
+const applyExplicitWeekdayAvailability = ({
+ dayTemplates = {},
+ availableDayKeys = [],
+ architecture = "hybrid_performance",
+ goalLaneModel = null,
+ primaryGoalFamily = "",
+ primaryDomain = "",
+} = {}) => {
+ const selectedDayKeys = dedupeStrings(
+  (Array.isArray(availableDayKeys) ? availableDayKeys : [])
+   .map((dayKey) => Number(dayKey))
+   .filter((dayKey) => Number.isInteger(dayKey))
+   .map((dayKey) => String(dayKey))
+ ).map((dayKey) => Number(dayKey));
+
+ const baseTemplates = clonePlainValue(dayTemplates || {});
+ if (!selectedDayKeys.length) {
+  return {
+   dayTemplates: Object.fromEntries(
+    Object.entries(baseTemplates || {}).map(([dayKey, session]) => (
+     session && (session.type === "rest" || session?.isRecoverySlot)
+      ? [dayKey, {
+        ...session,
+        optionalSecondary: session?.optionalSecondary || DEFAULT_RECOVERY_OPTIONAL_SECONDARY,
+      }]
+      : [dayKey, session]
+    ))
+   ),
+   changed: false,
+   effects: [],
+  };
+ }
+
+ const activeEntries = Object.entries(baseTemplates || {})
+  .filter(([, session]) => session && session.type !== "rest" && !session?.isRecoverySlot)
+  .map(([dayKey, session]) => ({
+   dayKey: Number(dayKey),
+   session,
+   score: resolveSessionPriorityScore({ session, architecture }),
+   ...inspectSessionCapabilities(session),
+  }));
+ const rankedKeepCandidates = [...activeEntries].sort((left, right) => left.score - right.score);
+
+ const selectedDaySet = new Set(selectedDayKeys);
+ const effects = [];
+ let keepEntries = [...activeEntries].sort((left, right) => right.score - left.score);
+
+ if (activeEntries.length > selectedDayKeys.length) {
+  const keepSet = resolveScheduleSubsetKeepSet({
+   scoredEntries: rankedKeepCandidates,
+   targetCount: selectedDayKeys.length,
+   architecture,
+   goalLaneModel,
+   primaryGoalFamily,
+   primaryDomain,
+  });
+  const droppedEntries = activeEntries.filter((entry) => !keepSet.has(entry.dayKey));
+  keepEntries = activeEntries
+   .filter((entry) => keepSet.has(entry.dayKey))
+   .sort((left, right) => right.score - left.score);
+  if (droppedEntries.length) {
+   effects.push(`The week now fits your usual ${selectedDayKeys.length}-day window, with lower-priority work pushed into recovery slots.`);
+  }
+ }
+
+ const next = Object.fromEntries(
+  PLANNER_DAY_ORDER.map((dayKey) => {
+   const currentSession = baseTemplates?.[dayKey] || null;
+   if (currentSession && (currentSession.type === "rest" || currentSession?.isRecoverySlot)) {
+    return [dayKey, {
+     ...currentSession,
+     optionalSecondary: currentSession?.optionalSecondary || DEFAULT_RECOVERY_OPTIONAL_SECONDARY,
+    }];
+   }
+   return [dayKey, buildScheduleBufferRecovery(selectedDaySet.has(dayKey) ? "Active Recovery" : "Recovery / optional movement")];
+  })
+ );
+
+ const assignedSessions = {};
+ let shiftedCount = 0;
+ keepEntries.forEach((entry) => {
+  const remainingDayKeys = selectedDayKeys.filter((dayKey) => !assignedSessions?.[dayKey]);
+  if (!remainingDayKeys.length) return;
+  const bestDayKey = remainingDayKeys
+   .map((dayKey) => ({
+    dayKey,
+    score: scoreExplicitAvailabilityPlacement({
+     session: entry.session,
+     sourceDayKey: entry.dayKey,
+     targetDayKey: dayKey,
+     assignedSessions,
+     selectedDayKeys,
+   }),
+   }))
+   .sort((left, right) => right.score - left.score)[0]?.dayKey;
+  if (!Number.isInteger(bestDayKey)) return;
+  if (entry.dayKey !== bestDayKey) shiftedCount += 1;
+  assignedSessions[bestDayKey] = normalizeSessionEntryLabel({
+   ...entry.session,
+   availabilityAdaptation: entry.dayKey === bestDayKey
+    ? {
+      source: "weekday_availability_confirmed",
+      anchoredDayKey: bestDayKey,
+     }
+    : {
+      source: "weekday_availability_shift",
+      fromDayKey: entry.dayKey,
+      toDayKey: bestDayKey,
+     },
+  });
+ });
+
+ Object.entries(assignedSessions).forEach(([dayKey, session]) => {
+  next[dayKey] = session;
+ });
+
+ if (shiftedCount > 0) {
+  effects.push(`Primary work now lands on ${resolveWeekdayLabelList(selectedDayKeys).join(", ")} when those days are available.`);
+ }
+ const weekendAvailable = selectedDaySet.has(6) || selectedDaySet.has(0);
+ const longRunPlaced = Object.entries(assignedSessions).find(([, session]) => inspectSessionCapabilities(session).longSession) || null;
+ if (weekendAvailable && longRunPlaced && [6, 0].includes(Number(longRunPlaced[0]))) {
+  effects.push(`Long sessions now bias to the weekend when that window is available.`);
+ }
+
+ return {
+  dayTemplates: next,
+  changed: JSON.stringify(next) !== JSON.stringify(baseTemplates),
+  effects: dedupeStrings(effects).slice(0, 2),
  };
 };
 
@@ -883,7 +2995,7 @@ const resolveWeeklyFocusLabel = ({
 };
 
 const buildSessionsByDayFromTemplate = (template = {}) => {
- const restDay = { type: "rest", label: "Active Recovery", nutri: NUTRITION_DAY_TYPES.recovery, isRecoverySlot: true };
+ const restDay = buildScheduleBufferRecovery("Active Recovery");
  return {
  1: template?.mon ? normalizeSessionEntryLabel({ type: "easy-run", label: `${template.mon.t || "Easy"} Run`, run: clonePlainValue(template.mon), nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: mobility reset or short strength support if recovery is good." }) : null,
  2: null,
@@ -997,6 +3109,8 @@ const buildProgramBlockCompatibilityIntent = (programBlock = null) => (
  !programBlock ? null : {
  prioritized: programBlock?.goalAllocation?.prioritized || programBlock?.dominantEmphasis?.label || "Consistency and execution",
  maintained: clonePlainValue(programBlock?.goalAllocation?.maintained || [programBlock?.secondaryEmphasis?.label || "general fitness"].filter(Boolean)),
+ support: clonePlainValue(programBlock?.goalAllocation?.support || []),
+ deferred: clonePlainValue(programBlock?.goalAllocation?.deferred || []),
  minimized: programBlock?.goalAllocation?.minimized || "non-primary volume",
  heldBack: clonePlainValue(programBlock?.goalAllocation?.heldBack || []),
  why: programBlock?.goalAllocation?.why || "",
@@ -1217,12 +3331,18 @@ export const buildProgramBlock = ({
  const proxyMetricLabels = resolvedContext.proxyMetricLabels;
  const feasibilityStatus = sanitizeText(programContext?.goalFeasibility?.realismStatus || "", 40).toLowerCase();
  const domainAdapterId = String(programContext?.domainAdapter?.id || "").toLowerCase();
+ const goalLaneModel = programContext?.goalLaneModel || null;
 
- const maintainedGoals = active
- .filter((goal) => goal?.id !== primary?.id && goal?.category !== "injury_prevention")
- .slice(0, 2)
- .map((goal) => goal?.name)
- .filter(Boolean);
+ const maintainedGoals = (goalLaneModel?.maintainedGoalLabels?.length
+  ? goalLaneModel.maintainedGoalLabels
+  : active
+   .filter((goal) => goal?.id !== primary?.id && goal?.category !== "injury_prevention")
+   .slice(0, 2)
+   .map((goal) => goal?.name)
+   .filter(Boolean)
+ );
+ const supportGoals = goalLaneModel?.supportGoalLabels || [];
+ const deferredGoals = goalLaneModel?.deferredGoalLabels || [];
  const minimizedGoal = active.find((goal) => goal?.category === "injury_prevention")?.name || "non-primary volume";
  const primaryMeasurabilityTier = primaryResolvedGoal?.measurabilityTier || primary?.measurabilityTier || "";
  const primaryTargetHorizonWeeks = primaryResolvedGoal?.targetHorizonWeeks || primary?.targetHorizonWeeks || null;
@@ -1748,6 +3868,8 @@ export const buildProgramBlock = ({
  goalAllocation: {
  prioritized,
  maintained,
+ support: clonePlainValue(supportGoals),
+ deferred: clonePlainValue(deferredGoals),
  minimized: minimizedGoal,
  heldBack: clonePlainValue(concurrentPriorityExplanation?.heldBack || []),
  why: concurrentPriorityExplanation?.whyLine || "",
@@ -2669,17 +4791,22 @@ export const composeGoalNativePlan = ({
  const { active } = getGoalBuckets(goals);
  const primary = active[0] || null;
  const secondary = active.slice(1, 3);
+ const goalLaneModel = buildGoalLaneModel({ activeGoals: active });
  const trainingContext = deriveTrainingContextFromPersonalization({ personalization });
+ const plannerEquipmentProfile = buildEquipmentProfile({
+  trainingContext,
+  userProfile: { trainingContext },
+ }, { trainingContext });
  const activeIssueContext = deriveActiveIssueContextFromPersonalization({ personalization });
  const env = trainingContext?.environment?.confirmed ? trainingContext.environment.value : "unknown";
  const equipmentAccess = trainingContext?.equipmentAccess?.value || TRAINING_EQUIPMENT_VALUES.unknown;
  const environmentKnown = Boolean(trainingContext?.environment?.confirmed);
  const equipmentKnown = Boolean(trainingContext?.equipmentAccess?.confirmed);
  const hasGym = equipmentAccess === TRAINING_EQUIPMENT_VALUES.fullGym || equipmentAccess === TRAINING_EQUIPMENT_VALUES.basicGym;
- const runningGoal = active.find(g => g.category === "running");
- const strengthGoal = active.find(g => g.category === "strength");
- const bodyCompGoal = active.find(g => g.category === "body_comp");
- const hasRunningGoal = Boolean(runningGoal);
+ const runningGoal = goalLaneModel.runningLane?.leadGoal || active.find((goal) => normalizePlanningLaneCategory(goal) === "running");
+ const strengthGoal = goalLaneModel.strengthLane?.leadGoal || active.find((goal) => normalizePlanningLaneCategory(goal) === "strength");
+ const bodyCompGoal = goalLaneModel.bodyCompLane?.leadGoal || active.find((goal) => normalizePlanningLaneCategory(goal) === "body_comp");
+ const hasRunningGoal = Boolean(goalLaneModel.runningLane?.active || runningGoal);
  const primaryResolvedGoal = primary?.resolvedGoal || null;
  const preservesRunLaneDespiteStrengthPriority = Boolean(
   primaryResolvedGoal
@@ -2694,19 +4821,30 @@ export const composeGoalNativePlan = ({
   const inconsistencyRisk = momentum?.inconsistencyRisk || "medium";
   const lowBandwidth = inconsistencyRisk === "high" || learningLayer?.adjustmentBias === "simplify";
  const strengthPriority = primary?.category === "strength" && !lowBandwidth;
- const bodyCompActive = !!bodyCompGoal;
+ const bodyCompActive = Boolean(goalLaneModel.bodyCompLane?.active || bodyCompGoal);
  const resolvedGoals = active.map((goal) => goal?.resolvedGoal).filter(Boolean);
- const upperBodyMaintenance = Boolean(runningGoal && strengthGoal && goalLooksUpperBodyFocused(strengthGoal));
+ const supportPlanningContext = buildGoalSupportPlanningContext({
+  goals: active,
+  logs,
+  now: todayKey || new Date(),
+ });
+ const habitAdaptationContext = buildHabitAdaptationContext({
+  logs,
+  plannedDayRecords,
+  todayKey: todayKey || new Date(),
+ });
+ const upperBodyMaintenance = Boolean(runningGoal && strengthGoal && goalLaneModel.upperBodyStrengthBias);
  const planArchetypeOverlay = buildPlanArchetypeOverlay({
  primaryGoal: primary,
  secondaryGoals: secondary,
  baseWeek,
  });
-  const trainingPreferencePolicy = resolveTrainingPreferencePolicy({
+ const trainingPreferencePolicy = resolveTrainingPreferencePolicy({
   trainingContext,
   personalization,
   });
   const trainingDaysPerWeek = Number(personalization?.userGoalProfile?.days_per_week || personalization?.canonicalAthlete?.userProfile?.daysPerWeek || 0);
+  const availableTrainingDayKeys = resolveExplicitAvailableTrainingDayKeys(trainingContext);
   const sessionDurationValue = trainingContext?.sessionDuration?.confirmed ? trainingContext.sessionDuration.value : "";
   const timeCrunched = lowBandwidth || ["20", "30", TRAINING_SESSION_DURATION_VALUES.min20, TRAINING_SESSION_DURATION_VALUES.min30].includes(String(sessionDurationValue || "")) || (trainingDaysPerWeek > 0 && trainingDaysPerWeek <= 3);
   const travelState = personalization?.travelState || {};
@@ -2726,10 +4864,19 @@ export const composeGoalNativePlan = ({
     adaptivePolicyConfig,
     adaptivePolicyEvidence,
   }).policyRuntime;
-  const safeTodayKey = sanitizeText(todayKey || new Date().toISOString().split("T")[0], 24);
+ const safeTodayKey = sanitizeText(todayKey || new Date().toISOString().split("T")[0], 24);
  const safeCurrentDayOfWeek = Number.isInteger(currentDayOfWeek)
  ? currentDayOfWeek
  : new Date(`${safeTodayKey}T12:00:00`).getDay();
+ const primaryGoalFamily = sanitizeText(
+  primaryResolvedGoal?.planArchetypeFamily
+   || primaryResolvedGoal?.goalDiscoveryFamilyId
+   || primaryResolvedGoal?.goalFamily
+   || primary?.goalFamily
+   || "",
+  40
+ ).toLowerCase();
+ const primaryGoalDomain = sanitizeText(primaryResolvedGoal?.primaryDomain || "", 80).toLowerCase();
 
  const runningScore = (primary?.category === "running" ? 3 : 0) + (runningGoal ? 2 : 0) + (raceNear ? 2 : 0);
  const strengthEnvironmentScore = hasGym ? 1 : equipmentKnown ? -1 : 0;
@@ -2785,6 +4932,8 @@ export const composeGoalNativePlan = ({
  if (equipmentKnown && !hasGym && strengthGoal) constraints.push("Bench-specific progression constrained by the confirmed equipment setup; using lower-equipment substitutes.");
  if (!["race_prep_dominant", "event_prep_upper_body_maintenance"].includes(architecture) && runningGoal) constraints.push("Running kept supportive/maintenance until running priority or race proximity increases.");
  if (architecture === "event_prep_upper_body_maintenance") constraints.push("Lower-body lifting volume is capped so the event-prep lane keeps the cleanest recovery windows.");
+ if (goalLaneModel.supportGoalLabels?.length) constraints.push(`${goalLaneModel.supportGoalLabels.join(" and ")} stay in support mode instead of taking equal planning weight this block.`);
+ if (goalLaneModel.deferredGoalLabels?.length) constraints.push(`${goalLaneModel.deferredGoalLabels.join(" and ")} are deferred until the primary and maintained lanes are more secure.`);
  const capabilityPrimary = domainSelection?.capabilityStack?.primary || null;
  if (capabilityPrimary?.missingAnchors?.length) {
  constraints.push(`${domainAdapter?.label || "Current domain"} is running on the safest available fallback until ${capabilityPrimary.missingAnchors[0]} is clearer.`);
@@ -2799,6 +4948,8 @@ export const composeGoalNativePlan = ({
  domainAdapter?.label ? `${domainAdapter.label} is the dominant planning adapter.` : null,
  bodyCompGoal ? "Body-comp goal is active and materially affects split allocation." : null,
  raceNear ? "Race date is near enough to increase running weight." : null,
+ goalLaneModel.maintainedGoalLabels?.length ? `Maintained lanes: ${goalLaneModel.maintainedGoalLabels.join(", ")}.` : null,
+ goalLaneModel.supportGoalLabels?.length ? `Support lanes: ${goalLaneModel.supportGoalLabels.join(", ")}.` : null,
  !hasRunningGoal && !["swimming_endurance_technique", "cycling_endurance", "triathlon_multisport"].includes(domainAdapter?.id || "") ? "No running goal is active, so conditioning stays non-run by default." : null,
  upperBodyMaintenance ? "Secondary strength work is upper-body biased, so lower-body fatigue can stay subordinate to event prep." : null,
  capabilityPrimary?.fallbackPlanningMode ? `Fallback mode: ${String(capabilityPrimary.fallbackPlanningMode).replace(/_/g, " ")}.` : null,
@@ -2843,7 +4994,7 @@ export const composeGoalNativePlan = ({
  }
  if (planningBasis?.compromiseLine) constraints.push(planningBasis.compromiseLine);
 
- const restDay = (label = "Active Recovery") => ({ type: "rest", label, nutri: NUTRITION_DAY_TYPES.recovery, isRecoverySlot: true });
+ const restDay = (label = "Active Recovery") => buildScheduleBufferRecovery(label);
 
  const dayTemplates = {
  event_prep_upper_body_maintenance: {
@@ -2930,7 +5081,9 @@ export const composeGoalNativePlan = ({
  }
  const allowsOptionalCore = nextSession.type !== "rest";
  if (bodyCompActive && allowsOptionalCore) {
- nextSession.optionalSecondary = "Optional: 10 min core finisher";
+ nextSession.optionalSecondary = nextSession.optionalSecondary
+ ? `${String(nextSession.optionalSecondary).replace(/\.*\s*$/, "")}. Optional: 8-10 min trunk support if recovery allows.`
+ : "Optional: 8-10 min trunk support if recovery allows.";
  }
  return [day, normalizeSessionEntryLabel(nextSession)];
  }));
@@ -2943,7 +5096,7 @@ export const composeGoalNativePlan = ({
  baseWeek,
  strengthPriority,
  });
- const planContract = resolvePlanArchetypeContract({
+const planContract = resolvePlanArchetypeContract({
  goals: active,
  primaryGoal: primary,
  planArchetypeId: planArchetypeOverlay?.planArchetypeId || primary?.resolvedGoal?.planArchetypeId || "",
@@ -2951,10 +5104,35 @@ export const composeGoalNativePlan = ({
  planningCategory: primary?.resolvedGoal?.planningCategory || primary?.category || "",
  goalFamily: primary?.resolvedGoal?.goalFamily || "",
  architecture: effectiveArchitecture,
- });
- let annotatedTemplates = liveProgramPlanning?.usesProgramBackbone && liveProgramPlanning?.dayTemplates
+});
+ const preferRoleAwareHybridTemplates = Boolean(
+  primaryGoalFamily === "hybrid"
+  || goalLaneModel.meaningfulHybrid
+  || goalLaneModel.maintainedGoals?.length
+  || goalLaneModel.supportGoals?.length
+  || (hasRunningGoal && Boolean(strengthGoal))
+  || (bodyCompActive && Boolean(strengthGoal || hasRunningGoal))
+ );
+ const canUseRoleAwareHybridTemplates = preferRoleAwareHybridTemplates
+ && !liveProgramPlanning?.usesProgramBackbone
+ && ["event_prep_upper_body_maintenance", "race_prep_dominant", "strength_dominant", "body_comp_conditioning", "hybrid_performance"].includes(effectiveArchitecture)
+ && !["swimming_endurance_technique", "cycling_endurance", "triathlon_multisport", "power_vertical_plyometric"].includes(domainAdapter?.id || "");
+ const roleAwareHybridTemplates = canUseRoleAwareHybridTemplates
+ ? buildRoleAwareHybridWeek({
+   architecture: effectiveArchitecture,
+   baseWeek,
+   laneModel: goalLaneModel,
+   trainingContext,
+   hasRunningGoal,
+   bodyCompActive,
+   timeCrunched,
+   raceNear,
+   travelHeavy,
+  })
+ : null;
+let annotatedTemplates = liveProgramPlanning?.usesProgramBackbone && liveProgramPlanning?.dayTemplates
  ? clonePlainValue(liveProgramPlanning.dayTemplates)
- : annotateTemplate(planArchetypeOverlay?.dayTemplates || domainSpecificTemplates || dayTemplates[effectiveArchitecture] || dayTemplates[architecture] || {});
+ : annotateTemplate(roleAwareHybridTemplates || planArchetypeOverlay?.dayTemplates || domainSpecificTemplates || dayTemplates[effectiveArchitecture] || dayTemplates[architecture] || {});
  annotatedTemplates = liveProgramPlanning?.applyToSessions
  ? liveProgramPlanning.applyToSessions(annotatedTemplates)
  : annotatedTemplates;
@@ -2976,6 +5154,16 @@ export const composeGoalNativePlan = ({
   influence: baselineInfluence,
   });
   annotatedTemplates = baselineOverlay?.dayTemplates || annotatedTemplates;
+  const hybridFatigueGuard = applyHybridFatigueGuards({
+    dayTemplates: annotatedTemplates,
+    architecture: effectiveArchitecture,
+    laneModel: goalLaneModel,
+    logs,
+    todayKey: safeTodayKey,
+    currentDayOfWeek: safeCurrentDayOfWeek,
+    trainingContext,
+  });
+  annotatedTemplates = hybridFatigueGuard?.dayTemplates || annotatedTemplates;
   const adaptivePolicyContext = buildAdaptivePolicyContext({
     goals: active,
     primary,
@@ -3106,26 +5294,101 @@ const scheduleLimitedTemplates = limitDayTemplatesToScheduleReality({
   dayTemplates: annotatedTemplates,
   targetDays: Number(personalization?.userGoalProfile?.days_per_week || personalization?.canonicalAthlete?.userProfile?.daysPerWeek || 0),
  architecture: effectiveArchitecture,
+  goalLaneModel,
+  primaryGoalFamily,
+  primaryDomain: primaryGoalDomain,
  });
  annotatedTemplates = scheduleLimitedTemplates.dayTemplates || annotatedTemplates;
  let strengthSessionsPerWeek = Object.values(annotatedTemplates).filter(s => ["run+strength", "strength+prehab"].includes(s?.type)).length;
  if (strengthGoal && strengthSessionsPerWeek < 1 && !liveProgramPlanning?.usesProgramBackbone) {
- annotatedTemplates[3] = { type: "strength+prehab", label: "Minimum Strength Touchpoint", strSess: "A", nutri: "strength", strengthDose: "20-30 min maintenance strength" };
+ annotatedTemplates[3] = {
+  type: "strength+prehab",
+  label: goalLaneModel.upperBodyStrengthBias || hasRunningGoal ? "Upper-Body Maintenance Touchpoint" : "Minimum Strength Touchpoint",
+  strSess: "A",
+  nutri: NUTRITION_DAY_TYPES.strengthSupport,
+  strengthDose: "20-30 min maintenance strength",
+  upperBodyBias: Boolean(goalLaneModel.upperBodyStrengthBias || hasRunningGoal),
+  lowerBodyLoad: hasRunningGoal ? "none" : "low",
+  optionalSecondary: "Optional: short trunk or mobility finish.",
+ };
  strengthSessionsPerWeek = 1;
  }
+ const explicitAvailabilityOverlay = applyExplicitWeekdayAvailability({
+  dayTemplates: annotatedTemplates,
+  availableDayKeys: availableTrainingDayKeys,
+  architecture: effectiveArchitecture,
+  goalLaneModel,
+  primaryGoalFamily,
+  primaryDomain: primaryGoalDomain,
+ });
+ annotatedTemplates = explicitAvailabilityOverlay?.dayTemplates || annotatedTemplates;
+ if (!liveProgramPlanning?.usesProgramBackbone) {
+  const habitScheduleOverlay = applyHabitDrivenScheduleShift({
+   dayTemplates: annotatedTemplates,
+   habitAdaptationContext,
+   architecture: effectiveArchitecture,
+   allowedDayKeys: availableTrainingDayKeys,
+  });
+  annotatedTemplates = habitScheduleOverlay?.dayTemplates || annotatedTemplates;
+  const habitLongSessionOverlay = applyPreferredLongSessionDayShift({
+   dayTemplates: annotatedTemplates,
+   habitAdaptationContext,
+   allowedDayKeys: availableTrainingDayKeys,
+  });
+  annotatedTemplates = habitLongSessionOverlay?.dayTemplates || annotatedTemplates;
+  const habitCardioOverlay = applyHabitDrivenCardioPreferences({
+   dayTemplates: annotatedTemplates,
+   habitAdaptationContext,
+   architecture: effectiveArchitecture,
+   hasRunningGoal,
+  });
+  annotatedTemplates = habitCardioOverlay?.dayTemplates || annotatedTemplates;
+  annotatedTemplates = applyGoalSupportExerciseSelection({
+   dayTemplates: annotatedTemplates,
+   supportPlanningContext,
+   equipmentProfile: plannerEquipmentProfile,
+   hasRunningGoal,
+   domainAdapterId: domainAdapter?.id || "",
+  });
+  const habitExerciseOverlay = applyHabitDrivenExercisePreferences({
+   dayTemplates: annotatedTemplates,
+   habitAdaptationContext,
+  });
+  annotatedTemplates = habitExerciseOverlay?.dayTemplates || annotatedTemplates;
+  if (habitScheduleOverlay?.effects?.length) {
+   constraints.push(...habitScheduleOverlay.effects);
+  }
+  if (habitLongSessionOverlay?.effects?.length) {
+   constraints.push(...habitLongSessionOverlay.effects);
+  }
+  if (habitCardioOverlay?.effects?.length) {
+   why.push(...habitCardioOverlay.effects);
+  }
+  if (habitExerciseOverlay?.effects?.length) {
+   why.push(...habitExerciseOverlay.effects);
+  }
+ }
+ const finalSplit = buildActualSplitFromDayTemplates(annotatedTemplates);
  const planContractAudit = auditPlanArchetypeContract({
  contract: planContract,
  dayTemplates: annotatedTemplates,
  });
+ if (explicitAvailabilityOverlay?.effects?.length) {
+ constraints.push(...explicitAvailabilityOverlay.effects);
+ }
  if (preferenceOverlay?.changed && preferenceOverlay?.effects?.length) {
  constraints.push(...preferenceOverlay.effects);
  }
- if (baselineOverlay?.summaryLines?.length) {
+if (baselineOverlay?.summaryLines?.length) {
  why.push(...baselineOverlay.summaryLines);
+}
+ if (hybridFatigueGuard?.effects?.length) {
+  constraints.push(...hybridFatigueGuard.effects);
+  why.push(...hybridFatigueGuard.effects);
  }
- if (adaptationState?.weeklyIntentHints?.weeklyConstraints?.length) {
+if (adaptationState?.weeklyIntentHints?.weeklyConstraints?.length) {
  constraints.push(...adaptationState.weeklyIntentHints.weeklyConstraints);
- }
+}
  if (scheduleLimitedTemplates.changed && scheduleLimitedTemplates.effects?.length) {
  constraints.push(...scheduleLimitedTemplates.effects);
  }
@@ -3133,7 +5396,9 @@ const scheduleLimitedTemplates = limitDayTemplatesToScheduleReality({
  why.push(adaptationState.changeSummary.headline);
  }
 
- const maintainedGoals = active
+ const maintainedGoals = goalLaneModel.maintainedGoalLabels?.length
+ ? goalLaneModel.maintainedGoalLabels
+ : active
  .filter(g => g.id !== primary?.id && g.category !== "injury_prevention")
  .slice(0, 2)
  .map(g => g.name);
@@ -3190,10 +5455,14 @@ const scheduleLimitedTemplates = limitDayTemplatesToScheduleReality({
  planningBasis,
  goalCapabilityStack: clonePlainValue(domainSelection?.capabilityStack || null),
  domainAdapter: clonePlainValue(domainAdapter || null),
- trainingPreferencePolicy: clonePlainValue(trainingPreferencePolicy || null),
+  trainingPreferencePolicy: clonePlainValue(trainingPreferencePolicy || null),
   adaptationState: clonePlainValue(adaptationState || null),
+  recentLoadContext: clonePlainValue(hybridFatigueGuard?.loadContext || null),
+  goalLaneModel: clonePlainValue(goalLaneModel || null),
   supportTier: clonePlainValue(supportTier || null),
   baselineInfluence: clonePlainValue(baselineInfluence || null),
+  supportPlanningContext: clonePlainValue(supportPlanningContext || null),
+  habitAdaptationContext: clonePlainValue(habitAdaptationContext || null),
   planArchetypeOverlay: clonePlainValue(planArchetypeOverlay || null),
   planContract: clonePlainValue(planContract || null),
   planContractAudit: clonePlainValue(planContractAudit || null),
@@ -3215,13 +5484,15 @@ const scheduleLimitedTemplates = limitDayTemplatesToScheduleReality({
  const blockIntent = buildProgramBlockCompatibilityIntent(programBlock) || {
  prioritized: primary?.name || "Consistency and execution",
  maintained: maintainedGoals.length ? maintainedGoals : ["general fitness"],
+ support: clonePlainValue(goalLaneModel.supportGoalLabels || []),
+ deferred: clonePlainValue(goalLaneModel.deferredGoalLabels || []),
  minimized: minimizedGoal,
  narrative: `This block gives the most weight to ${primary?.category || "consistency"}. ${maintainedGoals[0] ? `${maintainedGoals[0]} stays active with less emphasis.` : "Other priorities stay active with less emphasis."} ${bodyCompActive ? "Core work stays minimal but consistent." : "Non-primary accessories stay intentionally limited."}`,
  };
 
  return {
  architecture: effectiveArchitecture,
- split: effectiveSplit,
+ split: finalSplit,
  why,
  constraints,
  drivers: [primary?.name, ...secondary.map(g => g.name)].filter(Boolean),
@@ -3234,6 +5505,8 @@ const scheduleLimitedTemplates = limitDayTemplatesToScheduleReality({
  goalCapabilityStack: clonePlainValue(domainSelection?.capabilityStack || null),
  domainAdapter: clonePlainValue(domainAdapter || null),
  supportTier: clonePlainValue(supportTier || null),
+ supportPlanningContext: clonePlainValue(supportPlanningContext || null),
+ habitAdaptationContext: clonePlainValue(habitAdaptationContext || null),
  baselineInfluence: clonePlainValue(baselineInfluence || null),
  trainingPreferencePolicy: clonePlainValue(trainingPreferencePolicy || null),
   adaptationState: clonePlainValue(adaptationState || null),

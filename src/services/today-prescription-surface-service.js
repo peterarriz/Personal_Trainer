@@ -1,3 +1,5 @@
+import { buildTodayTrustModel } from "./compact-trust-service.js";
+
 const sanitizeText = (value = "", maxLength = 220) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 
 const normalizeText = (value = "") => sanitizeText(value, 220).toLowerCase();
@@ -24,7 +26,8 @@ const formatDateLabel = (dateKey = "") => {
 const inferDayFamily = ({ training = null, prescribedExercises = [] } = {}) => {
   const rawType = normalizeText(training?.type || "");
   const hasRun = Boolean(training?.run) || /run|conditioning/.test(rawType);
-  const hasStrength = Boolean((Array.isArray(prescribedExercises) ? prescribedExercises : []).length) || Boolean(training?.strSess) || /strength/.test(rawType);
+  const hasExplicitStrengthTrack = Boolean(training?.strSess) || Boolean(training?.strengthDuration) || /strength/.test(rawType);
+  const hasStrength = hasExplicitStrengthTrack || (hasRun ? false : Boolean((Array.isArray(prescribedExercises) ? prescribedExercises : []).length));
   if (rawType === "rest" || rawType === "recovery") return "recovery";
   if (hasRun && hasStrength) return "hybrid";
   if (hasStrength) return "strength";
@@ -50,6 +53,34 @@ const formatExerciseStructure = (row = {}) => {
   return sets || reps || "As prescribed";
 };
 
+const formatExercisePrescription = (row = {}) => {
+  const directPrescription = sanitizeText(row?.prescription || "", 140);
+  if (
+    directPrescription
+    && !sanitizeText(row?.sets || "", 40)
+    && !sanitizeText(row?.reps || "", 60)
+    && !sanitizeText(row?.weight || row?.prescribedWeight || "", 40)
+  ) {
+    return directPrescription;
+  }
+  const structure = formatExerciseStructure(row);
+  const load = sanitizeText(row?.weight || row?.prescribedWeight || "", 40);
+  if (load && structure && structure !== "As prescribed") return `${structure}, ${load} lb`;
+  if (load) return `${load} lb`;
+  return structure;
+};
+
+const cleanSessionLabel = (value = "") => sanitizeText(
+  String(value || "")
+    .replace(/\(\s*reduced-load\s*\)/gi, "")
+    .replace(/\(\s*extended\s*\)/gi, "")
+    .replace(/\(\s*20-min version\s*\)/gi, "")
+    .replace(/\s*\bReduced-load\b/gi, "")
+    .replace(/\s*\bExtended\b/gi, "")
+    .replace(/\s{2,}/g, " "),
+  120
+);
+
 const isUpperExercise = (name = "") => /bench|press|push|pull|row|shoulder|chin|pull-up|dip|lat/i.test(String(name || ""));
 const isLowerExercise = (name = "") => /squat|deadlift|lunge|hinge|step-up|hamstring|glute|leg|calf/i.test(String(name || ""));
 
@@ -58,9 +89,22 @@ const formatExerciseList = (rows = [], maxItems = 2) => (
     .filter(Boolean)
     .slice(0, maxItems)
     .map((row) => {
-      const exercise = sanitizeText(row?.ex || row?.exercise || "", 120);
+      const exercise = sanitizeText(row?.ex || row?.exercise || row?.title || "", 120);
       if (!exercise) return "";
       return `${exercise} (${formatExerciseStructure(row)})`;
+    })
+    .filter(Boolean)
+    .join("; ")
+);
+
+const formatExercisePrescriptionList = (rows = [], maxItems = 3) => (
+  (Array.isArray(rows) ? rows : [])
+    .filter(Boolean)
+    .slice(0, maxItems)
+    .map((row) => {
+      const exercise = sanitizeText(row?.ex || row?.exercise || row?.title || "", 120);
+      if (!exercise) return "";
+      return `${exercise} (${formatExercisePrescription(row)})`;
     })
     .filter(Boolean)
     .join("; ")
@@ -133,6 +177,24 @@ const resolveFocusLine = ({ family = "generic", training = null, lowEnergy = fal
   return "Recovery, aerobic base, and core";
 };
 
+const resolveSessionLabel = ({ family = "generic", training = null, summary = null, prescribedExercises = [] } = {}) => {
+  const summaryLabel = cleanSessionLabel(summary?.sessionLabel || "");
+  const trainingLabel = cleanSessionLabel(training?.label || "");
+  const runType = sanitizeText(training?.run?.t || "", 40);
+  const hasStrengthRows = Array.isArray(prescribedExercises) && prescribedExercises.length > 0;
+  if (family === "strength") {
+    if (/strength|lift|bench|squat|deadlift|press|pull/i.test(summaryLabel)) return summaryLabel;
+    if (/strength|lift|bench|squat|deadlift|press|pull/i.test(trainingLabel)) return trainingLabel;
+    return "Strength session";
+  }
+  if (family === "hybrid") {
+    if (summaryLabel && !/reduced-load/i.test(summary?.sessionLabel || "")) return summaryLabel;
+    if (runType && hasStrengthRows) return `${runType} run + strength`;
+    return "Run + strength";
+  }
+  return summaryLabel || trainingLabel || "Planned session";
+};
+
 const resolveWhyLine = ({
   family = "generic",
   changeSummaryLine = "",
@@ -190,16 +252,17 @@ const buildPrimaryBlock = ({
       prescription: cardioSwapLine || sanitizeText(training?.fallback || training?.run?.d || summary?.structure || "20-30 min easy walk, bike, or easy movement", 180),
       effort: "Easy / conversational",
       variant: "Stay easy enough that you feel better when you finish.",
+      guidanceSource: sanitizeText(training?.label || training?.type || "Recovery walk", 120),
     };
   }
 
   if (family === "hybrid") {
     return {
       key: "primary",
-      title: "Run + strength arc",
+      title: "Session arc",
       prescription: cardioSwapLine || sanitizeText([
         training?.run?.d || summary?.expectedDuration || "20-35 min run",
-        strengthPrimaryRows.length ? `then ${formatExerciseList(strengthPrimaryRows, 2)}` : training?.strengthDuration || "then 12-20 min of crisp strength",
+        training?.strengthDuration ? `then ${training.strengthDuration} of strength support` : "then 12-20 min of strength support",
       ].filter(Boolean).join(", "), 200),
       effort: lowEnergy ? "Easy to steady" : "Controlled / clean",
       variant: soreness === "legs"
@@ -207,6 +270,7 @@ const buildPrimaryBlock = ({
         : soreness === "upper"
         ? "Keep the run normal and trim heavy pressing or pulling."
         : "Run first. Keep the strength work supportive, not exhaustive.",
+      guidanceSource: sanitizeText(training?.label || training?.type || "Run + strength", 120),
     };
   }
 
@@ -225,6 +289,7 @@ const buildPrimaryBlock = ({
         : soreness === "legs"
         ? "Keep lower-body loading honest and shift the support work toward upper body or trunk."
         : "",
+      guidanceSource: sanitizeText(training?.label || training?.type || "Strength", 120),
     };
   }
 
@@ -235,6 +300,7 @@ const buildPrimaryBlock = ({
       prescription: sanitizeText(training?.swim?.setLine || training?.swim?.d || summary?.structure || "Main swim set as prescribed", 180),
       effort: lowEnergy ? "Smooth aerobic" : "Controlled quality",
       variant: lowEnergy ? "Stay one step calmer than planned if stroke quality starts to slide." : "",
+      guidanceSource: sanitizeText(training?.label || training?.swim?.focus || training?.type || "Swim", 120),
     };
   }
 
@@ -263,6 +329,7 @@ const buildPrimaryBlock = ({
         : /tempo|interval/.test(runType)
         ? "Do not chase pace if mechanics are not clean today."
         : "",
+      guidanceSource: sanitizeText(training?.label || training?.run?.t || training?.type || title, 120),
     };
   }
 
@@ -272,7 +339,98 @@ const buildPrimaryBlock = ({
     prescription: sanitizeText(summary?.structure || training?.fallback || training?.label || "Main work as prescribed", 180),
     effort: lowEnergy ? "Controlled" : "As prescribed",
     variant: "",
+    guidanceSource: sanitizeText(training?.label || training?.type || "Primary work", 120),
   };
+};
+
+const buildStrengthExerciseBlocks = ({
+  prescribedExercises = [],
+  lowEnergy = false,
+  soreness = "none",
+  swapExercises = false,
+} = {}) => (
+  (Array.isArray(prescribedExercises) ? prescribedExercises : [])
+    .filter(Boolean)
+    .map((row, index) => {
+      const exerciseName = sanitizeText(row?.ex || row?.exercise || `Exercise ${index + 1}`, 120) || `Exercise ${index + 1}`;
+      const cue = sanitizeText(row?.cue || row?.note || "", 140);
+      let variant = cue;
+      if (swapExercises) {
+        variant = "Use the nearest stable version you can load cleanly today.";
+      } else if (soreness === "upper" && isUpperExercise(exerciseName)) {
+        variant = "Use the most stable version available and keep a rep or two in reserve.";
+      } else if (soreness === "legs" && isLowerExercise(exerciseName)) {
+        variant = "Keep the load honest and stop before the quality drops.";
+      }
+      return {
+        key: `strength_${index}`,
+        title: exerciseName,
+        prescription: formatExercisePrescription(row),
+        effort: lowEnergy ? "Leave 2-3 reps in reserve" : "Leave 1-2 reps in reserve",
+        variant,
+        guidanceSource: exerciseName,
+      };
+    })
+);
+
+const buildGroupedStrengthBlocks = ({
+  prescribedExercises = [],
+  lowEnergy = false,
+  soreness = "none",
+  swapExercises = false,
+} = {}) => {
+  const rows = buildStrengthExerciseBlocks({
+    prescribedExercises,
+    lowEnergy,
+    soreness,
+    swapExercises,
+  });
+  if (!rows.length) return [];
+
+  const mainOne = rows[0] ? [rows[0]] : [];
+  const mainTwo = rows[1] ? [rows[1]] : [];
+  const accessoryRows = rows.slice(2);
+  const blocks = [];
+
+  if (mainOne.length) {
+    blocks.push({
+      key: "strength_main_1",
+      title: mainOne[0].title,
+      prescription: mainOne[0].prescription,
+      effort: mainOne[0].effort,
+      variant: mainOne[0].variant,
+      guidanceSource: mainOne[0].guidanceSource,
+    });
+  }
+
+  if (mainTwo.length) {
+    blocks.push({
+      key: "strength_main_2",
+      title: mainTwo[0].title,
+      prescription: mainTwo[0].prescription,
+      effort: mainTwo[0].effort,
+      variant: mainTwo[0].variant,
+      guidanceSource: mainTwo[0].guidanceSource,
+    });
+  }
+
+  if (accessoryRows.length) {
+    blocks.push({
+      key: "strength_accessory_group",
+      title: "Accessory / core",
+      prescription: formatExercisePrescriptionList(accessoryRows, 3) || "Accessory work as prescribed",
+      effort: lowEnergy ? "Leave 2-3 reps in reserve" : "Controlled / clean",
+      variant: swapExercises
+        ? "Use the nearest stable versions and keep the transitions simple."
+        : soreness === "legs"
+        ? "Keep the lower-body accessory work honest and stop before it drags."
+        : soreness === "upper"
+        ? "Trim pressing or pulling volume if shoulder or elbow quality slides."
+        : "",
+    });
+  }
+
+  return blocks;
 };
 
 const buildRules = ({
@@ -320,6 +478,109 @@ const buildWorkoutBlocks = ({
   const lowImpact = adjustments?.impact === "low_impact";
   const cardioSwap = adjustments?.cardioSwap || "as_planned";
   const swapExercises = Boolean(adjustments?.swapExercises);
+  const groupedStrengthBlocks = buildGroupedStrengthBlocks({
+    prescribedExercises,
+    lowEnergy,
+    soreness,
+    swapExercises,
+  });
+
+  if (family === "strength" && groupedStrengthBlocks.length > 0) {
+    const blocks = [
+      {
+        key: "mobility",
+        title: "Warm-up",
+        prescription: resolveMobilityLine({ family, soreness, training }),
+        effort: "Easy / smooth",
+        variant: lowEnergy ? "Keep the prep short and clean." : "",
+      },
+      ...groupedStrengthBlocks,
+    ];
+    const finisherLine = resolveFinisherLine({
+      family,
+      training,
+      shortOnTime,
+      lowEnergy,
+      lowImpact,
+      cardioSwap,
+      extended,
+    });
+    if (finisherLine) {
+      blocks.push({
+        key: "finisher",
+        title: "Optional finisher",
+        prescription: finisherLine,
+        effort: extended ? "Controlled quality" : "Optional",
+        variant: "Skip it if the main lifts already did the job.",
+      });
+    }
+    return blocks;
+  }
+
+  if (family === "hybrid" && groupedStrengthBlocks.length > 0) {
+    const primary = buildPrimaryBlock({
+      family,
+      training,
+      summary,
+      prescribedExercises,
+      shortOnTime,
+      lowEnergy,
+      soreness,
+      lowImpact,
+      cardioSwap,
+      swapExercises,
+    });
+    const strengthTouchpointBlock = {
+      key: "hybrid_strength_touchpoint",
+      title: "Strength touchpoint",
+      prescription: formatExercisePrescriptionList(
+        (Array.isArray(prescribedExercises) ? prescribedExercises : []).slice(0, 2),
+        2
+      ) || training?.strengthDuration || "Support strength work as prescribed",
+      effort: lowEnergy ? "Leave 2-3 reps in reserve" : "Controlled / clean",
+      variant: soreness === "legs"
+        ? "Bias the strength touchpoint toward upper body or trunk if the legs are still carrying fatigue."
+        : soreness === "upper"
+        ? "Keep the run normal and simplify the upper-body loading."
+        : "Keep this supportive. The day should still read as one session, not two full ones.",
+    };
+    const accessoryGroup = groupedStrengthBlocks.find((block) => block.key === "strength_accessory_group");
+    const blocks = [primary, strengthTouchpointBlock];
+    if (accessoryGroup) {
+      blocks.push({
+        ...accessoryGroup,
+        key: "hybrid_accessory_group",
+        title: "Core / accessory",
+      });
+    }
+    const mobility = {
+      key: "mobility",
+      title: "Mobility",
+      prescription: resolveMobilityLine({ family, soreness, training }),
+      effort: "Easy / smooth",
+      variant: lowEnergy ? "Stay easy. This is there to help the session feel better, not harder." : "",
+    };
+    blocks.push(mobility);
+    const finisherLine = resolveFinisherLine({
+      family,
+      training,
+      shortOnTime,
+      lowEnergy,
+      lowImpact,
+      cardioSwap,
+      extended,
+    });
+    if (finisherLine) {
+      blocks.push({
+        key: "finisher",
+        title: "Optional finisher",
+        prescription: finisherLine,
+        effort: extended ? "Controlled quality" : "Optional",
+        variant: "Skip it if the main work already did its job.",
+      });
+    }
+    return blocks.slice(0, 5);
+  }
 
   const primary = buildPrimaryBlock({
     family,
@@ -462,17 +723,24 @@ export const buildTodayPrescriptionSurfaceModel = ({
     adjustments: normalizedAdjustments,
     environmentSelection,
   });
+  const trustModel = buildTodayTrustModel({
+    surfaceModel,
+    adjustments: normalizedAdjustments,
+    environmentSelection,
+    family,
+  });
 
   return {
     headerTitle: "Today's Plan",
     dateLabel: formatDateLabel(dateKey),
-    sessionLabel: sanitizeText(summary?.sessionLabel || training?.label || "Planned session", 120),
+    sessionLabel: resolveSessionLabel({ family, training, summary, prescribedExercises }),
     focusLine,
     whyLine,
     canonicalReasonLine: singleSentence(surfaceModel?.canonicalReasonLine || ""),
     blocks,
     rules,
     adjustmentSummary,
+    trustModel,
     family,
   };
 };

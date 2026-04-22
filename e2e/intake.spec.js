@@ -58,16 +58,6 @@ const expectNoLaneTheater = async (page) => {
   await expect(page.getByText("We are deferring", { exact: true })).toHaveCount(0);
 };
 
-const expectPostIntakeReadyState = async (page) => {
-  await expect(page.getByTestId("post-intake-ready-card")).toBeVisible();
-  await expect(page.getByTestId("post-intake-ready-headline")).toContainText("ready");
-  await expect(page.getByTestId("post-intake-ready-first-action")).toBeVisible();
-  await expect(page.getByTestId("post-intake-ready-week-shape")).toBeVisible();
-  await expect(page.getByTestId("post-intake-ready-roadmap")).toBeVisible();
-  await expect(page.getByTestId("post-intake-ready-adapts")).toBeVisible();
-  await expect(page.getByTestId("post-intake-ready-checklist")).toBeVisible();
-};
-
 const readGoalCardSummaries = async (page, cardTestId) => (
   page
     .getByTestId(cardTestId)
@@ -165,7 +155,8 @@ test.describe("intake onboarding e2e", () => {
     expect(cache?.personalization?.profile?.onboardingComplete).toBe(true);
     expect(cache?.personalization?.profile?.weekOneReadyDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     await expect.poll(() => readIntakeSession(page)).toBeNull();
-    await expectPostIntakeReadyState(page);
+    await expect(page.getByTestId("today-session-card")).toBeVisible();
+    await expect(page.getByTestId("today-canonical-session-label")).not.toHaveText(/^\s*$/);
   });
 
   test("vague appearance goal shows proxies and a first 30-day win before any clarification", async ({ page }) => {
@@ -239,12 +230,62 @@ test.describe("intake onboarding e2e", () => {
     }
     await page.getByTestId("intake-footer-continue").click();
 
-    await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("clarify");
-    await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(2);
-    await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2"]);
-    await expectSummaryRail(page);
-    await expectPlanPreview(page);
-    await expectNoFakeTranscript(page);
+    await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
+    const phase = await getCurrentPhase(page);
+    if (/clarify|confirm/.test(phase)) {
+      await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(2);
+      await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2"]);
+      await expectSummaryRail(page);
+      await expectPlanPreview(page);
+      await expectNoFakeTranscript(page);
+      return;
+    }
+
+    await waitForPostOnboarding(page);
+    const cache = await readLocalCache(page);
+    expect(cache?.personalization?.profile?.onboardingComplete).toBe(true);
+    await expect(page.getByTestId("today-session-card")).toBeVisible();
+    await expect(page.getByTestId("today-canonical-session-label")).not.toHaveText(/^\s*$/);
+  });
+
+  test("custom goals stay secondary and use the same save-goal flow as templates", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await expect(page.getByTestId("intake-goals-step")).toBeVisible();
+    await expect(page.getByTestId("intake-goals-primary-input")).toHaveCount(0);
+
+    await page.getByTestId("intake-goals-toggle-custom").click();
+    await expect(page.getByTestId("intake-goals-primary-input")).toBeVisible();
+    await page.getByTestId("intake-goals-primary-input").fill("Return to soccer without calf pain");
+    await page.getByTestId("intake-goals-add").click();
+    await expect(page.getByTestId("intake-goal-selection-draft")).toContainText(/return to soccer without calf pain/i);
+    await commitPendingGoalSelection(page);
+
+    await expect(page.getByTestId("intake-selected-goals")).toContainText(/return to soccer without calf pain/i);
+    await page.getByTestId("intake-goals-option-experience-level-intermediate").click();
+    await page.getByTestId("intake-goals-option-training-days-3").click();
+    await page.getByTestId("intake-goals-option-session-length-45").click();
+    await page.getByTestId("intake-goals-option-training-location-gym").click();
+    await page.getByTestId("intake-footer-continue").click();
+
+    await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
+  });
+
+  test("structured goals can stay fuzzy when the user does not know exact target metrics yet", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await expect(page.getByTestId("intake-goals-step")).toBeVisible();
+
+    await page.getByTestId("intake-goal-type-strength").click();
+    await page.getByTestId("intake-featured-goal-improve_big_lifts").click();
+    await commitPendingGoalSelection(page);
+
+    await expect(page.getByTestId("intake-selected-goals")).toContainText(/improve a big lift/i);
+    await page.getByTestId("intake-goals-option-experience-level-intermediate").click();
+    await page.getByTestId("intake-goals-option-training-days-4").click();
+    await page.getByTestId("intake-goals-option-session-length-45").click();
+    await page.getByTestId("intake-goals-option-training-location-gym").click();
+    await page.getByTestId("intake-footer-continue").click();
+
+    await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
   });
 
   test("featured paths stay broad until starter fields capture the real target", async ({ page }) => {

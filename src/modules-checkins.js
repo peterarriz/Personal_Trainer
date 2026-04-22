@@ -24,6 +24,7 @@ export const DEFAULT_DAILY_CHECKIN = {
 export const CHECKIN_STATUS_OPTIONS = [
   { key: "completed_as_planned", label: "completed as planned" },
   { key: "completed_modified", label: "completed modified" },
+  { key: "partial_completed", label: "partially completed" },
   { key: "skipped", label: "skipped" },
 ];
 
@@ -205,6 +206,33 @@ export const comparePlannedDayToActual = ({ plannedDayRecord = null, actualLog =
       actualLabel,
       actualType,
       customSession: completionKind === "custom_session",
+    };
+  }
+
+  const explicitSwap = Boolean(actualLog?.actualSession?.swapFromPlan || actualLog?.actualSession?.userSelection === "swapped");
+  if (explicitSwap && hasStructuredActual) {
+    completionKind = "custom_session";
+    differenceKind = "custom_session";
+    severity = actualFamily === plannedFamily ? "minor" : "material";
+    matters = true;
+    summary = actualLabel
+      ? `Swapped from plan: prescribed ${plannedLabel || plannedType}, actual ${actualLabel}.`
+      : `Swapped from plan: ${plannedLabel || plannedType}.`;
+    return {
+      status,
+      completionKind,
+      differenceKind,
+      severity,
+      matters,
+      summary,
+      hasPlannedDay: true,
+      expectedSession,
+      plannedLabel,
+      plannedType,
+      actualLabel,
+      actualType,
+      customSession: true,
+      sameSessionFamily: actualFamily === plannedFamily,
     };
   }
 

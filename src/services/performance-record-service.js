@@ -1,3 +1,8 @@
+import {
+  buildExerciseTransferProfile,
+  normalizeExerciseTransferProfile,
+} from "./exercise-transfer-profile-service.js";
+
 export const PERFORMANCE_RECORD_MODEL_VERSION = "2026-04-performance-record-v1";
 
 export const PERFORMANCE_RECORD_SCOPES = {
@@ -232,6 +237,8 @@ const normalizeExercisePerformanceRecord = ({ record = {}, dateKey = "", logEntr
   const sessionLabel = String(logEntry?.actualSession?.sessionLabel || logEntry?.type || logEntry?.label || sessionType || "Session").trim();
   const sessionStatus = String(logEntry?.actualSession?.status || logEntry?.checkin?.status || "").trim();
   const sessionFamily = inferSessionFamily({ type: sessionType, label: sessionLabel, exerciseRecords: [record] });
+  const transferProfile = normalizeExerciseTransferProfile(record?.transferProfile)
+    || buildExerciseTransferProfile({ exerciseName: exercise, note: String(record?.note || "") });
 
   return {
     id: `perf_${safeDateKey}_exercise_${exerciseKey}`,
@@ -249,6 +256,7 @@ const normalizeExercisePerformanceRecord = ({ record = {}, dateKey = "", logEntr
     liftKey: record?.liftKey || inferPerformanceLiftKey(exercise),
     bucket: record?.bucket || inferPerformanceExerciseBucket(exercise),
     mode: bodyweightOnly ? "bodyweight" : bandTension ? "band" : mode,
+    transferProfile,
     prescribed: {
       weight: prescribedWeight,
       reps: prescribedReps,

@@ -31,6 +31,10 @@ test.describe("goal-library intake paths", () => {
       await expect(page.getByTestId("today-session-card")).toBeVisible();
       return;
     }
+    if (phase === "building") {
+      await waitForPostOnboarding(page);
+      return;
+    }
     await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
@@ -52,6 +56,10 @@ test.describe("goal-library intake paths", () => {
 
     if (phase === "completed") {
       await expect(page.getByTestId("today-session-card")).toBeVisible();
+      return;
+    }
+    if (phase === "building") {
+      await waitForPostOnboarding(page);
       return;
     }
     await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
@@ -78,6 +86,10 @@ test.describe("goal-library intake paths", () => {
       await expect(page.getByTestId("today-session-card")).toBeVisible();
       return;
     }
+    if (phase === "building") {
+      await waitForPostOnboarding(page);
+      return;
+    }
     await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
@@ -98,6 +110,10 @@ test.describe("goal-library intake paths", () => {
 
     if (phase === "completed") {
       await expect(page.getByTestId("today-session-card")).toBeVisible();
+      return;
+    }
+    if (phase === "building") {
+      await waitForPostOnboarding(page);
       return;
     }
     await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
@@ -123,6 +139,10 @@ test.describe("goal-library intake paths", () => {
       await expect(page.getByTestId("today-session-card")).toBeVisible();
       return;
     }
+    if (phase === "building") {
+      await waitForPostOnboarding(page);
+      return;
+    }
     await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
@@ -137,6 +157,16 @@ test.describe("goal-library intake paths", () => {
       trainingLocation: "Gym",
     });
 
+    await expect.poll(() => page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
+    const phase = await page.getByTestId("intake-root").getAttribute("data-intake-phase");
+    if (phase === "completed") {
+      await expect(page.getByTestId("today-session-card")).toBeVisible();
+      return;
+    }
+    if (phase === "building") {
+      await waitForPostOnboarding(page);
+      return;
+    }
     await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);

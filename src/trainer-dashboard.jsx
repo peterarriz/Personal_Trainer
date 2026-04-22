@@ -1,34 +1,24 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, normalizeGoals, getActiveTimeBoundGoal, generateTodayPlan } from "./modules-planning.js";
 import { createAuthStorageModule, buildStorageStatus, classifyStorageError, STORAGE_STATUS_REASONS } from "./modules-auth-storage.js";
-import { getGoalContext, normalizeActualNutritionLog, resolveNutritionActualLogStoreCompat, compareNutritionPrescriptionToActual, getPlaceRecommendations, buildGroceryBasket, deriveGroceryExecutionSupport, mergeActualNutritionLogUpdate, applyHydrationQuickAdd } from "./modules-nutrition.js";
+import { getGoalContext, normalizeActualNutritionLog, resolveNutritionActualLogStoreCompat, compareNutritionPrescriptionToActual, getPlaceRecommendations, buildGroceryBasket, mergeActualNutritionLogUpdate, applyHydrationQuickAdd } from "./modules-nutrition.js";
 import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, resolveEffectiveStatus, buildPlannedDayRecord, comparePlannedDayToActual } from "./modules-checkins.js";
 import { COACH_TOOL_ACTIONS, deterministicCoachPacket } from "./modules-coach-engine.js";
-import { buildCheckinReadSummary, buildWeeklyPlanningCoachBrief, buildTodayWhyNowSentence, buildMacroShiftLine, buildEasierSessionsObservation, buildSkippedQualityDecision, buildWeeklyConsistencyAnchor, buildBadWeekTriageResponse } from "./prompts/coach-text.js";
+import { buildCheckinReadSummary, buildWeeklyPlanningCoachBrief, buildTodayWhyNowSentence, buildMacroShiftLine, buildSkippedQualityDecision, buildWeeklyConsistencyAnchor, buildBadWeekTriageResponse } from "./prompts/coach-text.js";
 import { SettingsIcon } from "./icons.js";
 import { assembleCanonicalPlanDay, resolvePlanDayStateInputs, resolvePlanDayTimeOfDay } from "./services/plan-day-service.js";
 import { buildCanonicalPlanSurfaceAudit, buildCanonicalPlanSurfaceModel } from "./services/plan-day-surface-service.js";
 import { assemblePlanWeekRuntime, mergeCurrentPlanWeekIntoHorizon, resolveCurrentPlanWeekNumber, resolvePlanWeekNumberForDateKey, resolveProgramDisplayHorizon } from "./services/plan-week-service.js";
-import { buildDayReview, buildDayReviewComparison, classifyDayReviewStatus } from "./services/day-review-service.js";
+import { buildDayReview } from "./services/day-review-service.js";
 import {
  AUTH_ENTRY_STYLE_TEXT,
- BRAND_FOUNDATION,
  BRAND_THEME_MODES,
  BRAND_THEME_OPTIONS,
  PRODUCT_BRAND,
- SettingsAccountSection,
- SettingsAdvancedSection,
- SettingsBaselinesSection,
- SettingsGoalsSection,
- SettingsPreferencesSection,
- SettingsProfileSection,
- SettingsProgramsSection,
- SettingsSurfaceNav,
  buildAuthEntryTheme,
  buildAuthEntryViewModel,
  buildBrandThemePreviewModel,
  buildBrandThemeState,
- buildDeleteAccountHelpText,
  buildMetricsBaselinesModel,
  buildSyncStateModel,
  buildSyncSurfaceModel,
@@ -39,10 +29,7 @@ import {
  stabilizeSyncStatePresentation,
  SYNC_RUNTIME_EVENT_TYPES,
  SYNC_STATE_IDS,
- SYNC_STATE_TONES,
  SYNC_SURFACE_KEYS,
- useSettingsDeleteDiagnostics,
- useSettingsScreenState,
 } from "./domains/settings/index.js";
 import {
  buildFrictionDashboardModel,
@@ -61,7 +48,6 @@ import {
  buildRecommendationJoinKey,
 } from "./services/adaptive-learning-event-service.js";
 import { createAdaptiveLearningStore } from "./services/adaptive-learning-store-service.js";
-import { buildAdaptiveDiagnosticsPanelModel } from "./services/adaptive-policy-operator-service.js";
 import {
  buildAdaptiveLearningIdentityFromSession,
  buildAuthLifecycleEventInput,
@@ -81,8 +67,8 @@ import {
  buildWorkoutAdjustmentRecommendationEventInput,
  buildWorkoutOutcomeEventInput,
 } from "./services/adaptive-learning-domain-service.js";
-import { coordinateCoachActionCommit, resolveStoredAiApiKey, runCoachChatRuntime, runIntakeCoachVoiceRuntime, runIntakeInterpretationRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
-import { canExposeInternalOperatorTools, canUseClientSuppliedAiKey } from "./services/internal-access-policy-service.js";
+import { coordinateCoachActionCommit, resolveStoredAiApiKey, runIntakeCoachVoiceRuntime, runIntakeInterpretationRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
+import { canExposeInternalOperatorTools } from "./services/internal-access-policy-service.js";
 import { deriveCanonicalAthleteState, withLegacyGoalProfileCompatibility } from "./services/canonical-athlete-service.js";
 import { buildPlanningGoalsFromResolvedGoals, applyResolvedGoalsToGoalSlots, buildGoalStateFromResolvedGoals, resolveGoalTranslation } from "./services/goal-resolution-service.js";
 import { buildGoalArbitrationStack } from "./services/goal-arbitration-service.js";
@@ -95,7 +81,7 @@ import {
  prepareGoalChangeActiveState,
  resolveGoalChangePlanStartDate,
 } from "./services/goal-change-service.js";
-import { buildGoalProgressTrackingFromGoals, GOAL_PROGRESS_STATUSES } from "./services/goal-progress-service.js";
+import { GOAL_PROGRESS_STATUSES } from "./services/goal-progress-service.js";
 import {
  buildGoalReview,
  buildGoalReviewHistoryEntry,
@@ -155,12 +141,16 @@ import {
  deriveActiveIssueContextFromPersonalization,
  deriveTrainingContextFromPersonalization,
  describeTrainingContextSource,
+ formatTrainingWeekdayAvailability,
+ normalizeTrainingWeekdayKey,
+ normalizeTrainingWeekdayAvailability,
  summarizeTrainingContext,
  TRAINING_CONTEXT_SOURCES,
  TRAINING_EQUIPMENT_VALUES,
  TRAINING_ENVIRONMENT_VALUES,
  TRAINING_INTENSITY_VALUES,
  TRAINING_SESSION_DURATION_VALUES,
+ TRAINING_WEEKDAY_OPTIONS,
  trainingEnvironmentToDisplayMode,
  trainingEquipmentToEnvironmentCode,
 } from "./services/training-context-service.js";
@@ -204,14 +194,14 @@ import {
 } from "./services/intake-completeness-service.js";
 import {
   applyIntakeStarterMetrics,
+  buildIntakeGoalCaptureModel,
   INTAKE_COPY_DECK,
   buildIntakeStarterGoalTypes,
   buildIntakeStarterMetricDraft,
   buildIntakeStarterMetricQuestions,
- getDefaultGoalLibraryCategoryForStarterType,
- inferIntakeStarterGoalTypeId,
- INTAKE_STAGE_CONTRACT,
- listFeaturedIntakeGoalTemplates,
+  inferIntakeStarterGoalTypeId,
+  INTAKE_STAGE_CONTRACT,
+  listFeaturedIntakeGoalTemplates,
 } from "./services/intake-entry-service.js";
 import {
  BASELINE_METRIC_KEYS,
@@ -237,30 +227,11 @@ import {
  NUTRITION_DAY_TYPES,
 } from "./services/nutrition-day-taxonomy-service.js";
 import {
- buildNutritionSurfaceModel,
-} from "./services/nutrition-surface-service.js";
-import {
  GOAL_ANCHOR_QUICK_ENTRY_TYPES,
  buildGoalAnchorQuickEntryModel,
  upsertGoalAnchorQuickEntry,
 } from "./services/goal-anchor-quick-entry-service.js";
-import {
- buildCoachActionHistoryModel,
- buildCoachActionLabel,
- buildCoachActionPreviewModel,
- buildCoachAskAnythingStateModel,
- buildCoachModeCards,
- buildCoachQuickChangeActions,
- buildCoachRecentQuestionModel,
- COACH_SURFACE_MODES,
-} from "./services/coach-surface-service.js";
-import {
- buildGoalEditorDraft,
- buildGoalManagementPreview,
- buildGoalSettingsViewModel,
- GOAL_ARCHIVE_STATUSES,
- GOAL_MANAGEMENT_CHANGE_TYPES,
-} from "./services/goal-management-service.js";
+import { buildGoalManagementPreview } from "./services/goal-management-service.js";
 import {
   findGoalTemplateById,
   findGoalTemplateSelectionForGoalText,
@@ -276,11 +247,6 @@ import {
  buildVisiblePlanningHorizonLabel,
  OPEN_ENDED_TIMING_VALUE,
 } from "./services/goal-timing-service.js";
-import {
- buildProgramRoadmapRows,
- buildProgramTrajectoryHeaderModel,
- buildProgramWeekGridCells,
-} from "./services/program-roadmap-service.js";
 import { buildPostIntakeReadyModel } from "./services/post-intake-ready-service.js";
 import { buildSharedSessionSummaryModel } from "./services/session-summary-surface-service.js";
 import { buildTodayCommandCenterModel } from "./services/today-command-center-service.js";
@@ -292,51 +258,9 @@ import {
  buildSupportTierModel,
 } from "./services/support-tier-service.js";
 import {
- buildSaveFeedbackModel,
- SAVE_FEEDBACK_PHASES,
-} from "./services/save-feedback-service.js";
-import {
- buildActiveBasisSnapshot,
- buildProgramCatalogViewModel,
- buildProgramSelectionHistoryEntry,
  createDefaultProgramSelectionState,
- createProgramInstance,
- createStyleSelection,
- getProgramDefinitionById,
- getStyleDefinitionById,
- listProgramDefinitions,
- listStyleDefinitions,
  normalizeProgramsSelectionState,
- PROGRAM_FIDELITY_MODES,
- PROGRAM_SELECTION_MODES,
- PROGRAM_SOURCE_BASIS_LABELS,
- SOURCE_CONFIDENCE_LABELS,
 } from "./services/program-catalog-service.ts";
-import {
- assessProgramCompatibility,
- assessStyleCompatibility,
- buildCompatibilityHeadline,
- COMPATIBILITY_OUTCOMES,
-} from "./services/program-compatibility-service.ts";
-import {
- buildActivationConfirmationCopy,
- buildCompatibilityWarningCopy,
- buildPlanBasisExplanation,
- buildProgramCardExplanation,
- buildProgramWeekExplanation,
- buildStyleCardExplanation,
-} from "./services/program-explanation-service.ts";
-import {
- buildStyleOverlayPreview,
- STYLE_INFLUENCE_LEVELS,
-} from "./services/style-overlay-service.ts";
-import {
- WORKOUT_LOG_FAMILIES,
- buildWorkoutQuickCaptureModel,
- buildWorkoutLogDraft,
- buildWorkoutLogEntryFromDraft,
- hasWorkoutQuickCaptureValues,
-} from "./services/workout-log-form-service.js";
 import {
  buildIntakeInjuryConstraintContext,
  INTAKE_INJURY_IMPACT_OPTIONS,
@@ -344,8 +268,6 @@ import {
  sanitizeIntakeText,
 } from "./services/intake-flow-service.js";
 import {
- buildIntakeMachineDebugView,
- buildIntakeParseDebugView,
  createIntakeMachineState,
  intakeReducer,
  INTAKE_MACHINE_EVENTS,
@@ -366,16 +288,8 @@ import {
  INTAKE_SESSION_STORAGE_KEY,
  restorePersistedIntakeSession,
 } from "./services/intake-session-service.js";
-import {
- buildLegacyHistoryDisplayLabel,
- resolveLegacyPlannedDayHistoryEntry,
-} from "./services/legacy-fallback-compat-service.js";
+import { resolveLegacyPlannedDayHistoryEntry } from "./services/legacy-fallback-compat-service.js";
 import { appendProvenanceSidecar, buildProvenanceEvent, describeProvenanceRecord, normalizeProvenanceEvent, PROVENANCE_ACTORS } from "./services/provenance-service.js";
-import {
- HistoryAuditArchiveSection,
- HistoryAuditDayReviewCard,
- HistoryAuditWeekHistorySection,
-} from "./review-audit-components.jsx";
 import {
  StateFeedbackBanner,
  StateFeedbackChip,
@@ -395,13 +309,236 @@ import {
  SurfaceStack,
 } from "./components/SurfaceSystem.jsx";
 import { IntakeSummaryRail } from "./components/IntakeSummaryRail.jsx";
-import { SessionSummaryBlock } from "./components/SessionSummaryBlock.jsx";
-import {
- LogFeelStrip,
- LogValueStepper,
- RestTimerStrip,
- StrengthExecutionCard,
-} from "./components/WorkoutLogControls.jsx";
+import { CompactTrustRow } from "./components/CompactTrustRow.jsx";
+import { ExerciseHowDisclosure } from "./components/ExerciseHowDisclosure.jsx";
+
+function useResponsiveMediaQuery(query) {
+ const getMatches = useCallback(() => {
+ if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+ return false;
+ }
+ return window.matchMedia(query).matches;
+ }, [query]);
+ const [matches, setMatches] = useState(() => getMatches());
+ useEffect(() => {
+ if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+ return undefined;
+ }
+ const mediaQueryList = window.matchMedia(query);
+ const handleChange = (event) => {
+ setMatches(Boolean(event?.matches));
+ };
+ setMatches(mediaQueryList.matches);
+ if (typeof mediaQueryList.addEventListener === "function") {
+ mediaQueryList.addEventListener("change", handleChange);
+ return () => mediaQueryList.removeEventListener("change", handleChange);
+ }
+ mediaQueryList.addListener(handleChange);
+ return () => mediaQueryList.removeListener(handleChange);
+ }, [getMatches, query]);
+ return matches;
+}
+
+const FORMA_LAZY_CHUNK_NAMES = Object.freeze({
+ secondaryTabs: "secondary.tabs",
+});
+
+const FORMA_LAZY_MODULES = Object.freeze({
+ logTab: {
+  chunkName: FORMA_LAZY_CHUNK_NAMES.secondaryTabs,
+  moduleId: "src/domains/secondary-tabs/SecondaryTabSurfaces.jsx",
+  exportName: "LogTab",
+ },
+ planTab: {
+  chunkName: FORMA_LAZY_CHUNK_NAMES.secondaryTabs,
+  moduleId: "src/domains/secondary-tabs/SecondaryTabSurfaces.jsx",
+  exportName: "PlanTab",
+ },
+ nutritionTab: {
+  chunkName: FORMA_LAZY_CHUNK_NAMES.secondaryTabs,
+  moduleId: "src/domains/secondary-tabs/SecondaryTabSurfaces.jsx",
+  exportName: "NutritionTab",
+ },
+ coachTab: {
+  chunkName: FORMA_LAZY_CHUNK_NAMES.secondaryTabs,
+  moduleId: "src/domains/secondary-tabs/SecondaryTabSurfaces.jsx",
+  exportName: "CoachTab",
+ },
+ settingsTab: {
+  chunkName: FORMA_LAZY_CHUNK_NAMES.secondaryTabs,
+  moduleId: "src/domains/secondary-tabs/SecondaryTabSurfaces.jsx",
+  exportName: "SettingsTab",
+ },
+});
+
+const loadFormaLazyChunk = (chunkName = "") => {
+ if (typeof window === "undefined" || !chunkName) return Promise.resolve();
+ const loader = window.__FORMA_LOAD_CHUNK__;
+ if (typeof loader !== "function") return Promise.resolve();
+ return loader(chunkName);
+};
+
+function useFormaLazyChunkState(chunkName = "", active = false) {
+ const [state, setState] = useState(() => ({
+ ready: !chunkName,
+ loading: false,
+ error: "",
+ }));
+
+ const loadChunk = useCallback(() => {
+ if (!chunkName) {
+  setState({ ready:true, loading:false, error:"" });
+  return Promise.resolve();
+ }
+ const loadedChunks = typeof window !== "undefined" ? window.__FORMA_LOADED_CHUNKS__ : null;
+ if (loadedChunks?.[chunkName]) {
+  setState({ ready:true, loading:false, error:"" });
+  return Promise.resolve();
+ }
+ setState((current) => current.ready ? current : { ready:false, loading:true, error:"" });
+ return loadFormaLazyChunk(chunkName).then(() => {
+  setState({ ready:true, loading:false, error:"" });
+ }).catch((error) => {
+  setState({
+   ready:false,
+   loading:false,
+   error:String(error?.message || "Could not load this surface."),
+  });
+  throw error;
+ });
+ }, [chunkName]);
+
+ useEffect(() => {
+ if (!active) return undefined;
+ let cancelled = false;
+ loadChunk().catch(() => {
+  if (cancelled) return;
+ });
+ return () => {
+  cancelled = true;
+ };
+ }, [active, loadChunk]);
+
+ return {
+  ...state,
+ loadChunk,
+ };
+}
+
+function useFormaLazyModuleState({ chunkName = "", moduleId = "", exportName = "default", active = false } = {}) {
+ const chunkState = useFormaLazyChunkState(chunkName, active);
+ const [moduleState, setModuleState] = useState(() => ({
+  Component: null,
+  error: "",
+  loading: false,
+ }));
+
+ const loadModule = useCallback(() => {
+  if (!moduleId) {
+   setModuleState({ Component: null, error: "Missing module id.", loading: false });
+   return Promise.reject(new Error("Missing module id."));
+  }
+  const moduleLoader = typeof window !== "undefined" ? window.__FORMA_LOAD_MODULE__ : null;
+  if (typeof moduleLoader !== "function") {
+   setModuleState({ Component: null, error: "", loading: false });
+   return Promise.resolve(null);
+  }
+  setModuleState((current) => ({
+   Component: current.Component,
+   error: "",
+   loading: current.Component ? false : true,
+  }));
+  return moduleLoader({ chunkName, moduleId }).then((loadedModule) => {
+   const nextComponent = loadedModule?.[exportName] || loadedModule?.default || null;
+   if (!nextComponent) {
+    throw new Error(`Lazy surface export not found: ${exportName}`);
+   }
+   setModuleState({ Component: nextComponent, error: "", loading: false });
+   return nextComponent;
+  }).catch((error) => {
+   setModuleState({
+    Component: null,
+    error: String(error?.message || "Could not load this surface."),
+    loading: false,
+   });
+   throw error;
+  });
+ }, [chunkName, exportName, moduleId]);
+
+ useEffect(() => {
+  if (!active || moduleState.Component) return undefined;
+  let cancelled = false;
+  loadModule().catch(() => {
+   if (cancelled) return;
+  });
+  return () => {
+   cancelled = true;
+  };
+ }, [active, loadModule, moduleState.Component]);
+
+ return {
+  ...chunkState,
+  ...moduleState,
+  error: moduleState.error || chunkState.error,
+  loading: chunkState.loading || moduleState.loading,
+ loadModule,
+ };
+}
+
+function LazySurfaceSlot({
+ surface = null,
+ active = false,
+ runtime = {},
+ surfaceProps = {},
+ loadingTitle = "Loading",
+ loadingDetail = "Bringing this surface in now.",
+ dataTestId = "",
+ onRetry = () => {},
+ onFallbackBack = () => {},
+}) {
+ const moduleState = useFormaLazyModuleState({
+  chunkName: surface?.chunkName || "",
+  moduleId: surface?.moduleId || "",
+  exportName: surface?.exportName || "default",
+  active,
+ });
+
+ if (!active) return null;
+ if (moduleState.Component) {
+  const LoadedSurface = moduleState.Component;
+  return <LoadedSurface {...surfaceProps} runtime={runtime} />;
+ }
+
+ return (
+  <SurfaceCard
+   data-testid={dataTestId || "lazy-surface-loading"}
+   variant="subtle"
+   style={{
+    display:"grid",
+    gap:"0.42rem",
+    padding:"0.85rem 0.9rem",
+    borderRadius:24,
+    borderColor:"var(--consumer-border-strong)",
+    background:"linear-gradient(180deg, color-mix(in srgb, var(--consumer-panel) 98%, transparent) 0%, color-mix(in srgb, var(--consumer-subpanel) 92%, transparent) 100%)",
+   }}
+  >
+   <div style={{ fontSize:"0.52rem", color:"var(--consumer-text)", fontWeight:700 }}>{loadingTitle}</div>
+   <div style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)", lineHeight:1.5 }}>
+    {moduleState.loading ? loadingDetail : moduleState.error || loadingDetail}
+   </div>
+   {!moduleState.loading && (
+    <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+     <button type="button" className="btn btn-primary" onClick={() => (moduleState.loadModule?.() || Promise.resolve()).catch(() => {})} style={{ fontSize:"0.5rem" }}>
+      Try again
+     </button>
+     <button type="button" className="btn" onClick={onFallbackBack} style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)" }}>
+      Back to Today
+     </button>
+    </div>
+   )}
+  </SurfaceCard>
+ );
+}
 
 // PROFILE
 const DEFAULT_TIMEZONE = (() => {
@@ -565,6 +702,21 @@ const CORE_FINISHER = [
 ];
 
 const sanitizeWorkoutDetailText = (value = "") => sanitizeDisplayCopy(String(value ?? ""));
+const cleanSurfaceSessionLabel = (value = "", fallback = "Session") => sanitizeDisplayText(
+ String(value || fallback)
+ .replace(/\(\s*reduced-load\s*\)/gi, "")
+ .replace(/\(\s*extended\s*\)/gi, "")
+ .replace(/\(\s*20-min version\s*\)/gi, "")
+ .replace(/\s*\bReduced-load\b/gi, "")
+ .replace(/\s*\bExtended\b/gi, "")
+ .replace(/\s{2,}/g, " ")
+) || sanitizeDisplayText(fallback);
+const resolveCanonicalSurfaceSessionLabel = ({ sessionType = "", sessionLabel = "", fallback = "Session", isHybrid = false } = {}) => {
+ if (isHybrid) return "Run + strength";
+ const normalizedType = sanitizeDisplayText(sessionType);
+ if (/run \+ strength/i.test(normalizedType)) return normalizedType;
+ return cleanSurfaceSessionLabel(sessionLabel || normalizedType || fallback, fallback);
+};
 const sanitizeWorkoutRun = (run = null) => (
  run
  ? {
@@ -2313,6 +2465,14 @@ const getTodayWorkout = (weekNum, dayNum) => {
 
 const dayColors = { "run+strength":"#3c91e6", otf:"#c97a2b", "strength+prehab":"#6e63d9", "hard-run":"#d85d78", "easy-run":"#2da772", "long-run":"#c94f6d", rest:"#536479" };
 const C = { green:"#2da772", blue:"#3c91e6", amber:"#c97a2b", red:"#d85d78", purple:"#6e63d9", lime:"#b5d43a", slate:"#5f6f85" };
+const PLAN_STATUS_TONES = {
+ completed: { color:C.green, background:`${C.green}12`, borderColor:`${C.green}24` },
+ upcoming: { color:"#dbe7f6", background:"rgba(30, 41, 59, 0.72)", borderColor:"rgba(71, 85, 105, 0.72)" },
+ adjusted: { color:C.amber, background:`${C.amber}12`, borderColor:`${C.amber}24` },
+ recovery: { color:"#8fa5c8", background:"rgba(100, 116, 139, 0.18)", borderColor:"rgba(100, 116, 139, 0.28)" },
+ preview: { color:C.purple, background:`${C.purple}12`, borderColor:`${C.purple}24` },
+ missed: { color:C.red, background:`${C.red}12`, borderColor:`${C.red}24` },
+};
 function SyncStateCallout({ model = null, dataTestId = "", compact = false, style = {} }) {
  return (
  <StateFeedbackBanner
@@ -2709,6 +2869,7 @@ const EXPERIENCE_LEVEL_OPTIONS = ["beginner", "intermediate", "advanced"];
 const EXPERIENCE_LEVEL_LABELS = { beginner: "Beginner", intermediate: "Intermediate", advanced: "Advanced" };
 const SESSION_LENGTH_OPTIONS = ["20", "30", "45", "60+"];
 const SESSION_LENGTH_LABELS = { "20": "20 min", "30": "30 min", "45": "45 min", "60+": "60+ min" };
+const TRAINING_WEEKDAY_CHIP_ITEMS = TRAINING_WEEKDAY_OPTIONS.map((option) => ({ value: option.value, label: option.label }));
 
 const parseTrainingDaysForIntakePacket = (value = "") => {
  const text = String(value || "").trim();
@@ -2717,6 +2878,8 @@ const parseTrainingDaysForIntakePacket = (value = "") => {
  if (!Number.isFinite(numeric)) return 0;
  return Math.max(0, Math.min(14, Math.round(numeric)));
 };
+
+const parseAvailableTrainingDaysForIntakePacket = (value = []) => normalizeTrainingWeekdayAvailability(value);
 
 const splitIntakeListText = (value = "") => String(value || "")
  .split(/[,/]/)
@@ -2760,6 +2923,8 @@ const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } 
  const additionalGoalEntries = readAdditionalGoalEntries({ answers });
  const experienceLabel = EXPERIENCE_LEVEL_LABELS[answers.experience_level] || String(answers.experience_level || "").trim();
  const sessionLengthLabel = SESSION_LENGTH_LABELS[answers.session_length] || String(answers.session_length || "").trim();
+ const availableTrainingDays = parseAvailableTrainingDaysForIntakePacket(answers.available_training_days || answers.available_days || []);
+ const availableTrainingDayLabels = formatTrainingWeekdayAvailability(availableTrainingDays);
  const trainingLocation = String(answers.training_location || "").trim();
  const homeEquipment = Array.isArray(answers.home_equipment)
  ? answers.home_equipment
@@ -2808,6 +2973,7 @@ const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } 
  currentBaseline: [
  experienceLabel ? `${experienceLabel} training background` : "",
  answers.training_days ? `${answers.training_days} training days per week available` : "",
+ availableTrainingDayLabels.length ? `usually available ${availableTrainingDayLabels.join(", ")}` : "",
  sessionLengthLabel ? `${sessionLengthLabel} sessions` : "",
  ...(completenessContext?.summaryLines || []),
  ].filter(Boolean).join("; "),
@@ -2815,10 +2981,11 @@ const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } 
  },
  scheduleReality: {
  trainingDaysPerWeek: parseTrainingDaysForIntakePacket(answers.training_days),
+ availableDays: availableTrainingDays,
  sessionLength: sessionLengthLabel,
  trainingLocation,
  scheduleNotes: answers.training_days && sessionLengthLabel
- ? `${answers.training_days} days per week, ${sessionLengthLabel} sessions${completenessContext?.summaryLines?.length ? `; ${completenessContext.summaryLines.join("; ")}` : ""}`
+ ? `${answers.training_days} days per week, ${sessionLengthLabel} sessions${availableTrainingDayLabels.length ? `, usually ${availableTrainingDayLabels.join(", ")}` : ""}${completenessContext?.summaryLines?.length ? `; ${completenessContext.summaryLines.join("; ")}` : ""}`
  : "",
  },
  equipmentAccessContext: {
@@ -2874,6 +3041,8 @@ const buildGoalChangePacketArgs = ({
  .filter(Boolean)
  .slice(0, 4);
  const daysPerWeek = parseTrainingDaysForIntakePacket(String(canonicalUserProfile?.daysPerWeek || ""));
+ const availableTrainingDays = parseAvailableTrainingDaysForIntakePacket(canonicalUserProfile?.availableTrainingDays || []);
+ const availableTrainingDayLabels = formatTrainingWeekdayAvailability(availableTrainingDays);
  const sessionLength = trainingContext?.sessionDuration?.confirmed
  ? String(trainingContext.sessionDuration.value || "").trim()
  : "";
@@ -2892,6 +3061,7 @@ const buildGoalChangePacketArgs = ({
  const baselineNotes = [
  canonicalUserProfile?.experienceLevel ? `${canonicalUserProfile.experienceLevel} training background` : "",
  daysPerWeek ? `${daysPerWeek} training days per week` : "",
+ availableTrainingDayLabels.length ? `usually available ${availableTrainingDayLabels.join(", ")}` : "",
  sessionLength ? `${sessionLength} sessions` : "",
  activeGoalLabels.length ? `current goals: ${activeGoalLabels.join(" / ")}` : "",
  ].filter(Boolean).join("; ");
@@ -2927,9 +3097,13 @@ const buildGoalChangePacketArgs = ({
  },
  scheduleReality: {
  trainingDaysPerWeek: daysPerWeek,
+ availableDays: availableTrainingDays,
  sessionLength,
  trainingLocation,
- scheduleNotes: scheduleConstraints.join("; "),
+ scheduleNotes: dedupeStrings([
+  availableTrainingDayLabels.length ? `Usually available ${availableTrainingDayLabels.join(", ")}` : "",
+  ...scheduleConstraints,
+ ]).join("; "),
  },
  equipmentAccessContext: {
  trainingLocation,
@@ -3455,6 +3629,7 @@ const buildSeededIntakeAnswers = ({
   personalization = {},
 } = {}) => {
   const profile = personalization?.profile || DEFAULT_PERSONALIZATION.profile;
+  const seededTrainingContext = deriveTrainingContextFromPersonalization({ personalization });
  let nextAnswers = {
  ...baseAnswers,
  };
@@ -3467,6 +3642,14 @@ const buildSeededIntakeAnswers = ({
   }
   if (!String(nextAnswers?.session_length || "").trim()) {
     nextAnswers.session_length = "30";
+  }
+  if (!Array.isArray(nextAnswers?.available_training_days) || nextAnswers.available_training_days.length === 0) {
+    const seededAvailableDays = normalizeTrainingWeekdayAvailability(
+      seededTrainingContext?.weekdayAvailability?.confirmed
+        ? (seededTrainingContext?.weekdayAvailability?.value || [])
+        : (personalization?.userGoalProfile?.available_days || [])
+    );
+    if (seededAvailableDays.length) nextAnswers.available_training_days = seededAvailableDays;
   }
   if (!String(nextAnswers?.coaching_style || "").trim()) {
     nextAnswers.coaching_style = "Balanced coaching";
@@ -3754,6 +3937,10 @@ const mergePersonalization = (base, patch) => ({
  intensityPosture: {
  ...((base.trainingContext || createEmptyTrainingContext()).intensityPosture || {}),
  ...(patch?.trainingContext?.intensityPosture || {}),
+ },
+ weekdayAvailability: {
+ ...((base.trainingContext || createEmptyTrainingContext()).weekdayAvailability || {}),
+ ...(patch?.trainingContext?.weekdayAvailability || {}),
  },
  },
  environmentConfig: {
@@ -5159,9 +5346,10 @@ export default function TrainerDashboard() {
  const realtimeInterruptedRef = useRef(false);
  const lastLocalMutationAtRef = useRef(0);
  const skipNextGoalsPersistRef = useRef(false);
- const suspendLocalPersistenceRef = useRef(false);
- const authSessionRef = useRef(null);
- const sbLoadRef = useRef(null);
+const suspendLocalPersistenceRef = useRef(false);
+const authSessionRef = useRef(null);
+const authSessionUserIdRef = useRef("");
+const sbLoadRef = useRef(null);
  const logDiagRef = useRef(null);
  const historyRelabelAppliedRef = useRef(false);
  const bootPersistenceReadyRef = useRef(false);
@@ -6019,7 +6207,8 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  storageStatus?.mode,
  syncDiagnostics?.pendingLocalWrites,
  ]);
- const runtimeDebugSnapshot = useMemo(() => {
+const runtimeDebugSnapshot = useMemo(() => {
+ if (!TRUSTED_DEBUG_MODE) return null;
  const weekIntent = currentPlanWeek?.weeklyIntent || {};
  const readiness = planDay?.resolved?.recovery || {};
  const nutritionActual = planDay?.resolved?.nutrition?.actual || null;
@@ -6125,7 +6314,8 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  : null,
  },
  };
- }, [
+}, [
+ TRUSTED_DEBUG_MODE,
  currentPlanWeek,
  currentWeek,
  baseWeek,
@@ -6262,13 +6452,17 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  try { sessionStorage.setItem(dismissedTriggerStorageKey, JSON.stringify(dismissedTriggers || [])); } catch {}
  }, [dismissedTriggerStorageKey, dismissedTriggers]);
 
- useEffect(() => {
+useEffect(() => {
  if (typeof window === "undefined") return undefined;
+ if (!TRUSTED_DEBUG_MODE || !runtimeDebugSnapshot) {
+  try { delete window.__trainerRuntime; } catch {}
+  return undefined;
+ }
  window.__trainerRuntime = runtimeDebugSnapshot;
  return () => {
- if (window.__trainerRuntime === runtimeDebugSnapshot) delete window.__trainerRuntime;
+  if (window.__trainerRuntime === runtimeDebugSnapshot) delete window.__trainerRuntime;
  };
- }, [runtimeDebugSnapshot]);
+}, [TRUSTED_DEBUG_MODE, runtimeDebugSnapshot]);
 
  const dismissTriggerForToday = (id) => {
  if (!id) return;
@@ -6348,7 +6542,7 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  setPersonalization(updated);
  await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments);
  };
- const setEnvironmentMode = async ({ equipment, equipmentItems = [], time, mode, behavior, scope = "base", clearTodayOverride = false }) => {
+ const setEnvironmentMode = async ({ equipment, equipmentItems = [], availableDays = [], time, mode, behavior, scope = "base", clearTodayOverride = false }) => {
  const presets = personalization.environmentConfig?.presets || {};
  const baseMode = personalization.environmentConfig?.defaultMode || "Home";
  const fromMode = mode ? resolveModePreset(mode, presets) : null;
@@ -6377,6 +6571,7 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  mode: selected.mode,
  equipment: selected.equipment,
  equipmentItems: selected.equipmentItems,
+ availableDays,
  time: selected.time,
  })
  : null;
@@ -7095,6 +7290,7 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  }
  const persistResult = await authStorage.persistAll({ payload, authSession, setStorageStatus, setAuthSession });
  if (!shouldAttemptCloudPersist) return persistResult;
+ if (persistResult?.stale) return persistResult;
  if (persistResult?.ok && persistResult?.synced) {
  noteCloudSyncSucceeded("persist_all");
  return persistResult;
@@ -7159,6 +7355,7 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  },
  persistAll,
  });
+ if (loadResult?.stale) return loadResult;
  if (authSession?.user?.id) noteCloudSyncSucceeded(source);
  return loadResult;
  } catch (error) {
@@ -7182,7 +7379,8 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  });
  };
 
- const isRecentLocalMutation = () => (Date.now() - Number(lastLocalMutationAtRef.current || 0)) < 1800;
+const LOCAL_MUTATION_GUARD_MS = 8000;
+const isRecentLocalMutation = () => (Date.now() - Number(lastLocalMutationAtRef.current || 0)) < LOCAL_MUTATION_GUARD_MS;
 
  const scheduleRealtimeResync = (reason = "realtime_change") => {
  if (authInitializing || !authSessionRef.current?.user?.id) return;
@@ -7195,7 +7393,11 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  });
  try {
  skipNextGoalsPersistRef.current = true;
- await (sbLoadRef.current?.({ source: "realtime_resync" }) || Promise.resolve());
+ const loadResult = await (sbLoadRef.current?.({ source: "realtime_resync" }) || Promise.resolve());
+ if (loadResult?.stale) {
+ skipNextGoalsPersistRef.current = false;
+ return;
+ }
  applyStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
  logDiagRef.current?.("realtime.resync.ok", reason);
  recordSyncDiagnostic({
@@ -7245,11 +7447,17 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  getPlannedDayHistoryForDate(dateKey, logEntry)
  );
 
- const decorateLogEntryWithPlanContext = ({ dateKey, entry = null, dailyCheckin = {} } = {}) => {
+ const decorateLogEntryWithPlanContext = ({
+  dateKey,
+  entry = null,
+  dailyCheckin = {},
+  plannedDayHistoryOverride = null,
+  plannedDayRecordOverride = null,
+ } = {}) => {
  if (!dateKey || !entry) return entry;
  const exercisePerformance = getExercisePerformanceRecordsForLog(entry || {}, { dateKey });
- const plannedDayHistory = getPlannedDayHistoryForDate(dateKey, entry);
- const plannedDayRecord = getCurrentPrescribedDayRecord(plannedDayHistory);
+ const plannedDayHistory = plannedDayHistoryOverride || getPlannedDayHistoryForDate(dateKey, entry);
+ const plannedDayRecord = plannedDayRecordOverride || getCurrentPrescribedDayRecord(plannedDayHistory);
  const shouldIgnoreDailyOutcome = !entry?.actualSession?.status && !entry?.checkin?.status && (
  Number(entry?.miles || 0) > 0
  || Number(entry?.runTime || 0) > 0
@@ -7430,9 +7638,20 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  }
  };
 
- useEffect(() => {
- authSessionRef.current = authSession;
- }, [authSession]);
+useEffect(() => {
+authSessionRef.current = authSession;
+}, [authSession]);
+
+useEffect(() => {
+ const nextUserId = String(authSession?.user?.id || "").trim();
+ if (authSessionUserIdRef.current === nextUserId) return;
+ authSessionUserIdRef.current = nextUserId;
+ authStorage.invalidatePersistenceLifecycle?.({
+ resetFingerprints: false,
+ resetTransientCooldown: nextUserId === "",
+ bumpLocalFence: nextUserId === "",
+ });
+}, [authStorage, authSession?.user?.id]);
 
  useEffect(() => {
  dispatchSyncRuntime({
@@ -7583,7 +7802,12 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  (async () => {
  setLoading(true);
  try {
- await sbLoad({ source: "auth_boot" });
+ const loadResult = await sbLoad({ source: "auth_boot" });
+ if (loadResult?.stale) {
+ bootPersistenceReadyRef.current = true;
+ setLoading(false);
+ return;
+ }
  setAuthError("");
  applyStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
  } catch(e) {
@@ -7674,10 +7898,11 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  });
  }
 
- const handleSessionLogChange = (payload) => {
- const row = payload?.eventType === "DELETE" ? payload?.old : payload?.new;
- const dateKey = String(row?.date || "").split("T")[0];
- if (!dateKey) {
+const handleSessionLogChange = (payload) => {
+if (isRecentLocalMutation()) return;
+const row = payload?.eventType === "DELETE" ? payload?.old : payload?.new;
+const dateKey = String(row?.date || "").split("T")[0];
+if (!dateKey) {
  scheduleRealtimeResync("session_logs_missing_date");
  return;
  }
@@ -7828,23 +8053,85 @@ const reminderPreviewEnabled = TRUSTED_DEBUG_MODE && new URLSearchParams(window.
  })();
  }, [DEBUG_MODE, loading, currentWeek, personalization?.coachMemory?.lastSundayPushWeek]);
 
- const saveLogs = async (newLogs, options = {}) => {
+const saveLogs = async (newLogs, options = {}) => {
  const startedAt = Date.now();
  const changedDateKey = String(options?.changedDateKey || "").trim();
+ const forcedStatus = String(options?.forceStatus || "").trim();
+ const plannedDayHistoryOverride = options?.plannedDayHistoryOverride || null;
+ const plannedDayRecordOverride = options?.plannedDayRecordOverride || null;
+ const mirroredDailyCheckin = options?.mirroredDailyCheckin && typeof options.mirroredDailyCheckin === "object"
+  ? options.mirroredDailyCheckin
+  : null;
+ const clearMirroredDailyCheckin = Boolean(options?.clearMirroredDailyCheckin);
  const nextLogs = { ...(newLogs || {}) };
  if (changedDateKey && nextLogs?.[changedDateKey]) {
- nextLogs[changedDateKey] = normalizeLogPerformanceState({
- dateKey: changedDateKey,
- logEntry: decorateLogEntryWithPlanContext({
- dateKey: changedDateKey,
- entry: nextLogs[changedDateKey],
- dailyCheckin: dailyCheckins?.[changedDateKey] || {},
- }),
- });
+  nextLogs[changedDateKey] = normalizeLogPerformanceState({
+   dateKey: changedDateKey,
+   logEntry: decorateLogEntryWithPlanContext({
+    dateKey: changedDateKey,
+    entry: nextLogs[changedDateKey],
+    dailyCheckin: mirroredDailyCheckin || dailyCheckins?.[changedDateKey] || {},
+    plannedDayHistoryOverride,
+    plannedDayRecordOverride,
+   }),
+  });
+  if (forcedStatus) {
+   nextLogs[changedDateKey] = normalizeLogPerformanceState({
+    dateKey: changedDateKey,
+    logEntry: {
+     ...nextLogs[changedDateKey],
+     actualSession: {
+      ...(nextLogs[changedDateKey]?.actualSession || {}),
+      status: forcedStatus,
+      completionKind: forcedStatus === "completed_as_planned" ? "as_prescribed" : (nextLogs[changedDateKey]?.actualSession?.completionKind || ""),
+      modifiedFromPlan: forcedStatus === "completed_as_planned" ? false : nextLogs[changedDateKey]?.actualSession?.modifiedFromPlan,
+     },
+     checkin: {
+      ...(nextLogs[changedDateKey]?.checkin || {}),
+      status: forcedStatus,
+      sessionFeel: nextLogs[changedDateKey]?.checkin?.sessionFeel || "about_right",
+      ts: Date.now(),
+     },
+     comparison: forcedStatus === "completed_as_planned"
+      ? {
+       ...(nextLogs[changedDateKey]?.comparison || {}),
+       status: forcedStatus,
+       completionKind: "as_prescribed",
+       differenceKind: "none",
+       severity: "none",
+       matters: false,
+       customSession: false,
+      }
+      : (nextLogs[changedDateKey]?.comparison || {}),
+    },
+   });
+  }
+ }
+ const nextDailyCheckins = { ...(dailyCheckins || {}) };
+ if (changedDateKey && clearMirroredDailyCheckin) {
+  delete nextDailyCheckins[changedDateKey];
+ } else if (changedDateKey && mirroredDailyCheckin) {
+  nextDailyCheckins[changedDateKey] = {
+   ...DEFAULT_DAILY_CHECKIN,
+   ...(nextDailyCheckins?.[changedDateKey] || {}),
+   ...(mirroredDailyCheckin || {}),
+   readiness: {
+    ...(DEFAULT_DAILY_CHECKIN.readiness || {}),
+    ...(nextDailyCheckins?.[changedDateKey]?.readiness || {}),
+    ...(mirroredDailyCheckin?.readiness || {}),
+   },
+   actualRecovery: {
+    ...(DEFAULT_DAILY_CHECKIN.actualRecovery || {}),
+    ...(nextDailyCheckins?.[changedDateKey]?.actualRecovery || {}),
+    ...(mirroredDailyCheckin?.actualRecovery || {}),
+   },
+   ts: Date.now(),
+  };
  }
  setLogs(nextLogs);
+ setDailyCheckins(nextDailyCheckins);
  const derivedBase = derivePersonalization(nextLogs, bodyweights, personalization);
- const m = getMomentumEngineState({ logs: nextLogs, dailyCheckins, bodyweights, personalization: derivedBase });
+ const m = getMomentumEngineState({ logs: nextLogs, dailyCheckins: nextDailyCheckins, bodyweights, personalization: derivedBase });
  let derived = mergePersonalization(derivedBase, { profile: { ...derivedBase.profile, inconsistencyRisk: m.inconsistencyRisk, currentMomentumState: m.momentumState, likelyAdherencePattern: m.likelyAdherencePattern } });
  const changedLog = changedDateKey ? nextLogs?.[changedDateKey] : null;
  const changedExerciseRecords = changedDateKey ? getExercisePerformanceRecordsForLog(changedLog || {}, { dateKey: changedDateKey }) : [];
@@ -7862,7 +8149,7 @@ const reminderPreviewEnabled = TRUSTED_DEBUG_MODE && new URLSearchParams(window.
  }
  setPersonalization(derived);
  try {
- await persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
+ await persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, nextDailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
  if (changedDateKey) await syncSessionLogShadowRow(changedDateKey, changedLog || null);
  setLastSaved(new Date().toLocaleTimeString());
  trackFrictionEvent({
@@ -8905,12 +9192,78 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  { id: "nutrition", label: "Nutrition" },
  { id: "coach", label: "Coach" },
  ];
+ const warmSecondaryTabs = useCallback(() => {
+ loadFormaLazyChunk(FORMA_LAZY_CHUNK_NAMES.secondaryTabs).catch(() => {});
+ }, []);
+ const secondarySurfaceRuntime = useMemo(() => ({
+ C,
+ PRODUCT_BRAND,
+ DEFAULT_TIMEZONE,
+ DEFAULT_PERSONALIZATION,
+ PROFILE,
+ WEEKS,
+ DEFAULT_NUTRITION_FAVORITES,
+ HEALTHKIT_PERMISSIONS,
+ PLAN_STATUS_TONES,
+ BAND_TENSION_LEVELS,
+ AppearanceThemeSection,
+ MetricsBaselinesSection,
+ safeStorageGet,
+ safeStorageSet,
+ sanitizeDisplayText,
+ sanitizeStatusLabel,
+ mergePersonalization,
+ toTestIdFragment,
+ buildProvenanceText,
+ cleanSurfaceSessionLabel,
+ resolveCanonicalSurfaceSessionLabel,
+ buildReviewBadgeTone,
+ buildStrengthPrescriptionEntriesForLogging,
+ buildGoalPrioritySummaryLine,
+ deriveDeterministicReadinessState,
+ buildSundayWeekInReview,
+ getDiagnosticsCode,
+ getPlannedTrainingForLogDraft,
+ inferGoalTemplateCategoryIdForDraft,
+ inferExerciseMode,
+ normalizeExerciseKey,
+ resolvePlannedDayHistoryEntry,
+ validateAiPacketInvariant,
+ validateDeterministicCoachPacketInvariant,
+ buildInjuryRuleResult,
+ SyncStateCallout,
+ CompactSyncStatus,
+ }), []);
+
+ const runtimeAppearance = personalization?.settings?.appearance || DEFAULT_PERSONALIZATION.settings.appearance;
+ const bootBrandThemeState = buildBrandThemeState({
+ appearance: runtimeAppearance,
+ });
+ const bootThemeTokens = bootBrandThemeState.cssVars || {};
+ const bootResolvedMode = String(bootBrandThemeState.resolvedMode || "").toLowerCase() === "light" ? "light" : "dark";
 
  if (authInitializing || loading) return (
- <div style={{ background:"linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#7f90a8" }}>
- <div style={{ display:"grid", gap:"0.34rem", justifyItems:"center", textAlign:"center" }}>
- <div style={{ fontSize:"0.84rem", letterSpacing:"0.12em", color:"#dbe7f6" }}>Opening FORMA</div>
- <div style={{ fontSize:"0.58rem", letterSpacing:"0.06em", color:"#8fa5c8" }}>Restoring your training space</div>
+ <div style={{ ...bootThemeTokens, background:bootBrandThemeState.appBackground, minHeight:"100vh", display:"grid", placeItems:"center", padding:"1rem", fontFamily:"var(--font-body)", color:"var(--text)", colorScheme:bootResolvedMode }}>
+ <div style={{ width:"min(480px, 100%)", display:"grid", gap:"0.9rem", padding:"1.15rem", borderRadius:"calc(var(--radius-lg) + 4px)", border:"1px solid color-mix(in srgb, var(--border) 90%, rgba(255,255,255,0.06))", background:"linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 84%, transparent) 0%, color-mix(in srgb, var(--panel) 98%, transparent) 100%)", boxShadow:"var(--shadow-2), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
+ <div style={{ display:"flex", alignItems:"center", gap:"0.85rem" }}>
+ <div aria-hidden="true" style={{ width:54, height:54, borderRadius:18, display:"grid", placeItems:"center", background:"linear-gradient(135deg, color-mix(in srgb, var(--brand-mark-bg) 92%, transparent) 0%, color-mix(in srgb, var(--surface-1) 96%, transparent) 100%)", border:"1px solid color-mix(in srgb, var(--brand-mark-border) 84%, rgba(255,255,255,0.06))", boxShadow:"var(--shadow-2)", color:"var(--text-strong)", fontFamily:"var(--font-display)", fontSize:"1.22rem", fontWeight:700, letterSpacing:"0.08em" }}>{PRODUCT_BRAND.mark}</div>
+ <div style={{ display:"grid", gap:"0.18rem", minWidth:0 }}>
+ <div style={{ fontFamily:"var(--font-display)", fontSize:"1rem", fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"var(--text-strong)" }}>
+ Opening {PRODUCT_BRAND.name}
+ </div>
+ <div style={{ fontSize:"0.58rem", color:"var(--text-soft)", lineHeight:1.55 }}>
+ Restoring your training space and account context.
+ </div>
+ </div>
+ </div>
+ <div style={{ display:"grid", gap:"0.24rem" }}>
+ <div style={{ height:8, borderRadius:999, background:"color-mix(in srgb, var(--surface-2) 92%, transparent)", overflow:"hidden" }}>
+ <div style={{ width:"42%", height:"100%", borderRadius:999, background:"var(--cta-bg)", boxShadow:"inset 0 1px 0 rgba(255,255,255,0.08)" }} />
+ </div>
+ <div style={{ fontSize:"0.48rem", color:"var(--muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ Getting the shell ready
+ </div>
+ </div>
  </div>
  </div>
  );
@@ -8924,9 +9277,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  || (!authRecoveryMode && !String(authEmail || "").trim())
  || (authMode === "signup" && !String(authDisplayName || "").trim())
  );
- const authBrandThemeState = buildBrandThemeState({
- appearance: personalization?.settings?.appearance || DEFAULT_PERSONALIZATION.settings.appearance,
- });
+ const authBrandThemeState = bootBrandThemeState;
  const authEntryTheme = buildAuthEntryTheme({ brandThemeState: authBrandThemeState });
  const authEntryView = buildAuthEntryViewModel({
  authMode,
@@ -9298,14 +9649,16 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  time: profileDraft?.sessionLength || TRAINING_SESSION_DURATION_VALUES.min30,
  intensity: personalization?.settings?.trainingPreferences?.intensityPreference || TRAINING_INTENSITY_VALUES.standard,
  });
+ const explicitAge = Number(profileDraft?.age || 0) || "";
  const birthYear = Number(profileDraft?.birthYear || 0) || "";
- const age = birthYear ? Math.max(13, new Date().getFullYear() - birthYear) : "";
+ const age = explicitAge || (birthYear ? Math.max(13, new Date().getFullYear() - birthYear) : "");
+ const derivedBirthYear = age ? Math.max(1900, new Date().getFullYear() - Number(age)) : "";
  const nextPersonalization = mergePersonalization(personalization, {
  profile: {
  ...personalization.profile,
  name: String(profileDraft?.name || "").trim() || personalization?.profile?.name || DEFAULT_PERSONALIZATION.profile.name,
  timezone: String(profileDraft?.timezone || "").trim() || personalization?.profile?.timezone || DEFAULT_PERSONALIZATION.profile.timezone,
- birthYear,
+ birthYear: derivedBirthYear,
  age,
  height: profileDraft?.height,
  weight: profileDraft?.weight,
@@ -9347,6 +9700,8 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  const coachingStyle = String(answers.coaching_style || "Balanced coaching").trim();
  const trainingDaysLabel = String(answers.training_days || "3").trim();
  const trainingDays = trainingDaysLabel === "6+" ? 6 : Math.max(2, Number(trainingDaysLabel) || 3);
+ const availableTrainingDays = parseAvailableTrainingDaysForIntakePacket(answers.available_training_days || answers.available_days || []);
+ const availableTrainingDayLabels = formatTrainingWeekdayAvailability(availableTrainingDays);
  const trainingLocation = trainingContext?.environment?.confirmed ? trainingEnvironmentToDisplayMode(trainingContext.environment.value) : "Unknown";
  const homeEquipment = Array.isArray(answers.home_equipment) ? answers.home_equipment.filter(Boolean) : [];
  const homeEquipmentOther = String(answers.home_equipment_other || "").trim();
@@ -9459,6 +9814,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  primary_goal: compatibilityPrimaryGoalKey,
  experience_level: experienceLevel,
  days_per_week: trainingDays,
+ available_days: availableTrainingDays,
  session_length: sessionLength,
  equipment_access: normalizedEquipment,
  constraints,
@@ -9519,6 +9875,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  `Session length: ${SESSION_LENGTH_LABELS[sessionLength] || sessionLength}`,
  constraints.length ? `Constraints: ${constraints.join(", ")}` : "Constraints: None",
  `Training availability: ${trainingDaysLabel} days per week`,
+ availableTrainingDayLabels.length ? `Usually available: ${availableTrainingDayLabels.join(", ")}` : null,
  `Primary environment: ${trainingLocation}`,
  normalizedEquipment.length ? `Equipment: ${normalizedEquipment.join(", ")}` : null,
  `Coaching preference: ${coachingStyle}`,
@@ -9590,13 +9947,19 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  ...personalization.coachMemory,
  constraints: [
  `${trainingDaysLabel} day reality`,
+ ...(availableTrainingDayLabels.length ? [`Usually available ${availableTrainingDayLabels.join(", ")}`] : []),
  trainingContext?.environment?.value === TRAINING_ENVIRONMENT_VALUES.variable ? "training location varies week to week" : `${trainingLocation} training setup`,
  ],
  commonBarriers: [
  `${trainingDaysLabel} day reality`,
+ ...(availableTrainingDayLabels.length ? [`Core work should favor ${availableTrainingDayLabels.join(", ")}`] : []),
  trainingContext?.environment?.value === TRAINING_ENVIRONMENT_VALUES.variable ? "environment changes often" : "recovery consistency",
  ],
- scheduleConstraints: [`Available ${trainingDaysLabel} days per week`, `Session length: ${SESSION_LENGTH_LABELS[sessionLength] || sessionLength}`],
+ scheduleConstraints: [
+  `Available ${trainingDaysLabel} days per week`,
+  ...(availableTrainingDayLabels.length ? [`Usually available ${availableTrainingDayLabels.join(", ")}`] : []),
+  `Session length: ${SESSION_LENGTH_LABELS[sessionLength] || sessionLength}`,
+ ],
  pushResponse: intensityPosture === TRAINING_INTENSITY_VALUES.aggressive
  ? "Responds well to a harder push when recovery and guardrails are in place."
  : personalization.coachMemory?.pushResponse || "",
@@ -9805,6 +10168,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  primary_goal: compatibilityPrimaryGoalKey,
  experience_level: canonicalUserProfile?.experienceLevel || "beginner",
  days_per_week: Math.max(2, Number(canonicalUserProfile?.daysPerWeek || 3) || 3),
+ available_days: Array.isArray(canonicalUserProfile?.availableTrainingDays) ? canonicalUserProfile.availableTrainingDays : [],
  session_length: String(canonicalUserProfile?.sessionLength || "30"),
  equipment_access: Array.isArray(canonicalUserProfile?.equipmentAccess) ? canonicalUserProfile.equipmentAccess : [],
  constraints: Array.isArray(canonicalUserProfile?.constraints) ? canonicalUserProfile.constraints : [],
@@ -10001,6 +10365,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  primary_goal: compatibilityPrimaryGoalKey,
  experience_level: canonicalUserProfile?.experienceLevel || "beginner",
  days_per_week: Math.max(2, Number(canonicalUserProfile?.daysPerWeek || 3) || 3),
+ available_days: Array.isArray(canonicalUserProfile?.availableTrainingDays) ? canonicalUserProfile.availableTrainingDays : [],
  session_length: String(canonicalUserProfile?.sessionLength || "30"),
  equipment_access: Array.isArray(canonicalUserProfile?.equipmentAccess) ? canonicalUserProfile.equipmentAccess : [],
  constraints: Array.isArray(canonicalUserProfile?.constraints) ? canonicalUserProfile.constraints : [],
@@ -10174,9 +10539,13 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  --space-4:1rem;
  --space-5:1.5rem;
  --space-6:2rem;
+ --space-7:2.65rem;
  --radius-sm:10px;
  --radius-md:14px;
  --radius-lg:18px;
+ --shell-max:1080px;
+ --shell-gutter:clamp(0.9rem, 2.8vw, 1.45rem);
+ --hairline:rgba(255,255,255,0.06);
  --control-height:2.55rem;
  --control-height-sm:2.05rem;
  --pill-height:1.72rem;
@@ -10206,6 +10575,8 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  --surface-title-section:0.72rem;
  --surface-support-size:0.52rem;
  --surface-meta-size:0.47rem;
+ --surface-card-padding:0.82rem;
+ --surface-card-padding-lg:1rem;
  }
  html{
  background:var(--bg);
@@ -10222,29 +10593,29 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  .fi{animation:fi 0.22s ease forwards}
  .hov{transition:background 0.18s ease,border-color 0.18s ease;cursor:pointer} .hov:hover{background:var(--brand-accent-soft)!important}
  .btn{
- background:var(--surface-2);
- border:1px solid var(--border);
+ background:linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 94%, transparent) 0%, color-mix(in srgb, var(--surface-1) 96%, transparent) 100%);
+ border:1px solid color-mix(in srgb, var(--border) 90%, var(--hairline));
  border-radius:var(--radius-sm);
  display:inline-flex;
  align-items:center;
  justify-content:center;
  gap:0.34rem;
  font-family:var(--font-body);
- font-size:var(--type-meta);
- font-weight:600;
- letter-spacing:0.025em;
+ font-size:clamp(0.52rem, 0.5rem + 0.08vw, 0.58rem);
+ font-weight:650;
+ letter-spacing:0.03em;
  line-height:1.2;
  cursor:pointer;
  min-height:var(--control-height-sm);
  min-width:0;
- padding:0.48rem 0.72rem;
+ padding:0.52rem 0.78rem;
  transition:background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
  color:var(--text);
- box-shadow:var(--button-shadow-rest);
+ box-shadow:var(--button-shadow-rest), inset 0 1px 0 rgba(255,255,255,0.04);
  touch-action:manipulation;
  -webkit-tap-highlight-color:transparent;
  }
- .btn:hover{border-color:var(--border-strong);color:var(--text-strong);background:var(--surface-1);transform:translateY(-1px);box-shadow:var(--button-shadow-hover)}
+ .btn:hover{border-color:var(--border-strong);color:var(--text-strong);background:linear-gradient(180deg, color-mix(in srgb, var(--surface-1) 100%, transparent) 0%, color-mix(in srgb, var(--surface-2) 88%, transparent) 100%);transform:translateY(-1px);box-shadow:var(--button-shadow-hover), inset 0 1px 0 rgba(255,255,255,0.05)}
  .btn:active{transform:translateY(0) scale(0.985)}
  .btn:focus-visible{outline:none;border-color:var(--border-strong);box-shadow:0 0 0 3px var(--focus-ring), var(--button-shadow-hover)}
  .btn:disabled{cursor:not-allowed;opacity:0.58;transform:none!important;box-shadow:none;background:var(--surface-2);color:var(--text-soft)}
@@ -10252,10 +10623,10 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  background:var(--cta-bg)!important;
  border:1px solid var(--cta-border)!important;
  color:var(--cta-text, var(--accent-contrast))!important;
- font-weight:700;
- box-shadow:var(--button-shadow-hover), inset 0 1px 0 rgba(255,255,255,0.08);
+ font-weight:750;
+ box-shadow:var(--button-shadow-hover), inset 0 1px 0 rgba(255,255,255,0.1);
  }
- .btn-primary:hover{filter:none;background:var(--cta-bg-hover)!important;border-color:var(--border-strong)!important;box-shadow:var(--button-shadow-hover), inset 0 1px 0 rgba(255,255,255,0.08)}
+ .btn-primary:hover{filter:none;background:var(--cta-bg-hover)!important;border-color:var(--border-strong)!important;box-shadow:0 18px 34px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.1)}
  .btn-primary:disabled{background:var(--cta-bg)!important;color:var(--cta-text, var(--accent-contrast))!important;opacity:0.52}
  .btn-selected{background:var(--accent-soft)!important;border-color:var(--border-strong)!important;color:var(--text-strong)!important;box-shadow:var(--shadow-1)}
  .btn-selected:hover{background:var(--accent-soft)!important}
@@ -10300,19 +10671,19 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  from{opacity:0; transform:translateY(6px)}
  to{opacity:1; transform:translateY(0)}
  }
- .tag{display:inline-flex;align-items:center;justify-content:center;min-height:var(--pill-height);padding:0.18rem 0.52rem;border-radius:999px;letter-spacing:0.04em;line-height:1.1;white-space:nowrap;background:var(--badge-bg);color:var(--badge-text);border:1px solid var(--badge-border)}
- .ui-pill{display:inline-flex;align-items:center;justify-content:center;min-height:var(--pill-height);padding:0.16rem 0.48rem;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);font-size:0.46rem;line-height:1.1;font-weight:600;white-space:nowrap}
- .ui-pill-strong{font-weight:700;letter-spacing:0.08em;text-transform:uppercase}
- .ui-eyebrow{font-size:0.47rem;color:var(--text-soft);letter-spacing:0.08em;text-transform:uppercase;line-height:1.35}
+ .tag{display:inline-flex;align-items:center;justify-content:center;min-height:var(--pill-height);padding:0.18rem 0.56rem;border-radius:999px;letter-spacing:0.05em;line-height:1.1;white-space:nowrap;background:var(--badge-bg);color:var(--badge-text);border:1px solid var(--badge-border);font-weight:700}
+ .ui-pill{display:inline-flex;align-items:center;justify-content:center;min-height:var(--pill-height);padding:0.2rem 0.54rem;border-radius:999px;border:1px solid color-mix(in srgb, var(--border) 88%, var(--hairline));background:color-mix(in srgb, var(--surface-2) 92%, transparent);color:var(--text-soft);font-size:0.46rem;line-height:1.1;font-weight:650;white-space:nowrap;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04)}
+ .ui-pill-strong{font-weight:750;letter-spacing:0.08em;text-transform:uppercase}
+ .ui-eyebrow{font-size:0.47rem;color:var(--text-soft);letter-spacing:0.12em;text-transform:uppercase;line-height:1.35}
  .ui-divider{border-top:var(--divider-weight) solid var(--border);padding-top:0.62rem}
  .card{
  position:relative;
  overflow:hidden;
- background:var(--panel);
- border:1px solid var(--card-border);
+ background:linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 76%, transparent) 0%, color-mix(in srgb, var(--panel) 98%, transparent) 100%);
+ border:1px solid color-mix(in srgb, var(--card-border) 88%, var(--hairline));
  border-radius:var(--radius-md);
- padding:var(--space-4);
- box-shadow:var(--card-shadow);
+ padding:var(--surface-card-padding);
+ box-shadow:var(--card-shadow), inset 0 1px 0 rgba(255,255,255,0.04);
  transition:transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease
  }
  .card::before{
@@ -10334,16 +10705,21 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  pointer-events:none;
  opacity:0.55;
  }
- .card:hover{transform:translateY(-2px); box-shadow:var(--card-shadow-hover); border-color:var(--border-strong)}
+ .card:hover{transform:translateY(-1px); box-shadow:var(--card-shadow-hover), inset 0 1px 0 rgba(255,255,255,0.05); border-color:var(--border-strong)}
  .card-strong{
- background:var(--panel-2);
+ background:linear-gradient(180deg, color-mix(in srgb, var(--panel-3) 62%, transparent) 0%, color-mix(in srgb, var(--panel-2) 98%, transparent) 100%);
  border-color:var(--border-strong);
  box-shadow:var(--card-strong-shadow);
  }
+ .card-elevated{
+ background:linear-gradient(180deg, color-mix(in srgb, var(--panel-3) 78%, transparent) 0%, color-mix(in srgb, var(--panel-2) 98%, transparent) 100%);
+ border-color:var(--border-strong);
+ box-shadow:var(--shadow-2), inset 0 1px 0 rgba(255,255,255,0.05);
+ }
  .card-soft{
- background:var(--panel);
+ background:linear-gradient(180deg, color-mix(in srgb, var(--panel) 96%, transparent) 0%, color-mix(in srgb, var(--surface-1) 82%, transparent) 100%);
  border-color:var(--card-soft-border);
- box-shadow:var(--card-soft-shadow);
+ box-shadow:var(--card-soft-shadow), inset 0 1px 0 rgba(255,255,255,0.03);
  }
  .sect-title{font-family:var(--font-display);font-size:var(--type-title);font-weight:700;letter-spacing:0.01em;text-transform:none;color:var(--text-strong)}
  .mono{font-family:var(--font-mono); letter-spacing:0.01em}
@@ -10369,10 +10745,10 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  .surface-stack{display:grid;gap:var(--space-4)}
  .surface-hero{
  display:grid;
- gap:var(--surface-hero-gap);
- background:linear-gradient(180deg, var(--consumer-panel-strong) 0%, var(--consumer-panel) 100%);
+ gap:0.78rem;
+ background:linear-gradient(180deg, color-mix(in srgb, var(--consumer-panel-strong) 92%, transparent) 0%, color-mix(in srgb, var(--consumer-panel) 100%, transparent) 100%);
  }
- .surface-hero-action{background:var(--consumer-panel-strong)}
+ .surface-hero-action{background:linear-gradient(180deg, color-mix(in srgb, var(--consumer-panel-strong) 100%, transparent) 0%, color-mix(in srgb, var(--consumer-panel) 94%, transparent) 100%)}
  .surface-hero-header{
  display:flex;
  justify-content:space-between;
@@ -10396,18 +10772,18 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  }
  .surface-title{
  font-family:var(--font-display);
- font-size:var(--surface-title-section);
+ font-size:clamp(0.74rem, 0.7rem + 0.14vw, 0.82rem);
  font-weight:700;
  color:var(--consumer-text);
- line-height:1.25;
+ line-height:1.18;
  letter-spacing:0.01em;
  overflow-wrap:anywhere;
  }
- .surface-title-hero{font-size:var(--surface-title-hero);line-height:1.2}
+ .surface-title-hero{font-size:clamp(0.88rem, 0.74rem + 0.68vw, 1.08rem);line-height:1.08}
  .surface-support{
- font-size:var(--surface-support-size);
+ font-size:clamp(0.53rem, 0.49rem + 0.08vw, 0.58rem);
  color:var(--consumer-text-soft);
- line-height:1.5;
+ line-height:1.55;
  overflow-wrap:anywhere;
  }
  .surface-meta-row,
@@ -10418,18 +10794,19 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  align-items:center;
  }
  .surface-quiet-panel{
- border:1px solid var(--consumer-border);
+ border:1px solid color-mix(in srgb, var(--consumer-border) 90%, var(--hairline));
  border-radius:var(--radius-md);
- background:var(--consumer-panel);
- padding:var(--surface-quiet-padding);
+ background:linear-gradient(180deg, color-mix(in srgb, var(--consumer-panel) 96%, transparent) 0%, color-mix(in srgb, var(--consumer-subpanel) 96%, transparent) 100%);
+ padding:0.72rem;
  display:grid;
  gap:0.42rem;
  }
  .surface-card{
  display:grid;
- gap:var(--surface-section-gap);
+ gap:0.58rem;
  }
  .surface-card-action{background:var(--consumer-panel-strong)}
+ .surface-card-elevated{background:linear-gradient(180deg, color-mix(in srgb, var(--consumer-panel-strong) 98%, transparent) 0%, color-mix(in srgb, var(--consumer-panel) 94%, transparent) 100%)}
  .surface-card-subtle,
  .surface-card-default{background:var(--consumer-panel)}
  .surface-disclosure{
@@ -10500,6 +10877,79 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  border-radius:var(--radius-md);
  padding:0.9rem;
  }
+ .app-shell-frame{
+ max-width:var(--shell-max);
+ margin:0 auto;
+ padding:var(--shell-gutter);
+ background:linear-gradient(180deg, color-mix(in srgb, var(--shell-overlay) 78%, transparent) 0%, color-mix(in srgb, var(--shell-overlay) 60%, transparent) 100%);
+ color:var(--text);
+ }
+ .app-shell-header{
+ display:grid;
+ grid-template-columns:minmax(0,1fr) auto;
+ align-items:center;
+ gap:0.9rem;
+ margin-bottom:1rem;
+ padding:0.88rem 0.98rem;
+ border-radius:calc(var(--radius-lg) + 4px);
+ border:1px solid color-mix(in srgb, var(--border) 90%, var(--hairline));
+ background:linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 86%, transparent) 0%, color-mix(in srgb, var(--panel) 98%, transparent) 100%);
+ box-shadow:var(--shadow-1), inset 0 1px 0 rgba(255,255,255,0.04);
+ backdrop-filter:blur(16px);
+ }
+ .app-brand-mark{
+ width:54px;
+ height:54px;
+ border-radius:18px;
+ display:grid;
+ place-items:center;
+ background:linear-gradient(135deg, color-mix(in srgb, var(--brand-mark-bg) 92%, transparent) 0%, color-mix(in srgb, var(--surface-1) 96%, transparent) 100%);
+ border:1px solid color-mix(in srgb, var(--brand-mark-border) 84%, var(--hairline));
+ box-shadow:var(--shadow-2);
+ color:var(--text-strong);
+ font-family:var(--font-display);
+ font-size:1.22rem;
+ font-weight:700;
+ letter-spacing:0.08em;
+ }
+ .app-settings-button{
+ width:46px;
+ height:46px;
+ padding:0;
+ display:inline-flex;
+ align-items:center;
+ justify-content:center;
+ flex-shrink:0;
+ background:linear-gradient(180deg, color-mix(in srgb, var(--surface-1) 100%, transparent) 0%, color-mix(in srgb, var(--surface-2) 88%, transparent) 100%);
+ }
+ .app-tab-strip{
+ display:flex;
+ gap:0.38rem;
+ margin-bottom:1.1rem;
+ background:linear-gradient(180deg, color-mix(in srgb, var(--tab-strip-bg) 94%, transparent) 0%, color-mix(in srgb, var(--surface-1) 88%, transparent) 100%);
+ padding:0.34rem;
+ border-radius:calc(var(--radius-lg) + 2px);
+ border:1px solid color-mix(in srgb, var(--tab-strip-border) 88%, var(--hairline));
+ overflow-x:auto;
+ box-shadow:var(--shadow-1), inset 0 1px 0 rgba(255,255,255,0.03);
+ backdrop-filter:blur(12px);
+ }
+ .app-tab-button{
+ color:var(--tab-text);
+ background:transparent;
+ border-color:transparent;
+ font-weight:600;
+ flex-shrink:0;
+ min-width:96px;
+ min-height:max(44px, 2.5rem);
+ }
+ .app-tab-button[data-active="true"]{
+ color:var(--tab-active-text);
+ background:linear-gradient(180deg, color-mix(in srgb, var(--tab-active-bg) 100%, transparent) 0%, color-mix(in srgb, var(--surface-1) 70%, transparent) 100%);
+ border-color:var(--border-strong);
+ font-weight:750;
+ box-shadow:var(--shadow-1), inset 0 1px 0 rgba(255,255,255,0.06);
+ }
  details > summary{
  list-style:none;
  min-height:44px;
@@ -10539,12 +10989,12 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  {!onboardingComplete ? (
  <OnboardingCoach onComplete={finishOnboarding} startingFresh={Boolean(personalization?.planResetUndo?.startedAt)} existingMemory={personalization?.coachMemory?.longTermMemory || []} personalization={personalization} onTrackFrictionEvent={trackFrictionEvent} />
  ) : (
- <div data-testid="app-shell" style={{ maxWidth:980, margin:"0 auto", background:"var(--shell-overlay)", color:"var(--text)" }}>
+ <div data-testid="app-shell" className="app-shell-frame">
 
  {/* HEADER BAR */}
-<div data-testid="app-header-bar" style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", alignItems:"center", marginBottom:"1.25rem", gap:"0.85rem" }}>
+<div data-testid="app-header-bar" className="app-shell-header">
 <div data-testid="app-brand-lockup" style={{ display:"flex", alignItems:"center", gap:"0.9rem", minWidth:0 }}>
-<div style={{ width:52, height:52, borderRadius:18, display:"grid", placeItems:"center", background:"var(--brand-mark-bg)", border:"1px solid var(--brand-mark-border)", boxShadow:"var(--shadow-2)", color:"var(--text-strong)", fontFamily:"var(--font-display)", fontSize:"1.22rem", fontWeight:700, letterSpacing:"0.08em" }}>
+<div className="app-brand-mark">
 {PRODUCT_BRAND.mark}
 </div>
 <div style={{ minWidth:0 }}>
@@ -10553,12 +11003,12 @@ const getAnthropicKey = () => (typeof window !== "undefined"
 {PRODUCT_BRAND.name}
 </h1>
  </div>
- <div style={{ fontFamily:"var(--font-body)", fontSize:"0.58rem", color:"var(--text-soft)", letterSpacing:"0.04em", marginTop:6, lineHeight:1.55 }}>
+ <div style={{ fontFamily:"var(--font-body)", fontSize:"0.58rem", color:"var(--text-soft)", letterSpacing:"0.06em", marginTop:6, lineHeight:1.55, textTransform:"uppercase" }}>
  {joinDisplayParts([fmtDate(today).toUpperCase(), `Week ${currentWeek}`])}
  </div>
  </div>
  </div>
- <button data-testid="app-tab-settings" className="btn" onClick={()=>{ setSettingsFocus(""); setTab(5); }} aria-label="Open settings" title="Settings" style={{ width:44, height:44, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0, background:"var(--surface-1)" }}>
+ <button data-testid="app-tab-settings" className="btn app-settings-button" onMouseEnter={warmSecondaryTabs} onFocus={warmSecondaryTabs} onClick={()=>{ setSettingsFocus(""); setTab(5); }} aria-label="Open settings" title="Settings">
  <SettingsIcon size={18} />
  </button>
  </div>
@@ -10568,10 +11018,9 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  </div>
  )}
  {/* TABS */}
- <div style={{ display:"flex", gap:"0.35rem", marginBottom:"1.25rem", background:"var(--tab-strip-bg)", padding:"0.36rem", borderRadius:18, border:"1px solid var(--tab-strip-border)", overflowX:"auto", boxShadow:"var(--shadow-1)", backdropFilter:"blur(10px)" }}>
+ <div className="app-tab-strip">
  {TABS.map((t,i) => (
- <button key={t.id} data-testid={`app-tab-${t.id}`} className="btn" onClick={()=>setTab(i)}
- style={{ color:tab===i?"var(--tab-active-text)":"var(--tab-text)", background:tab===i?"var(--tab-active-bg)":"transparent", borderColor:tab===i?"var(--border-strong)":"transparent", fontWeight:tab===i?700:500, flexShrink:0, minWidth:96 }}>
+ <button key={t.id} data-testid={`app-tab-${t.id}`} className="btn app-tab-button" data-active={tab===i?"true":"false"} onMouseEnter={i >= 1 ? warmSecondaryTabs : undefined} onFocus={i >= 1 ? warmSecondaryTabs : undefined} onClick={()=>setTab(i)}>
  {t.label}
  </button>
  ))}
@@ -10581,40 +11030,92 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  {tab === 0 && <TodayTab planDay={planDay} surfaceModel={planDaySurfaceModels?.today || null} todayWorkout={planDay?.resolved?.training} plannedWorkout={planDay?.base?.training} currentWeek={currentWeek} rollingHorizon={rollingHorizon} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(2)} onDismissPostIntakeReady={dismissWeekOneReady} loading={loading} storageStatus={storageStatus} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.today || null} authError={authError} />}
 
  {/* LOG */}
- {tab === 1 && <LogTab planDay={planDay} surfaceModel={planDaySurfaceModels?.log || null} logs={logs} dailyCheckins={dailyCheckins} plannedDayRecords={plannedDayRecords} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} nutritionActualLogs={nutritionActualLogs} saveLogs={saveLogs} bodyweights={bodyweights} saveBodyweights={saveBodyweights} personalization={personalization} athleteProfile={canonicalAthlete} saveManualProgressInputs={saveManualProgressInputs} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} planArchives={personalization?.planArchives || []} planStartDate={canonicalGoalState?.planStartDate || ""} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.log || null} />}
+ {tab === 1 && (
+ <LazySurfaceSlot
+  surface={FORMA_LAZY_MODULES.logTab}
+  active={tab === 1}
+  runtime={secondarySurfaceRuntime}
+  loadingTitle="Loading Log"
+  loadingDetail="Bringing in the prescribed session and execution journal."
+  dataTestId="log-lazy-loading"
+  onFallbackBack={() => setTab(0)}
+  surfaceProps={{ planDay, surfaceModel: planDaySurfaceModels?.log || null, logs, dailyCheckins, plannedDayRecords, planWeekRecords, weeklyCheckins, nutritionActualLogs, saveLogs, bodyweights, saveBodyweights, personalization, athleteProfile: canonicalAthlete, saveManualProgressInputs, currentWeek, todayWorkout: planDay?.resolved?.training, planArchives: personalization?.planArchives || [], planStartDate: canonicalGoalState?.planStartDate || "", syncStateModel: displayedSyncStateModel, syncSurfaceModel: syncSurfaceModels?.log || null }}
+ />
+ )}
 
  {/* PROGRAM */}
  {tab === 2 && (
- <ProgramTabErrorBoundary>
- <PlanTab planDay={planDay} surfaceModel={planDaySurfaceModels?.program || null} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} syncSurfaceModel={syncSurfaceModels?.program || null} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} saveBodyweights={saveBodyweights} saveManualProgressInputs={saveManualProgressInputs} saveProgramSelection={saveProgramSelection} todayWorkout={planDay?.resolved?.training} onManagePlan={(focus = "plan")=>{ setSettingsFocus(focus); setTab(5); }} />
- </ProgramTabErrorBoundary>
+ <LazySurfaceSlot
+  surface={FORMA_LAZY_MODULES.planTab}
+  active={tab === 2}
+  runtime={secondarySurfaceRuntime}
+  loadingTitle="Loading Plan"
+  loadingDetail="Bringing in weekly structure and preview context."
+  dataTestId="program-lazy-loading"
+  onFallbackBack={() => setTab(0)}
+  surfaceProps={{ planDay, surfaceModel: planDaySurfaceModels?.program || null, currentPlanWeek, currentWeek, logs, bodyweights, dailyCheckins, personalization, athleteProfile: canonicalAthlete, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, syncSurfaceModel: syncSurfaceModels?.program || null, previewGoalChange, applyGoalChange, saveGoalReview, saveBodyweights, saveManualProgressInputs, saveProgramSelection, todayWorkout: planDay?.resolved?.training, onManagePlan:(focus = "plan")=>{ setSettingsFocus(focus); setTab(5); }, onOpenToday:() => setTab(0), onOpenLog:() => setTab(1) }}
+ />
  )}
 
  {/* NUTRITION */}
- {tab === 3 && <NutritionTab planDay={planDay} surfaceModel={planDaySurfaceModels?.nutrition || null} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} weeklyNutritionReview={weeklyNutritionReview} saveNutritionFavorites={saveNutritionFavorites} saveNutritionActualLog={saveNutritionActualLog} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.nutrition || null} />}
+ {tab === 3 && (
+ <LazySurfaceSlot
+  surface={FORMA_LAZY_MODULES.nutritionTab}
+  active={tab === 3}
+  runtime={secondarySurfaceRuntime}
+  loadingTitle="Loading Nutrition"
+  loadingDetail="Bringing in today's fueling plan and weekly grocery context."
+  dataTestId="nutrition-lazy-loading"
+  onFallbackBack={() => setTab(0)}
+  surfaceProps={{ planDay, surfaceModel: planDaySurfaceModels?.nutrition || null, todayWorkout: planDay?.resolved?.training, currentWeek, logs, personalization, athleteProfile: canonicalAthlete, momentum, bodyweights, learningLayer, nutritionLayer: planDay?.resolved?.nutrition?.prescription, realWorldNutrition: planDay?.resolved?.nutrition?.reality, nutritionActualLogs, nutritionFavorites, weeklyNutritionReview, saveNutritionFavorites, saveNutritionActualLog, syncStateModel: displayedSyncStateModel, syncSurfaceModel: syncSurfaceModels?.nutrition || null }}
+ />
+ )}
 
  {/* COACH */}
- {tab === 4 && <CoachTab planDay={planDay} surfaceModel={planDaySurfaceModels?.coach || null} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} goals={goalsModel} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} weeklyNutritionReview={weeklyNutritionReview} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onOpenSettings={()=>{ setSettingsFocus("advanced"); setTab(5); }} onTrackFrictionEvent={trackFrictionEvent} onRecordAdaptiveLearningEvent={recordAdaptiveLearningEvent} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.coach || null} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
+ {tab === 4 && (
+ <LazySurfaceSlot
+  surface={FORMA_LAZY_MODULES.coachTab}
+  active={tab === 4}
+  runtime={secondarySurfaceRuntime}
+  loadingTitle="Loading Coach"
+  loadingDetail="Bringing in coaching actions, preview logic, and trust context."
+  dataTestId="coach-lazy-loading"
+  onFallbackBack={() => setTab(0)}
+  surfaceProps={{ planDay, surfaceModel: planDaySurfaceModels?.coach || null, logs, dailyCheckins, currentWeek, todayWorkout: planDay?.resolved?.training, bodyweights, personalization, athleteProfile: canonicalAthlete, goals: goalsModel, momentum, arbitration, expectations, memoryInsights, compoundingCoachMemory, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger: applyProactiveNudge, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer: planDay?.resolved?.nutrition?.prescription, realWorldNutrition: planDay?.resolved?.nutrition?.reality, nutritionActualLogs, weeklyNutritionReview, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onOpenSettings:()=>{ setSettingsFocus("advanced"); setTab(5); }, onTrackFrictionEvent: trackFrictionEvent, onRecordAdaptiveLearningEvent: recordAdaptiveLearningEvent, syncStateModel: displayedSyncStateModel, syncSurfaceModel: syncSurfaceModels?.coach || null, onPersist: async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
  setPersonalization(nextPersonalization);
  setCoachActions(nextCoachActions);
  setCoachPlanAdjustments(nextCoachPlanAdjustments);
  setWeekNotes(nextWeekNotes);
  setPlanAlerts(nextPlanAlerts);
  await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
- }} />}
+ } }}
+ />
+ )}
 
-{tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.settings || null} syncDiagnostics={syncDiagnostics} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} adaptiveLearningSnapshot={adaptiveLearningStore?.buildPersistenceSnapshot?.() || null} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} planHistoryReviews={planHistoryReportReviews} planHistoryWeekSummaries={planHistoryWeekSummaries} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onResetThisDevice={handleResetThisDevice} onOpenPlan={()=>setTab(2)} passwordResetBusy={authPasswordResetBusy} passwordResetMessage={authNotice} onRequestPasswordReset={() => handleForgotPassword({
+ {/* SETTINGS */}
+ {tab === 5 && (
+ <LazySurfaceSlot
+  surface={FORMA_LAZY_MODULES.settingsTab}
+  active={tab === 5}
+  runtime={secondarySurfaceRuntime}
+  loadingTitle="Loading Settings"
+  loadingDetail="Bringing in the account and plan-management workspace."
+  dataTestId="settings-lazy-loading"
+  onFallbackBack={() => setTab(0)}
+  surfaceProps={{ onStartFresh:()=>setStartFreshConfirmOpen(true), personalization, setPersonalization, exportData, importData, authSession, onReloadCloudData: sbLoad, storageStatus, syncStateModel: displayedSyncStateModel, syncSurfaceModel: syncSurfaceModels?.settings || null, syncDiagnostics, deviceSyncAudit, athleteProfile: canonicalAthlete, planComposer, adaptiveLearningSnapshot: adaptiveLearningStore?.buildPersistenceSnapshot?.() || null, saveProgramSelection, saveManualProgressInputs, logs, bodyweights, planHistoryReviews: planHistoryReportReviews, planHistoryWeekSummaries, previewGoalChange, applyGoalChange, previewGoalManagementChange, applyGoalManagementChange, onDeleteAccount: handleDeleteAccount, onLogout: handleSignOut, onResetThisDevice: handleResetThisDevice, onOpenPlan:()=>setTab(2), passwordResetBusy: authPasswordResetBusy, passwordResetMessage: authNotice, onRequestPasswordReset:() => handleForgotPassword({
  source: "settings_account",
  emailOverride: authSession?.user?.email || "",
- })} onOpenAuthGate={() => {
+ }), onOpenAuthGate:() => {
  setAuthMode("signin");
  setAuthError("");
  setAuthNotice("");
  setStartupLocalResumeAccepted(false);
- }} focusSection={settingsFocus} frictionDashboard={frictionDashboard} onTrackFrictionEvent={trackFrictionEvent} onPersist={async (nextPersonalization) => {
+ }, focusSection: settingsFocus, frictionDashboard, onTrackFrictionEvent: trackFrictionEvent, onPersist: async (nextPersonalization) => {
  setPersonalization(nextPersonalization);
  await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
- }} />}
+ } }}
+ />
+ )}
  {showAppleHealthFirstLaunch && (
  <div style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.74)", display:"grid", placeItems:"center", zIndex:56, padding:"1rem" }}>
  <div className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"var(--border)", background:"var(--panel)", padding:"0.9rem" }}>
@@ -10641,7 +11142,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  </div>
  </div>
  )}
-{TRUSTED_DEBUG_MODE && <RuntimeInspector snapshot={runtimeDebugSnapshot} />}
+{TRUSTED_DEBUG_MODE && runtimeDebugSnapshot && <RuntimeInspector snapshot={runtimeDebugSnapshot} />}
  </div>
  )}
  </div>
@@ -10749,7 +11250,6 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
  const initialPrompt = startingFresh
  ? "Starting fresh. I still remember everything from before - I'm just building a new plan from today. What do you want from this next plan? Exact or vague is fine."
  : "Hey. I'm going to ask you a few questions before I build your plan. Start with what you want from this plan - exact or vague both work.";
- const intakeDebugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
  const restoredIntakeSessionRef = useRef(null);
  if (restoredIntakeSessionRef.current === null) {
  restoredIntakeSessionRef.current = readPersistedIntakeSessionSnapshot({
@@ -10795,13 +11295,7 @@ const [selectedStarterGoalTypeId, setSelectedStarterGoalTypeId] = useState(() =>
 selection: buildGoalTemplateSelectionsFromAnswers({ answers: restoredIntakeSession?.answers || {} })[0] || null,
 answers: restoredIntakeSession?.answers || {},
 }));
- const [goalLibraryCategory, setGoalLibraryCategory] = useState(() => getDefaultGoalLibraryCategoryForStarterType(inferIntakeStarterGoalTypeId({
- selection: buildGoalTemplateSelectionsFromAnswers({ answers: restoredIntakeSession?.answers || {} })[0] || null,
- answers: restoredIntakeSession?.answers || {},
- })));
- const [goalLibrarySearch, setGoalLibrarySearch] = useState("");
- const [showGoalLibraryBrowser, setShowGoalLibraryBrowser] = useState(false);
- const [showCustomGoalComposer, setShowCustomGoalComposer] = useState(false);
+const [showCustomGoalComposer, setShowCustomGoalComposer] = useState(false);
  const [goalMetricValues, setGoalMetricValues] = useState({});
  const [goalMetricFieldErrors, setGoalMetricFieldErrors] = useState({});
  const [goalMetricFormError, setGoalMetricFormError] = useState("");
@@ -10840,7 +11334,6 @@ answers: restoredIntakeSession?.answers || {},
  const [streamTargetId, setStreamTargetId] = useState(null);
  const [buildingStageIndex, setBuildingStageIndex] = useState(0);
  const [intakeMachine, setIntakeMachine] = useState(() => restoredIntakeSession?.intakeMachine || createIntakeMachineState());
- const [showParseDebug, setShowParseDebug] = useState(false);
  const intakeMachineRef = useRef(intakeMachine);
  const coachVoiceRequestKeysRef = useRef(new Set());
  const goalIntentDraftRef = useRef(String(restoredIntakeSession?.answers?.goal_intent || ""));
@@ -11702,14 +12195,8 @@ const setPrimaryGoalSelection = (selection = null) => {
  });
  setShowCustomGoalComposer(false);
  setGoalMetricFieldErrors({});
- setGoalMetricFormError("");
- return nextAnswers;
- };
-const addPresetGoalToStack = (templateId = "") => {
-const selection = buildGoalTemplateSelection({ templateId });
-if (!selection) return null;
-setShowCustomGoalComposer(false);
-return addGoalSelectionToStack(selection);
+setGoalMetricFormError("");
+return nextAnswers;
 };
 const queueGoalSelection = (selection = null) => {
 if (!selection?.goalText) return null;
@@ -11733,7 +12220,7 @@ goalTypeId: pendingGoalSelection?.familyId || pendingGoalSelection?.templateCate
 selection: pendingGoalSelection,
 values: goalMetricValues,
 questions: pendingGoalMetricQuestions,
-requireAll: pendingGoalMetricQuestions.length > 0,
+requireAll: false,
 });
 if (!metricOutcome.isValid) {
 setGoalMetricFieldErrors(metricOutcome.fieldErrors || {});
@@ -11751,9 +12238,6 @@ return nextAnswers;
 const selectStarterGoalType = (goalTypeId = "") => {
 const normalizedGoalTypeId = String(goalTypeId || "").trim() || "running";
 setSelectedStarterGoalTypeId(normalizedGoalTypeId);
-setGoalLibraryCategory(getDefaultGoalLibraryCategoryForStarterType(normalizedGoalTypeId));
-setGoalLibrarySearch("");
-setShowGoalLibraryBrowser(false);
 setPendingGoalSelection(null);
 setGoalMetricFieldErrors({});
 setGoalMetricFormError("");
@@ -11767,10 +12251,6 @@ prev?.goal_lock_confirmed
  return;
  }
  setShowCustomGoalComposer(false);
- };
- const openGoalLibraryCategory = (categoryId = "") => {
- setGoalLibraryCategory(categoryId || "all");
- setShowGoalLibraryBrowser(true);
  };
  const updateGoalMetricValue = (fieldKey = "", value = "") => {
  if (!fieldKey) return;
@@ -11793,12 +12273,17 @@ prev?.goal_lock_confirmed
  };
  const addGoalToStack = () => {
  const cleanGoalText = normalizeIntakeGoalEntry(extraGoalDraft);
- if (!cleanGoalText) return;
- const nextAnswers = addGoalSelectionToStack(buildGoalTemplateSelection({
+ if (!cleanGoalText) return null;
+ if (pendingGoalSelection?.goalText) {
+ setGoalMetricFormError("Save or clear the goal in progress before you add another one.");
+ return null;
+ }
+ const selection = buildGoalTemplateSelection({
  customGoalText: cleanGoalText,
- }));
+ });
+ setShowCustomGoalComposer(false);
  setExtraGoalDraft("");
- return nextAnswers;
+ return queueGoalSelection(selection);
  };
 const removeGoalFromStack = (goalText = "") => {
   const cleanGoalText = normalizeIntakeGoalEntry(goalText);
@@ -11917,17 +12402,17 @@ const removeGoalFromStack = (goalText = "") => {
  };
  const aggregatedFieldErrors = {};
  let starterMetricFormError = "";
- intakeGoalSelections.forEach((selection) => {
- const metricOutcome = applyIntakeStarterMetrics({
- answers: nextMetricAnswers,
- goalTypeId: selection?.familyId || selection?.templateCategoryId || selectedStarterGoalTypeId,
- selection,
- values: goalMetricValues,
- requireAll: true,
- });
- if (!metricOutcome.isValid) {
- Object.assign(aggregatedFieldErrors, metricOutcome.fieldErrors || {});
- starterMetricFormError = starterMetricFormError || metricOutcome.formErrors?.[0] || "";
+intakeGoalSelections.forEach((selection) => {
+const metricOutcome = applyIntakeStarterMetrics({
+answers: nextMetricAnswers,
+goalTypeId: selection?.familyId || selection?.templateCategoryId || selectedStarterGoalTypeId,
+selection,
+values: goalMetricValues,
+requireAll: false,
+});
+if (!metricOutcome.isValid) {
+Object.assign(aggregatedFieldErrors, metricOutcome.fieldErrors || {});
+starterMetricFormError = starterMetricFormError || metricOutcome.formErrors?.[0] || "";
  return;
  }
  nextMetricAnswers = metricOutcome.answers;
@@ -11946,14 +12431,15 @@ const removeGoalFromStack = (goalText = "") => {
  },
  });
  return;
- }
- const nextAnswers = {
- ...nextMetricAnswers,
- coaching_style: nextMetricAnswers?.coaching_style || "Balanced coaching",
- };
- setAnswers(nextAnswers);
- setGoalMetricFieldErrors({});
- setGoalMetricFormError("");
+}
+const nextAnswers = {
+...nextMetricAnswers,
+coaching_style: nextMetricAnswers?.coaching_style || "Balanced coaching",
+goal_lock_confirmed: true,
+};
+setAnswers(nextAnswers);
+setGoalMetricFieldErrors({});
+setGoalMetricFormError("");
  if (!String(nextAnswers?.goal_intent || "").trim() && !(nextAnswers?.additional_goals_list || []).length) {
  onTrackFrictionEvent({
  flow: "intake",
@@ -11966,15 +12452,13 @@ const removeGoalFromStack = (goalText = "") => {
  },
  });
  return;
- }
- setAskedClarifyingQuestions([]);
- setPendingClarifyingQuestion(null);
- setPendingSecondaryGoalPrompt(null);
- await runAssessment({ updatedAnswers: nextAnswers, askedQuestions: [] });
- if (nextAnswers?.goal_lock_confirmed) {
- await finalizePlan();
- }
- };
+}
+setAskedClarifyingQuestions([]);
+setPendingClarifyingQuestion(null);
+setPendingSecondaryGoalPrompt(null);
+await runAssessment({ updatedAnswers: nextAnswers, askedQuestions: [] });
+await finalizePlan();
+};
  const continueFromInterpretation = () => {
  if (assessing) return;
  const activeStage = intakeMachineRef.current?.stage || intakeMachine?.stage || "";
@@ -13029,25 +13513,15 @@ appendUserMessage("Create my plan");
  canRemove,
  }));
  }, [orderedGoalStackItems]);
- const displayedPrimaryGoal = goalReviewContract?.lead_goal || goalStackReview?.activeGoals?.[0] || null;
- const displayedTrackingLabels = Array.from(new Set(
- (goalStackReview?.activeGoals || []).flatMap((goal) => goal.trackingLabels || [])
- ));
- const starterGoalTypes = useMemo(() => buildIntakeStarterGoalTypes(), []);
- const goalTemplateCategories = useMemo(() => listGoalTemplateCategories(), []);
- const allGoalTemplates = useMemo(() => listGoalTemplates({ categoryId: "all" }), []);
- const activeGoalLibraryCategory = useMemo(
- () => goalTemplateCategories.find((category) => category.id === goalLibraryCategory) || goalTemplateCategories[0] || null,
- [goalTemplateCategories, goalLibraryCategory]
- );
- const visibleGoalTemplates = useMemo(() => listGoalTemplates({
- categoryId: goalLibraryCategory,
- query: goalLibrarySearch,
- }), [goalLibraryCategory, goalLibrarySearch]);
- const intakeGoalSelections = useMemo(() => (
- selectedGoalSelections.length
- ? selectedGoalSelections
- : buildGoalTemplateSelectionsFromAnswers({ answers })
+const displayedPrimaryGoal = goalReviewContract?.lead_goal || goalStackReview?.activeGoals?.[0] || null;
+const displayedTrackingLabels = Array.from(new Set(
+(goalStackReview?.activeGoals || []).flatMap((goal) => goal.trackingLabels || [])
+));
+const starterGoalTypes = useMemo(() => buildIntakeStarterGoalTypes(), []);
+const intakeGoalSelections = useMemo(() => (
+selectedGoalSelections.length
+? selectedGoalSelections
+: buildGoalTemplateSelectionsFromAnswers({ answers })
  ), [answers, selectedGoalSelections]);
  const primaryIntakeGoalSelection = intakeGoalSelections[0] || null;
  const activeStarterGoalType = useMemo(
@@ -13072,11 +13546,12 @@ const pendingGoalAlreadyAdded = normalizedPendingGoalText
 const pendingGoalSelectionSignature = pendingGoalSelection
 ? `${pendingGoalSelection?.id || ""}:${pendingGoalSelection?.templateId || ""}:${pendingGoalSelection?.goalText || ""}`
 : "";
-const pendingGoalMetricQuestions = useMemo(() => buildIntakeStarterMetricQuestions({
+const pendingGoalCaptureModel = useMemo(() => buildIntakeGoalCaptureModel({
 goalTypeId: pendingGoalSelection?.familyId || pendingGoalSelection?.templateCategoryId || selectedStarterGoalTypeId,
 selection: pendingGoalSelection,
 }), [pendingGoalSelectionSignature, selectedStarterGoalTypeId]);
-const pendingGoalHasDetails = pendingGoalMetricQuestions.length > 0;
+const pendingGoalMetricQuestions = pendingGoalCaptureModel?.questions || [];
+const pendingGoalHasDetails = pendingGoalCaptureModel?.supportsMetricEditing || false;
 const stackStarterMetricQuestionEntries = useMemo(() => {
 const seenQuestionKeys = new Set();
 return intakeGoalSelections.flatMap((selection, priorityIndex) => (
@@ -13094,10 +13569,10 @@ return intakeGoalSelections.flatMap((selection, priorityIndex) => (
  question,
  };
  })
- .filter(Boolean)
+.filter(Boolean)
 ));
 }, [intakeGoalSelectionSignature, selectedStarterGoalTypeId]);
-const pendingGoalCommitLabel = "Save goal";
+const pendingGoalCommitLabel = pendingGoalCaptureModel?.commitLabel || "Save goal";
 const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 320);
  const intakePreviewTodayKey = new Date().toISOString().split("T")[0];
  const intakePreviewDayOfWeek = getDayOfWeek();
@@ -13188,14 +13663,13 @@ const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 
  const trainingLocationValue = String(answers?.training_location || "").trim();
  const homeEquipmentSelection = Array.isArray(answers?.home_equipment) ? answers.home_equipment : [];
  const needsHomeEquipment = trainingLocationValue === "Home" || trainingLocationValue === "Both";
- const goalLockConfirmed = answers?.goal_lock_confirmed === true || answers?.goal_lock_confirmed === "true";
- const goalsStageNeeds = [
- pendingGoalSelection?.goalText ? "Save or clear the selected goal before continuing." : "",
- !normalizedGoalText && secondaryGoalEntries.length === 0 && String(answers?.primary_goal || "").trim() !== "general_fitness"
- ? "Choose a goal path or write a custom goal."
- : "",
- !answers?.experience_level ? "Pick your training background." : "",
- !answers?.training_days ? "Pick your training days." : "",
+const goalsStageNeeds = [
+pendingGoalSelection?.goalText ? "Save or clear the goal in progress before continuing." : "",
+!normalizedGoalText && secondaryGoalEntries.length === 0 && String(answers?.primary_goal || "").trim() !== "general_fitness"
+? "Add at least one goal."
+: "",
+!answers?.experience_level ? "Pick your training background." : "",
+!answers?.training_days ? "Pick your training days." : "",
  !answers?.session_length ? "Pick your session length." : "",
  !trainingLocationValue ? "Pick where you train." : "",
  needsHomeEquipment && homeEquipmentSelection.length === 0 && !String(answers?.home_equipment_other || "").trim()
@@ -13286,6 +13760,18 @@ const stageProgressIndex = phase === INTAKE_UI_PHASES.building
  }),
  }));
  };
+ const toggleAvailableTrainingDay = (option) => {
+ setAnswers((prev) => {
+ const currentSelection = normalizeTrainingWeekdayAvailability(prev?.available_training_days || []);
+ const nextSelection = currentSelection.includes(option)
+ ? currentSelection.filter((item) => item !== option)
+ : [...currentSelection, option];
+ return {
+ ...prev,
+ available_training_days: normalizeTrainingWeekdayAvailability(nextSelection),
+ };
+ });
+ };
  const toggleHomeEquipmentOption = (option) => {
  setAnswers((prev) => {
  const currentSelection = Array.isArray(prev?.home_equipment) ? prev.home_equipment : [];
@@ -13327,17 +13813,11 @@ const stageProgressIndex = phase === INTAKE_UI_PHASES.building
  }
  setPhase(INTAKE_UI_PHASES.goals);
  };
- const anchorCollectionViewModel = useMemo(() => buildAnchorCollectionViewModel({
+const anchorCollectionViewModel = useMemo(() => buildAnchorCollectionViewModel({
  machineState: intakeMachine,
  maxVisibleCards: 3,
- }), [intakeMachine]);
- const machineDebugView = useMemo(() => buildIntakeMachineDebugView(intakeMachine), [intakeMachine]);
- const parseDebugView = useMemo(() => buildIntakeParseDebugView({
- state: intakeMachine,
- debugMode: intakeDebugMode,
- toggleEnabled: showParseDebug,
- }), [intakeMachine, intakeDebugMode, showParseDebug]);
- const visibleMachineAnchorCards = phase === INTAKE_UI_PHASES.clarify && anchorCollectionViewModel?.isVisible
+}), [intakeMachine]);
+const visibleMachineAnchorCards = phase === INTAKE_UI_PHASES.clarify && anchorCollectionViewModel?.isVisible
  ? (Array.isArray(anchorCollectionViewModel?.visibleCards) ? anchorCollectionViewModel.visibleCards : [])
  : [];
  const multiAnchorCollectionMode = visibleMachineAnchorCards.length > 1;
@@ -13357,14 +13837,11 @@ const stageProgressIndex = phase === INTAKE_UI_PHASES.building
  const clarificationInputFields = isMachineAnchorClarification
  ? []
  : (Array.isArray(pendingClarifyingQuestion?.inputFields) ? pendingClarifyingQuestion.inputFields : []);
- const clarificationPromptText = activeMachineAnchor?.field_id
+const clarificationPromptText = activeMachineAnchor?.field_id
  ? (activeAnchorDisplayCopy?.questionText || activeMachineAnchor?.question || "")
  : (pendingClarifyingQuestion?.prompt || "");
- const clarificationValidationMessage = activeMachineAnchor?.validation?.message || pendingClarifyingQuestion?.validation?.message || "";
- useEffect(() => {
- if (!intakeDebugMode && showParseDebug) setShowParseDebug(false);
- }, [intakeDebugMode, showParseDebug]);
- const readPriorityOrderedGoalIds = () => {
+const clarificationValidationMessage = activeMachineAnchor?.validation?.message || pendingClarifyingQuestion?.validation?.message || "";
+const readPriorityOrderedGoalIds = () => {
  const currentOrderedGoalIds = Array.isArray(goalStackReview?.orderedGoalIds)
  ? goalStackReview.orderedGoalIds
  : Array.isArray(goalStackConfirmation?.orderedGoalIds)
@@ -13654,16 +14131,11 @@ background:"rgba(6,17,31,0.82)",
 <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
 {pendingGoalAlreadyAdded
 ? "This goal is already in your stack."
-: pendingGoalHasDetails
-? "Finish the details for this goal here, then save it."
-: "No extra goal details are needed. Save this goal when it looks right."}
+: pendingGoalCaptureModel?.helper || "Save this goal when it looks right."}
 </div>
 </div>
 {pendingGoalHasDetails ? (
 <div style={{ display:"grid", gap:"0.45rem" }}>
-<div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
-Family first, then the example that fits, then the goal details, then save the goal.
-</div>
 <div style={{ display:"grid", gap:"0.6rem" }}>
 {pendingGoalMetricQuestions.map((question) => renderGoalMetricQuestionCard(question, {
 contextLabel: "Finish this goal",
@@ -13698,55 +14170,7 @@ Clear
 </div>
 );
 };
-const toggleGoalLock = () => {
- setAnswers((prev) => ({
- ...prev,
- goal_lock_confirmed: !(prev?.goal_lock_confirmed === true || prev?.goal_lock_confirmed === "true"),
- }));
- };
- const renderGoalLockSurface = () => {
- const lockedSummary = intakeGoalSelections
- .map((selection, index) => `${index === 0 ? "Priority 1" : `Priority ${index + 1}`}: ${selection.summary || selection.goalText}`)
- .join(" | ");
- return (
- <div
- data-testid="intake-goal-lock-card"
- style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}
- >
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL LOCK</div>
- <div style={{ fontSize:"0.58rem", color:"#f8fbff", lineHeight:1.5 }}>
- {goalLockConfirmed
- ? "Goal order confirmed. The main build action will use this exact goal stack and target set."
- : "When the goal stack and target numbers look right, lock them and build directly from this screen."}
- </div>
- </div>
- {lockedSummary ? (
- <div data-testid="intake-goal-lock-summary" style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
- {lockedSummary}
- </div>
- ) : null}
- <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap", alignItems:"center" }}>
- <button
- type="button"
- data-testid="intake-goal-lock-toggle"
- className={goalLockConfirmed ? "btn btn-primary" : "btn"}
- onClick={toggleGoalLock}
- disabled={intakeGoalSelections.length === 0}
- style={goalLockConfirmed ? {} : { color:"#dbe7f6", borderColor:"#324961" }}
- >
- {goalLockConfirmed ? "Locked for build" : "Lock goal order"}
- </button>
- <div style={{ fontSize:"0.48rem", color:goalLockConfirmed ? "#9fe8c7" : "#8fa5c8", lineHeight:1.45 }}>
- {goalLockConfirmed
- ? "Any change to the goal stack or target inputs will unlock this automatically."
- : "Optional, but this gives you the one-tap build path."}
- </div>
- </div>
- </div>
- );
- };
- const renderGoalCard = (goal = null, { mode = "proposal" } = {}) => {
+const renderGoalCard = (goal = null, { mode = "proposal" } = {}) => {
  if (!goal) return null;
  const priorityMeta = resolveGoalPriorityCardMeta(goal?.priorityIndex);
  const canReorder = Boolean(goal?.id && mode === "confirm");
@@ -13879,304 +14303,11 @@ const toggleGoalLock = () => {
  </div>
  );
  };
- const renderGoalsStageLegacy = () => (
- <div data-testid="intake-goals-step" style={{ display:"grid", gap:"0.95rem" }}>
- {renderSectionLabel("Stage 1", "Goals", "Add the goals that matter, then set the training reality in one pass.")}
- <div style={{ display:"grid", gap:"0.6rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
- <div style={{ display:"grid", gap:"0.55rem" }}>
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL LIBRARY</div>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>Start with a goal path. Write a custom goal only when the library misses the mark.</div>
- <div data-testid="intake-goal-library-summary" style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
- Find the closest fit fast. {activeGoalLibraryCategory?.helper || "Pick a category or search the library first."}
- </div>
- </div>
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- {goalTemplateCategories.map((category) => {
- const selected = goalLibraryCategory === category.id;
- return (
- <button
- key={category.id}
- type="button"
- className="btn"
- data-testid={`intake-goal-category-${category.id}`}
- onClick={() => setGoalLibraryCategory(category.id)}
- style={{
- fontSize:"0.5rem",
- color:selected ? "#0f172a" : "#dbe7f6",
- background:selected ? "#dbe7f6" : "transparent",
- borderColor:selected ? "#dbe7f6" : "#324961",
- }}
- >
- {category.label}
- </button>
- );
- })}
- </div>
- <input
- data-testid="intake-goal-library-search"
- value={goalLibrarySearch}
- onChange={(e) => setGoalLibrarySearch(e.target.value)}
- placeholder="Search goal paths"
- />
- <div data-testid="intake-goal-library-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem", maxHeight:320, overflowY:"auto", paddingRight:"0.12rem", alignContent:"start" }}>
- {visibleGoalTemplates.map((template) => {
- const added = selectedGoalTextSet.has(String(template.goalText || "").toLowerCase());
- return (
- <button
- key={template.id}
- type="button"
- className="btn"
- data-testid={`intake-goal-template-${template.id}`}
- onClick={() => addPresetGoalToStack(template.id)}
- style={{
- textAlign:"left",
- borderColor: added ? "rgba(147,197,253,0.55)" : "#22324a",
- background: added ? "rgba(147,197,253,0.12)" : "rgba(11,18,32,0.8)",
- padding:"0.75rem",
- display:"grid",
- gap:"0.18rem",
- }}
- >
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start" }}>
- <div style={{ fontSize:"0.58rem", color:"#f8fbff", lineHeight:1.4, fontWeight:600 }}>{template.title}</div>
- <div style={{ fontSize:"0.44rem", color:added ? "#bfdbfe" : "#8fa5c8" }}>{added ? "Added" : "Add"}</div>
- </div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{template.helper}</div>
- </button>
- );
- })}
- {visibleGoalTemplates.length === 0 ? (
- <div style={{ border:"1px dashed rgba(111,148,198,0.18)", borderRadius:14, padding:"0.8rem", fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>
- No goal path matched that search yet. Write a custom goal only if none of these fit.
- </div>
- ) : null}
- </div>
- </div>
- <div data-testid="intake-selected-goals" style={{ display:"grid", gap:"0.42rem", border:"1px solid rgba(111,148,198,0.12)", borderRadius:16, padding:"0.8rem", background:"rgba(4,10,18,0.55)" }}>
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL STACK</div>
- <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Priority stays obvious from the start. You can reorder here and fine-tune again before build.</div>
- </div>
- {intakeGoalSelections.length > 0 ? (
- <div style={{ display:"grid", gap:"0.42rem" }}>
- {intakeGoalSelections.map((selection, index) => (
- <div
- key={selection.id || selection.goalText}
- data-testid={`intake-selected-goal-${toTestIdFragment(selection.goalText || selection.summary)}`}
- style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(8,14,25,0.76)", display:"grid", gap:"0.35rem" }}
- >
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"flex-start" }}>
- <div style={{ display:"grid", gap:"0.16rem" }}>
- <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>
- {index < 3 ? `PRIORITY ${index + 1}` : "ADDITIONAL GOAL"}
- </div>
- <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.42, fontWeight:600 }}>{selection.summary || selection.goalText}</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{selection.helper || "Custom goal"}</div>
- </div>
- <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
- <button
- type="button"
- className="btn"
- data-testid={`intake-selected-goal-up-${toTestIdFragment(selection.goalText || selection.summary)}`}
- onClick={() => moveSelectedGoalInStack(selection.goalText || selection.summary, -1)}
- disabled={index === 0}
- style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#324961" }}
- >
- Earlier
- </button>
- <button
- type="button"
- className="btn"
- data-testid={`intake-selected-goal-down-${toTestIdFragment(selection.goalText || selection.summary)}`}
- onClick={() => moveSelectedGoalInStack(selection.goalText || selection.summary, 1)}
- disabled={index === intakeGoalSelections.length - 1}
- style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#324961" }}
- >
- Later
- </button>
- <button
- type="button"
- className="btn"
- data-testid={`intake-selected-goal-remove-${toTestIdFragment(selection.goalText || selection.summary)}`}
- onClick={() => removeGoalFromStack(selection.goalText || selection.summary)}
- style={{ fontSize:"0.47rem", color:"#9fb4d3", borderColor:"#324961" }}
- >
- Remove
- </button>
- </div>
- </div>
- </div>
- ))}
- </div>
- ) : (
- <div style={{ fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.5 }}>Pick one or more goals from the library, or write a custom goal if needed.</div>
- )}
- </div>
- <div style={{ display:"grid", gap:"0.42rem", border:"1px dashed rgba(111,148,198,0.18)", borderRadius:16, padding:"0.8rem", background:"rgba(4,10,18,0.35)" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center", flexWrap:"wrap" }}>
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CUSTOM GOAL</div>
- <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Write it yourself only when the library does not fit.</div>
- </div>
- <button
- type="button"
- className="btn"
- data-testid="intake-goals-toggle-custom"
- onClick={() => setShowCustomGoalComposer((current) => !current)}
- style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324961" }}
- >
- {showCustomGoalComposer ? "Hide custom" : "Write a custom goal"}
- </button>
- </div>
- {showCustomGoalComposer ? (
- <div style={{ display:"grid", gap:"0.42rem" }}>
- <label style={{ display:"grid", gap:"0.32rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Primary custom goal</div>
- <textarea
- data-testid="intake-goals-primary-input"
- ref={composerRef}
- value={answers?.goal_intent || ""}
- onChange={(e) => {
- goalIntentDraftRef.current = e.target.value;
- setAnswers((prev) => ({
- ...prev,
- goal_intent: e.target.value,
- goal_lock_confirmed: false,
- }));
- }}
- placeholder="Bench 225. Get leaner by summer. Look athletic again."
- rows={3}
- style={{ minHeight:96, resize:"vertical", fontSize:"0.86rem", lineHeight:1.5 }}
- />
- </label>
- <div style={{ display:"grid", gap:"0.32rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Add another custom goal</div>
- <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", gap:"0.5rem" }}>
- <input
- data-testid="intake-goals-secondary-input"
- value={extraGoalDraft}
- onChange={(e) => setExtraGoalDraft(e.target.value)}
- placeholder="Add another goal"
- />
- <button
- data-testid="intake-goals-add"
- className="btn"
- onClick={addGoalToStack}
- disabled={!normalizeIntakeGoalEntry(extraGoalDraft)}
- style={{ color:"#dbe7f6", borderColor:"#324961" }}
- >
- Add
- </button>
- </div>
- </div>
- </div>
- ) : null}
- </div>
- </div>
- <div style={{ display:"grid", gap:"0.75rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
- {renderSectionLabel("Reality check", "Planning inputs", "Short, concrete inputs only.")}
- <div style={{ display:"grid", gap:"0.7rem" }}>
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>EXPERIENCE</div>
- {renderChoiceChips({
- items: EXPERIENCE_LEVEL_OPTIONS.map((value) => ({ value, label: EXPERIENCE_LEVEL_LABELS[value] })),
- selectedValue: answers?.experience_level || "",
- onSelect: (value) => updateSimpleAnswer("experience_level", value),
- testIdPrefix: "intake-goals-option-experience-level",
- })}
- </div>
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>TRAINING DAYS</div>
- {renderChoiceChips({
- items: ["2", "3", "4", "5", "6+"],
- selectedValue: answers?.training_days || "",
- onSelect: (value) => updateSimpleAnswer("training_days", value),
- testIdPrefix: "intake-goals-option-training-days",
- })}
- </div>
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>SESSION LENGTH</div>
- {renderChoiceChips({
- items: SESSION_LENGTH_OPTIONS.map((value) => ({ value, label: SESSION_LENGTH_LABELS[value] })),
- selectedValue: answers?.session_length || "",
- onSelect: (value) => updateSimpleAnswer("session_length", value),
- testIdPrefix: "intake-goals-option-session-length",
- })}
- </div>
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>WHERE YOU TRAIN</div>
- {renderChoiceChips({
- items: ["Home", "Gym", "Outdoor", "Both", "Varies a lot"],
- selectedValue: trainingLocationValue,
- onSelect: (value) => updateTrainingLocationAnswer(value),
- testIdPrefix: "intake-goals-option-training-location",
- })}
- </div>
- {needsHomeEquipment ? (
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>HOME SETUP</div>
- {renderChoiceChips({
- items: ["Dumbbells", "Resistance bands", "Pull-up bar", "Bodyweight only", "Other"],
- selectedValues: homeEquipmentSelection,
- onSelect: (value) => toggleHomeEquipmentOption(value),
- testIdPrefix: "intake-goals-option-home-equipment",
- multi: true,
- })}
- {homeEquipmentSelection.includes("Other") ? (
- <input
- data-testid="intake-goals-input-home-equipment-other"
- value={answers?.home_equipment_other || ""}
- onChange={(e) => updateSimpleAnswer("home_equipment_other", e.target.value)}
- placeholder="Other home setup"
- />
- ) : null}
- </div>
- ) : null}
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CURRENT ISSUES</div>
- {renderStructuredInjuryFields({ testIdPrefix: "intake-goals-injury-structured" })}
- <textarea
- data-testid="intake-goals-input-injury-text"
- value={answers?.injury_text || ""}
- onChange={(e) => updateSimpleAnswer("injury_text", e.target.value)}
- placeholder="Optional extra context. Example: sharpest with downhill running or benching."
- rows={2}
- style={{ minHeight:82, resize:"vertical", fontSize:"0.86rem", lineHeight:1.5 }}
- />
- {(intakeInjuryContext.hasCurrentIssue || (Array.isArray(answers?.injury_limitations) && answers.injury_limitations.length > 0) || String(answers?.injury_area || "").trim()) ? renderChoiceChips({
- items: INTAKE_INJURY_IMPACT_OPTIONS,
- selectedValue: answers?.injury_impact || "",
- onSelect: (value) => updateSimpleAnswer("injury_impact", value),
- testIdPrefix: "intake-goals-option-injury-impact",
- }) : null}
- </div>
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>COACHING STYLE</div>
- {renderChoiceChips({
- items: ["Keep me consistent", "Balanced coaching", "Push me (with guardrails)"],
- selectedValue: answers?.coaching_style || "",
- onSelect: (value) => updateSimpleAnswer("coaching_style", value),
- testIdPrefix: "intake-goals-option-coaching-style",
- })}
- </div>
- {goalsStageNeeds.length > 0 ? (
- <div data-testid="intake-goals-needs" style={{ display:"grid", gap:"0.28rem" }}>
- {goalsStageNeeds.map((item) => (
- <div key={item} style={{ fontSize:"0.54rem", color:"#9fb4d3", lineHeight:1.5 }}>{item}</div>
- ))}
- </div>
- ) : null}
- </div>
- </div>
- </div>
- );
 const renderGoalSelectionSurface = () => (
- <div data-testid="intake-goal-selection-surface" style={{ display:"grid", gap:"0.75rem" }}>
- <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL TYPE</div>
- <div style={{ fontSize:"0.6rem", color:"#dbe7f6", lineHeight:1.5 }}>{INTAKE_COPY_DECK.goals.goalTypeHelper}</div>
+ <div data-testid="intake-goal-selection-surface" style={{ display:"grid", gap:"0.8rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:24, padding:"1rem", background:"rgba(8,14,25,0.82)" }}>
+ <div style={{ display:"grid", gap:"0.18rem" }}>
+ <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL CATEGORY</div>
+ <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.5 }}>{activeStarterGoalType?.helper || "Structured first. Custom stays secondary."}</div>
  </div>
  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:"0.45rem" }}>
  {starterGoalTypes.map((goalType) => {
@@ -14207,157 +14338,111 @@ const renderGoalSelectionSurface = () => (
  );
  })}
  </div>
- </div>
 
  {selectedStarterGoalTypeId !== "custom" ? (
- <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
-<div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" }}>
-<div style={{ display:"grid", gap:"0.14rem" }}>
-<div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>EXAMPLES THAT FIT</div>
-<div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>
-{activeStarterGoalType?.label || "Goal"} examples to help you pick the closest fit fast.
-</div>
-</div>
-<div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Tap a card, fill in the goal details, then save the goal.</div>
-</div>
-<div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
-{featuredStarterGoalTemplates.map((template) => {
-const selectedPrimary = String(primaryIntakeGoalSelection?.templateId || "").trim() === template.id;
-const added = selectedGoalTextSet.has(String(template.goalText || "").toLowerCase());
-const selectedForDraft = String(pendingGoalSelection?.templateId || "").trim() === template.id;
-return (
-<button
-key={template.id}
-type="button"
-className="btn"
-data-testid={`intake-featured-goal-${template.id}`}
-onClick={() => queueGoalSelection(buildGoalTemplateSelection({ templateId: template.id }))}
-disabled={added}
-style={{
-textAlign:"left",
-borderColor:selectedPrimary || selectedForDraft ? "rgba(0,194,255,0.38)" : added ? "rgba(147,197,253,0.55)" : "#22324a",
-background:selectedPrimary || selectedForDraft ? "linear-gradient(180deg, rgba(0,194,255,0.12), rgba(9,16,29,0.92))" : added ? "rgba(147,197,253,0.12)" : "rgba(11,18,32,0.8)",
-padding:"0.82rem",
-borderRadius:18,
-display:"grid",
-gap:"0.24rem",
-opacity: added ? 0.82 : 1,
-}}
->
-<div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start" }}>
-<div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.4, fontWeight:600 }}>{template.title}</div>
-<div style={{ fontSize:"0.44rem", color:selectedPrimary || selectedForDraft ? "#b9ecff" : added ? "#bfdbfe" : "#8fa5c8" }}>
-{selectedPrimary ? "Priority 1" : added ? "Added" : selectedForDraft ? "Selected" : "Select"}
-</div>
-</div>
-<div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{template.helper}</div>
-</button>
-);
-})}
-</div>
-</div>
-) : null}
-
-{pendingGoalSelection ? renderPendingGoalSelectionCard() : null}
-
-{showCustomGoalComposer || selectedStarterGoalTypeId === "custom" ? (
-<div style={{ display:"grid", gap:"0.42rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center", flexWrap:"wrap" }}>
+ <div style={{ display:"grid", gap:"0.55rem" }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CUSTOM GOAL</div>
- <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Use your own words only when the library misses the real target.</div>
+ <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>EXAMPLES THAT FIT</div>
+ <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>Pick the closest fit fast. Exact metrics can stay blank for now.</div>
  </div>
- {selectedStarterGoalTypeId !== "custom" ? (
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
+ {featuredStarterGoalTemplates.map((template) => {
+ const selectedPrimary = String(primaryIntakeGoalSelection?.templateId || "").trim() === template.id;
+ const added = selectedGoalTextSet.has(String(template.goalText || "").toLowerCase());
+ const selectedForDraft = String(pendingGoalSelection?.templateId || "").trim() === template.id;
+ return (
  <button
+ key={template.id}
  type="button"
  className="btn"
- data-testid="intake-goals-toggle-custom"
- onClick={() => setShowCustomGoalComposer((current) => !current)}
- style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324961" }}
- >
- {showCustomGoalComposer ? "Hide custom" : "Write a custom goal"}
- </button>
- ) : null}
- </div>
- <div style={{ display:"grid", gap:"0.42rem" }}>
- <label style={{ display:"grid", gap:"0.32rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Primary custom goal</div>
- <textarea
- data-testid="intake-goals-primary-input"
- ref={composerRef}
- value={answers?.goal_intent || ""}
- onChange={(e) => {
- goalIntentDraftRef.current = e.target.value;
- updateSimpleAnswer("goal_intent", e.target.value);
+ data-testid={`intake-featured-goal-${template.id}`}
+ onClick={() => queueGoalSelection(buildGoalTemplateSelection({ templateId: template.id }))}
+ disabled={added}
+ style={{
+ textAlign:"left",
+ borderColor:selectedPrimary || selectedForDraft ? "rgba(0,194,255,0.38)" : added ? "rgba(147,197,253,0.55)" : "#22324a",
+ background:selectedPrimary || selectedForDraft ? "linear-gradient(180deg, rgba(0,194,255,0.12), rgba(9,16,29,0.92))" : added ? "rgba(147,197,253,0.12)" : "rgba(11,18,32,0.8)",
+ padding:"0.82rem",
+ borderRadius:18,
+ display:"grid",
+ gap:"0.24rem",
+ opacity: added ? 0.82 : 1,
  }}
- placeholder="Bench 225. Get leaner by summer. Look athletic again."
- rows={3}
- style={{ minHeight:96, resize:"vertical", fontSize:"0.86rem", lineHeight:1.5 }}
- />
- </label>
- <div style={{ display:"grid", gap:"0.32rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Add another goal</div>
- <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", gap:"0.5rem" }}>
- <input
- data-testid="intake-goals-secondary-input"
- value={extraGoalDraft}
- onChange={(e) => setExtraGoalDraft(e.target.value)}
- placeholder="Add another goal"
- />
- <button
- data-testid="intake-goals-add"
- className="btn"
- onClick={addGoalToStack}
- disabled={!normalizeIntakeGoalEntry(extraGoalDraft)}
- style={{ color:"#dbe7f6", borderColor:"#324961" }}
  >
- Add
+ <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start" }}>
+ <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.4, fontWeight:600 }}>{template.title}</div>
+ <div style={{ fontSize:"0.44rem", color:selectedPrimary || selectedForDraft ? "#b9ecff" : added ? "#bfdbfe" : "#8fa5c8" }}>
+ {selectedPrimary ? "Priority 1" : added ? "Added" : selectedForDraft ? "Selected" : "Select"}
+ </div>
+ </div>
+ <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{template.helper}</div>
  </button>
- </div>
- </div>
+ );
+ })}
  </div>
  </div>
  ) : (
- <div style={{ display:"grid", gap:"0.42rem", border:"1px dashed rgba(111,148,198,0.18)", borderRadius:16, padding:"0.8rem", background:"rgba(4,10,18,0.35)" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center", flexWrap:"wrap" }}>
+ <div style={{ border:"1px dashed rgba(111,148,198,0.16)", borderRadius:18, padding:"0.9rem", background:"rgba(4,10,18,0.4)", fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.5 }}>
+ Custom goals skip the template grid. Use the fallback card below.
+ </div>
+ )}
+
+ {pendingGoalSelection ? renderPendingGoalSelectionCard() : null}
+
+ <div data-testid="intake-custom-goal-card" style={{ display:"grid", gap:"0.45rem", border:"1px dashed rgba(111,148,198,0.18)", borderRadius:18, padding:"0.9rem", background:"rgba(4,10,18,0.35)" }}>
+ <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CUSTOM GOAL</div>
- <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Write it yourself when the mapped paths still miss the goal.</div>
+ <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Use this only when the mapped templates still miss the real target.</div>
  </div>
  <button
  type="button"
  className="btn"
  data-testid="intake-goals-toggle-custom"
- onClick={() => selectStarterGoalType("custom")}
+ onClick={() => {
+ setShowCustomGoalComposer((current) => {
+ const nextValue = !current;
+ if (nextValue) setSelectedStarterGoalTypeId("custom");
+ return nextValue;
+ });
+ }}
  style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324961" }}
  >
- Write a custom goal
+ {showCustomGoalComposer || selectedStarterGoalTypeId === "custom" ? "Hide custom" : "Add custom goal"}
  </button>
  </div>
+ {showCustomGoalComposer || selectedStarterGoalTypeId === "custom" ? (
+ <div style={{ display:"grid", gap:"0.45rem" }}>
+ <textarea
+ data-testid="intake-goals-primary-input"
+ ref={composerRef}
+ value={extraGoalDraft}
+ onChange={(e) => setExtraGoalDraft(e.target.value)}
+ placeholder="Return to soccer without calf pain. Train for a ruck test. Rebuild after a long layoff."
+ rows={3}
+ style={{ minHeight:92, resize:"vertical", fontSize:"0.86rem", lineHeight:1.5 }}
+ />
+ <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap", alignItems:"center" }}>
+ <button
+ data-testid="intake-goals-add"
+ className="btn btn-primary"
+ onClick={addGoalToStack}
+ disabled={!normalizeIntakeGoalEntry(extraGoalDraft)}
+ >
+ Use custom goal
+ </button>
+ <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+ We only fall back to parsing after you save the custom goal.
  </div>
- )}
-
-{!pendingGoalSelection?.goalText && stackStarterMetricQuestionEntries.length > 0 ? (
- <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>SAVED GOAL DETAILS</div>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>Saved goals stay editable here if you want to tweak anything before you continue.</div>
  </div>
- <div style={{ display:"grid", gap:"0.6rem" }}>
- {stackStarterMetricQuestionEntries.map(({ selection, priorityIndex, question }) => renderGoalMetricQuestionCard(question, {
- contextLabel: `${priorityIndex === 0 ? "Priority 1" : `Priority ${priorityIndex + 1}`}: ${selection?.summary || selection?.goalText || "Goal"}`,
- }))}
  </div>
- {goalMetricFormError && !pendingGoalSelection?.goalText ? (
- <div style={{ fontSize:"0.52rem", color:"#ffd7d7", lineHeight:1.45 }}>{goalMetricFormError}</div>
  ) : null}
  </div>
-) : null}
 
  <div data-testid="intake-selected-goals" style={{ display:"grid", gap:"0.42rem", border:"1px solid rgba(111,148,198,0.12)", borderRadius:16, padding:"0.8rem", background:"rgba(4,10,18,0.55)" }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CURRENT GOAL STACK</div>
- <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Save one goal at a time. Then switch families above, pick the next example, and save that goal too.</div>
+ <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>PRIORITY ORDER</div>
+ <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Save each goal cleanly, then move the stack until the order feels right.</div>
  </div>
  {intakeGoalSelections.length > 0 ? (
  <div style={{ display:"grid", gap:"0.42rem" }}>
@@ -14411,16 +14496,31 @@ opacity: added ? 0.82 : 1,
  ))}
  </div>
  ) : (
- <div style={{ fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.5 }}>Pick a family above, choose the example that fits, then save the goal.</div>
+ <div style={{ fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.5 }}>Choose a template above, save it, then add another goal if you need one.</div>
  )}
  </div>
 
- {renderGoalLockSurface()}
+ {!pendingGoalSelection?.goalText && stackStarterMetricQuestionEntries.length > 0 ? (
+ <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+ <div style={{ display:"grid", gap:"0.14rem" }}>
+ <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>OPTIONAL TARGET EDITS</div>
+ <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>Tighten the saved goal details here if you want. Unknown numbers can stay blank.</div>
  </div>
- );
+ <div style={{ display:"grid", gap:"0.6rem" }}>
+ {stackStarterMetricQuestionEntries.map(({ selection, priorityIndex, question }) => renderGoalMetricQuestionCard(question, {
+ contextLabel: `${priorityIndex === 0 ? "Priority 1" : `Priority ${priorityIndex + 1}`}: ${selection?.summary || selection?.goalText || "Goal"}`,
+ }))}
+ </div>
+ {goalMetricFormError && !pendingGoalSelection?.goalText ? (
+ <div style={{ fontSize:"0.52rem", color:"#ffd7d7", lineHeight:1.45 }}>{goalMetricFormError}</div>
+ ) : null}
+ </div>
+ ) : null}
+ </div>
+);
 const renderPlanningRealitySurface = () => (
- <div data-testid="intake-reality-surface" style={{ display:"grid", gap:"0.75rem", alignSelf:"start", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
- {renderSectionLabel("Reality", "What shapes week one", "Only the details that materially change the first plan belong here.")}
+ <div data-testid="intake-reality-surface" style={{ display:"grid", gap:"0.75rem", alignSelf:"start", border:"1px solid rgba(111,148,198,0.16)", borderRadius:24, padding:"1rem", background:"rgba(8,14,25,0.82)" }}>
+ {renderSectionLabel("Reality", "Weekly reality", "Availability, equipment, and constraints that materially change week one.")}
  <div style={{ display:"grid", gap:"0.7rem", alignItems:"start", gridTemplateColumns:intakeWideLayout ? "repeat(2, minmax(0, 1fr))" : "1fr" }}>
  <div style={{ display:"grid", gap:"0.35rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>EXPERIENCE</div>
@@ -14438,6 +14538,19 @@ const renderPlanningRealitySurface = () => (
  selectedValue: answers?.training_days || "",
  onSelect: (value) => updateSimpleAnswer("training_days", value),
  testIdPrefix: "intake-goals-option-training-days",
+ })}
+ </div>
+ <div style={{ display:"grid", gap:"0.35rem", ...(intakeWideLayout ? { gridColumn:"1 / -1" } : {}) }}>
+ <div style={{ display:"grid", gap:"0.14rem" }}>
+ <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>DAYS YOU CAN TRAIN</div>
+ <div style={{ fontSize:"0.5rem", color:"#9fb4d3", lineHeight:1.45 }}>Pick the days that are usually realistic. We'll keep off-days lighter, not dead empty.</div>
+ </div>
+ {renderChoiceChips({
+ items: TRAINING_WEEKDAY_CHIP_ITEMS,
+ selectedValues: Array.isArray(answers?.available_training_days) ? answers.available_training_days : [],
+ onSelect: (value) => toggleAvailableTrainingDay(value),
+ testIdPrefix: "intake-goals-option-available-days",
+ multi: true,
  })}
  </div>
  <div style={{ display:"grid", gap:"0.35rem" }}>
@@ -14516,7 +14629,7 @@ const renderPlanningRealitySurface = () => (
  </div>
  ) : (
  <div data-testid="intake-goals-needs" style={{ fontSize:"0.54rem", color:"#9fe8c7", lineHeight:1.5, ...(intakeWideLayout ? { gridColumn:"1 / -1" } : {}) }}>
- Enough to shape week one. Preview it, or lock the goal order and build directly from here.
+ Enough to shape week one. The main action will try to build right from here.
  </div>
  )}
  </div>
@@ -14524,26 +14637,8 @@ const renderPlanningRealitySurface = () => (
  );
 const renderGoalsStage = () => (
  <div data-testid="intake-goals-step" style={{ display:"grid", gap:"0.95rem" }}>
-{renderSectionLabel("Setup", "Build the first draft", "Choose the goal, set the week-one realities, and see the draft take shape before you commit.")}
- <div style={{ display:"grid", gap:"0.8rem", border:"1px solid rgba(0,194,255,0.16)", borderRadius:22, padding:"1rem", background:"linear-gradient(180deg, rgba(0,194,255,0.06), rgba(8,14,25,0.78))" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.7rem", alignItems:"center", flexWrap:"wrap" }}>
- <div style={{ display:"grid", gap:"0.18rem", maxWidth:620 }}>
- <div style={{ fontSize:"0.58rem", color:"#b9ecff", letterSpacing:"0.12em" }}>{INTAKE_COPY_DECK.goals.heroEyebrow}</div>
- <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.5 }}>Start with the clearest goal path you can, then tighten only the details that change the first plan.</div>
- </div>
- <div data-testid="intake-goal-library-summary" style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5, border:"1px solid rgba(111,148,198,0.16)", borderRadius:999, padding:"0.3rem 0.6rem", background:"rgba(4,10,18,0.45)" }}>
- Exact target? Add it now. Broader goal? Pick the closest path and we will sharpen it in place.
- </div>
- </div>
- <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
- {["Goal path", "Starting point", "Week-one realities"].map((label) => (
- <div key={label} style={{ fontSize:"0.5rem", color:"#dbe7f6", border:"1px solid rgba(111,148,198,0.16)", borderRadius:999, padding:"0.24rem 0.5rem", background:"rgba(4,10,18,0.5)" }}>
- {label}
- </div>
- ))}
- </div>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))", gap:"0.95rem", alignItems:"start" }}>
+{renderSectionLabel("Setup", "Capture goals fast", "Structured first, custom second, and only the details that change week one.")}
+ <div style={{ display:"grid", gridTemplateColumns:intakeWideLayout ? "minmax(0, 1.08fr) minmax(320px, 0.92fr)" : "1fr", gap:"0.95rem", alignItems:"start" }}>
  {renderGoalSelectionSurface()}
  {renderPlanningRealitySurface()}
  </div>
@@ -15065,7 +15160,7 @@ const renderClarifyStage = () => (
  && confirmCtaEnabled;
  const multiAnchorSheetComplete = multiAnchorCollectionMode
  && visibleMachineAnchorCards.every((anchor) => Boolean(buildAnchorSubmissionPayload(anchor)?.raw_text));
- const handleFooterPrimaryAction = async () => {
+const handleFooterPrimaryAction = async () => {
  const nextAttempt = Number(stageAnalyticsRef.current?.continueClicks || 0) + 1;
  stageAnalyticsRef.current = {
  ...(stageAnalyticsRef.current || {}),
@@ -15105,23 +15200,28 @@ const renderClarifyStage = () => (
  await finalizePlan();
  return;
  }
- if (phase === INTAKE_UI_PHASES.adjust) {
- await submitAdjustment();
- }
- };
- const footerPrimaryLabel = phase === INTAKE_UI_PHASES.confirm
- ? (confirmBuildSubmitting ? "Continuing..." : "Continue")
- : phase === INTAKE_UI_PHASES.clarify
- ? (clarifyReadyToBuild
- ? (confirmBuildSubmitting ? "Continuing..." : "Continue")
- : naturalAnchorSubmitting
- ? "Capturing..."
- : "Continue")
- : phase === INTAKE_UI_PHASES.adjust
- ? "Update goal"
- : phase === INTAKE_UI_PHASES.goals
- ? (assessing ? (goalLockConfirmed ? "Building plan..." : "Building preview...") : goalLockConfirmed ? "Build plan" : "See preview")
- : "Continue";
+if (phase === INTAKE_UI_PHASES.adjust) {
+await submitAdjustment();
+}
+};
+const intakeHeroProgressLabel = pendingGoalSelection?.goalText
+? "Finish current goal"
+: intakeGoalSelections.length > 0
+? `${intakeGoalSelections.length} goal${intakeGoalSelections.length === 1 ? "" : "s"} saved`
+: "Add your first goal";
+const footerPrimaryLabel = phase === INTAKE_UI_PHASES.confirm
+? (confirmBuildSubmitting ? "Continuing..." : "Continue")
+: phase === INTAKE_UI_PHASES.clarify
+? (clarifyReadyToBuild
+? (confirmBuildSubmitting ? "Continuing..." : "Continue")
+: naturalAnchorSubmitting
+? "Capturing..."
+: "Continue")
+: phase === INTAKE_UI_PHASES.adjust
+? "Update goal"
+: phase === INTAKE_UI_PHASES.goals
+? (assessing ? "Building week one..." : "Build week one")
+: "Continue";
  const footerPrimaryDisabled = phase === INTAKE_UI_PHASES.building
  ? true
  : phase === INTAKE_UI_PHASES.goals
@@ -15147,20 +15247,20 @@ const renderClarifyStage = () => (
  : false;
  const showFooterBack = ![INTAKE_UI_PHASES.goals, INTAKE_UI_PHASES.building].includes(phase);
  const showFoundationButton = phase === INTAKE_UI_PHASES.goals;
- const intakeHeroModeLabel = phase === INTAKE_UI_PHASES.goals
- ? "Drafting your setup"
- : phase === INTAKE_UI_PHASES.building
- ? "Building week one"
- : phase === INTAKE_UI_PHASES.adjust
- ? "Updating the draft"
- : clarifyReadyToBuild
- ? "Ready to continue"
- : "Tightening the draft";
- const intakeHeroSupport = phase === INTAKE_UI_PHASES.goals
- ? "Goal-first setup. See the draft take shape before you commit."
- : phase === INTAKE_UI_PHASES.building
- ? "Turning the draft into your first live week now."
- : "Answer only the details that change week one, then continue when it looks right.";
+const intakeHeroModeLabel = phase === INTAKE_UI_PHASES.goals
+? "Building your setup"
+: phase === INTAKE_UI_PHASES.building
+? "Building week one"
+: phase === INTAKE_UI_PHASES.adjust
+? "Updating the draft"
+: clarifyReadyToBuild
+? "Ready to continue"
+: "Tightening the draft";
+const intakeHeroSupport = phase === INTAKE_UI_PHASES.goals
+? "Pick the goals fast, add only the details that matter, and build when the week looks right."
+: phase === INTAKE_UI_PHASES.building
+? "Turning the draft into your first live week now."
+: "Answer only the details that change week one, then continue when it looks right.";
 
  return (
  <div
@@ -15173,38 +15273,39 @@ const renderClarifyStage = () => (
  data-confirmation-status={String(activeConfirmationState?.status || "")}
  data-review-refresh-pending={reviewStatePending ? "true" : "false"}
  style={{ minHeight:"100vh", display:"flex", justifyContent:"center", background:"radial-gradient(120% 120% at 10% 0%, rgba(0,194,255,0.14), transparent 38%), radial-gradient(110% 110% at 100% 0%, rgba(255,138,0,0.12), transparent 36%), linear-gradient(180deg,#05080f 0%, #0a1322 55%, #0d182b 100%)", padding:"clamp(0.9rem, 2.6vw, 1.5rem)" }}
+ style={{ minHeight:"100vh", display:"flex", justifyContent:"center", background:"radial-gradient(120% 120% at 10% 0%, color-mix(in srgb, var(--brand-accent-soft) 78%, transparent), transparent 40%), radial-gradient(110% 110% at 100% 0%, rgba(255,190,118,0.08), transparent 34%), var(--bg)", padding:"clamp(0.9rem, 2.6vw, 1.5rem)" }}
  >
  <div style={{ width:"100%", maxWidth:1180, display:"grid", gap:"1rem", minHeight:"calc(100vh - 2rem)" }}>
  <SurfaceHero
  accentColor={C.blue}
  style={{
- background:"linear-gradient(180deg, rgba(8,14,25,0.88), rgba(8,14,25,0.76))",
- borderColor:"rgba(111,148,198,0.2)",
- boxShadow:"0 18px 40px rgba(0,0,0,0.24)",
+ background:"linear-gradient(180deg, color-mix(in srgb, var(--panel-3) 78%, transparent) 0%, color-mix(in srgb, var(--panel-2) 92%, transparent) 100%)",
+ borderColor:"color-mix(in srgb, var(--border-strong) 86%, rgba(255,255,255,0.05))",
+ boxShadow:"var(--shadow-2)",
  }}
  >
  <SurfaceHeroHeader>
  <div style={{ display:"flex", alignItems:"center", gap:"0.75rem", minWidth:0, flex:"1 1 320px" }}>
- <div style={{ width:46, height:46, borderRadius:18, display:"grid", placeItems:"center", background:"linear-gradient(135deg, rgba(0,194,255,0.18), rgba(15,23,42,0.92))", border:"1px solid rgba(111,148,198,0.28)", fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, letterSpacing:"0.08em", color:"#f8fbff", flexShrink:0 }}>
+ <div style={{ width:48, height:48, borderRadius:18, display:"grid", placeItems:"center", background:"linear-gradient(135deg, color-mix(in srgb, var(--brand-accent-soft) 88%, transparent), color-mix(in srgb, var(--panel-2) 96%, transparent))", border:"1px solid color-mix(in srgb, var(--border-strong) 82%, rgba(255,255,255,0.05))", fontFamily:"var(--font-display)", fontWeight:700, letterSpacing:"0.08em", color:"var(--text-strong)", flexShrink:0, boxShadow:"var(--shadow-1)" }}>
  {PRODUCT_BRAND.mark}
  </div>
  <SurfaceHeroCopy>
- <div data-testid="intake-shell-title" className="surface-title surface-title-hero" style={{ color:"#f8fbff" }}>{PRODUCT_BRAND.name} {INTAKE_COPY_DECK.shell.title}</div>
- <div data-testid="intake-shell-subtitle" className="surface-support" style={{ color:"#8fa5c8" }}>
+ <div data-testid="intake-shell-title" className="surface-title surface-title-hero" style={{ color:"var(--text-strong)" }}>{PRODUCT_BRAND.name} {INTAKE_COPY_DECK.shell.title}</div>
+ <div data-testid="intake-shell-subtitle" className="surface-support" style={{ color:"var(--text-soft)" }}>
  {intakeHeroSupport} {INTAKE_COPY_DECK.shell.progressSuffix}
  </div>
  </SurfaceHeroCopy>
  </div>
  <SurfaceMetaRow style={{ justifyContent: intakeWideLayout ? "flex-end" : "flex-start" }}>
- <SurfacePill style={{ color:"#b9ecff", background:"rgba(0,194,255,0.12)", borderColor:"rgba(0,194,255,0.24)" }}>
- {intakeHeroModeLabel}
- </SurfacePill>
- <SurfacePill style={{ color:"#dbe7f6", background:"rgba(111,148,198,0.12)", borderColor:"rgba(111,148,198,0.2)" }}>
- {goalLockConfirmed ? "Goal order locked" : "Draft only until you continue"}
- </SurfacePill>
- </SurfaceMetaRow>
+<SurfacePill style={{ color:"var(--text-strong)", background:"color-mix(in srgb, var(--brand-accent-soft) 82%, transparent)", borderColor:"color-mix(in srgb, var(--brand-accent) 24%, var(--border-strong))" }}>
+{intakeHeroModeLabel}
+</SurfacePill>
+<SurfacePill style={{ color:"var(--text-soft)", background:"color-mix(in srgb, var(--surface-2) 94%, transparent)", borderColor:"color-mix(in srgb, var(--border) 90%, rgba(255,255,255,0.04))" }}>
+{intakeHeroProgressLabel}
+</SurfacePill>
+</SurfaceMetaRow>
  </SurfaceHeroHeader>
- <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5, maxWidth:760 }}>
+ <div style={{ fontSize:"0.54rem", color:"var(--text)", lineHeight:1.58, maxWidth:760 }}>
  {phase === INTAKE_UI_PHASES.goals
  ? "Choose the goal, add the few details that change the first plan, and keep the live summary in view the whole time."
  : "The goal draft, first-week shape, tracking focus, and open details stay visible while you tighten the setup."}
@@ -15213,7 +15314,7 @@ const renderClarifyStage = () => (
 
  <div style={{ display:"grid", gap:"1rem", alignItems:"start", gridTemplateColumns: intakeWideLayout ? "minmax(0, 1.18fr) minmax(320px, 0.82fr)" : "1fr" }}>
  <section style={{ minWidth:0, display:"grid", gap:"1rem" }}>
- <SurfaceCard variant="strong" style={{ border:"1px solid rgba(111,148,198,0.18)", borderRadius:28, background:"rgba(8,14,25,0.84)", boxShadow:"0 24px 54px rgba(0,0,0,0.36)", padding:"clamp(1rem, 2.8vw, 1.35rem)", backdropFilter:"blur(16px)" }}>
+ <SurfaceCard variant="elevated" style={{ border:"1px solid color-mix(in srgb, var(--border-strong) 84%, rgba(255,255,255,0.05))", borderRadius:30, background:"linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 96%, transparent) 0%, color-mix(in srgb, var(--panel) 98%, transparent) 100%)", boxShadow:"var(--shadow-2)", padding:"clamp(1rem, 2.8vw, 1.35rem)", backdropFilter:"blur(16px)" }}>
  {renderActiveStage()}
  </SurfaceCard>
  </section>
@@ -15228,15 +15329,13 @@ const renderClarifyStage = () => (
  </div>
 
  <div style={{ position:"sticky", bottom:0, paddingBottom:"max(0.2rem, env(safe-area-inset-bottom))" }}>
- <div style={{ border:"1px solid rgba(111,148,198,0.18)", borderRadius:24, background:"rgba(7,12,21,0.9)", boxShadow:"0 18px 40px rgba(0,0,0,0.28)", backdropFilter:"blur(16px)", padding:"0.85rem 0.95rem", display:"flex", justifyContent:"space-between", gap:"0.75rem", alignItems:"center", flexWrap:"wrap" }}>
- <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.5, flex:"1 1 240px" }}>
- {phase === INTAKE_UI_PHASES.goals
- ? (goalLockConfirmed
- ? "Goal order locked. The main action will build from this exact stack."
- : INTAKE_COPY_DECK.footer.goals)
- : phase === INTAKE_UI_PHASES.interpretation
- ? INTAKE_COPY_DECK.footer.interpretation
- : phase === INTAKE_UI_PHASES.clarify
+ <div style={{ border:"1px solid color-mix(in srgb, var(--border) 90%, rgba(255,255,255,0.05))", borderRadius:26, background:"linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 90%, transparent) 0%, color-mix(in srgb, var(--panel) 96%, transparent) 100%)", boxShadow:"var(--shadow-2)", backdropFilter:"blur(16px)", padding:"0.9rem 1rem", display:"flex", justifyContent:"space-between", gap:"0.75rem", alignItems:"center", flexWrap:"wrap" }}>
+<div style={{ fontSize:"0.54rem", color:"var(--text-soft)", lineHeight:1.55, flex:"1 1 240px" }}>
+{phase === INTAKE_UI_PHASES.goals
+? "Add at least one goal, set the weekly reality, and the main action will try to build from here."
+: phase === INTAKE_UI_PHASES.interpretation
+? INTAKE_COPY_DECK.footer.interpretation
+: phase === INTAKE_UI_PHASES.clarify
  ? INTAKE_COPY_DECK.footer.clarify
  : phase === INTAKE_UI_PHASES.confirm
  ? INTAKE_COPY_DECK.footer.confirm
@@ -15459,13 +15558,13 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
 
  return (
  <div data-testid="settings-appearance-section" style={{ display:"grid", gap:"0.82rem", minWidth:0 }}>
- <div style={{ display:"grid", gap:"0.24rem" }}>
- <div style={{ fontSize:"0.58rem", color:"var(--text)", lineHeight:1.45 }}>
- Choose from {BRAND_THEME_OPTIONS.length} flagship palettes. Previews lead with canvas, accent, button, and chart changes first.
+ <SurfaceCard variant="subtle" style={{ display:"grid", gap:"0.28rem" }}>
+ <div style={{ fontSize:"0.58rem", color:"var(--text)", lineHeight:1.55 }}>
+ Choose from {BRAND_THEME_OPTIONS.length} named palettes designed to feel distinct on canvas, emphasis, and rhythm before anything else.
  </div>
  <details data-testid="settings-theme-helper">
  <summary style={{ cursor:"pointer", fontSize:"0.52rem", color:"var(--text-soft)" }}>
- Compare how mode and legacy themes behave
+ Compare light, dark, and legacy aliases
  </summary>
  <div style={{ marginTop:"0.3rem", fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.5 }}>
  `System` follows the live OS scheme. Retired themes still load through automatic aliases so older saved preferences keep a clear successor palette.
@@ -15487,13 +15586,13 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
  minWidth:0,
  justifyContent:"space-between",
  display:"grid",
- gap:"0.1rem",
+ gap:"0.14rem",
  textAlign:"left",
- fontSize:"0.56rem",
+ fontSize:"0.54rem",
  color:selected ? "var(--tab-active-text)" : "var(--text)",
- borderColor:selected ? "var(--border-strong)" : "var(--border)",
- background:selected ? "var(--tab-active-bg)" : "var(--surface-2)",
- boxShadow:selected ? "var(--shadow-1)" : "var(--button-shadow-rest)",
+ borderColor:selected ? "var(--border-strong)" : "color-mix(in srgb, var(--border) 90%, rgba(255,255,255,0.04))",
+ background:selected ? "linear-gradient(180deg, color-mix(in srgb, var(--tab-active-bg) 100%, transparent) 0%, color-mix(in srgb, var(--surface-1) 72%, transparent) 100%)" : "linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 98%, transparent) 0%, color-mix(in srgb, var(--surface-1) 94%, transparent) 100%)",
+ boxShadow:selected ? "var(--shadow-1)" : "inset 0 1px 0 rgba(255,255,255,0.03)",
  }}
  >
  <span style={{ fontWeight:700 }}>{mode}</span>
@@ -15518,20 +15617,20 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
  onClick={() => handleThemeChange(themeOption.id)}
  style={{
  minWidth:0,
- padding:"0.82rem",
+ padding:"0.88rem",
  textAlign:"left",
  display:"grid",
- gap:"0.52rem",
+ gap:"0.56rem",
  alignContent:"start",
- background:selected ? "var(--surface-1)" : "var(--surface-2)",
- borderColor:selected ? "var(--border-strong)" : "var(--border)",
- boxShadow:selected ? "var(--shadow-2)" : "var(--button-shadow-rest)",
+ background:selected ? "linear-gradient(180deg, color-mix(in srgb, var(--surface-1) 100%, transparent) 0%, color-mix(in srgb, var(--surface-2) 86%, transparent) 100%)" : "linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 98%, transparent) 0%, color-mix(in srgb, var(--surface-1) 94%, transparent) 100%)",
+ borderColor:selected ? "var(--border-strong)" : "color-mix(in srgb, var(--border) 90%, rgba(255,255,255,0.04))",
+ boxShadow:selected ? "var(--shadow-2)" : "inset 0 1px 0 rgba(255,255,255,0.03)",
  }}
  >
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem", minWidth:0 }}>
  <div style={{ minWidth:0 }}>
  <div style={{ fontFamily:"var(--font-display)", fontSize:"0.76rem", color:"var(--text-strong)", overflowWrap:"anywhere" }}>{themeOption.label}</div>
- <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", marginTop:"0.08rem", lineHeight:1.4 }}>
+ <div style={{ fontSize:"0.48rem", color:"var(--text-soft)", marginTop:"0.1rem", lineHeight:1.42, textTransform:"uppercase", letterSpacing:"0.08em" }}>
  {themeOption.subtitle} / {themeOption.hueFamily}
  </div>
  </div>
@@ -15551,7 +15650,7 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
  <ThemePreviewSurface previewModel={previewModel} />
  </div>
  <div style={{ display:"grid", gap:"0.18rem", minWidth:0 }}>
- <div style={{ fontSize:"0.5rem", color:"var(--text)", lineHeight:1.45 }}>{previewModel.description}</div>
+ <div style={{ fontSize:"0.5rem", color:"var(--text)", lineHeight:1.5 }}>{previewModel.description}</div>
  <div style={{ display:"grid", gridTemplateColumns:"repeat(4,minmax(0,1fr))", gap:"0.24rem" }}>
  {previewModel.swatches.map((swatch, index) => (
  <div key={`${themeOption.id}_${index}`} style={{ height:13, borderRadius:999, background:swatch, border:"1px solid rgba(255,255,255,0.08)" }} />
@@ -15562,8 +15661,8 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
  );
  })}
  </div>
- <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.45 }}>
- {PRODUCT_BRAND.name} now keeps the catalog to eight palettes with stronger hue separation and plainer labels.
+ <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+ {PRODUCT_BRAND.name} keeps the appearance system intentionally tight: a small set of differentiated palettes, plus light, dark, or live system mode.
  </div>
  </div>
  );
@@ -15624,6 +15723,14 @@ function MetricsBaselinesSection({
  jumpValue: "",
  jumpUnit: "in",
  });
+ const liftBenchmarkOptions = useMemo(() => ([
+ { value: "Bench Press", label: "Bench Press" },
+ { value: "Back Squat", label: "Back Squat" },
+ { value: "Deadlift", label: "Deadlift" },
+ { value: "Overhead Press", label: "Overhead Press" },
+ { value: "Trap Bar Deadlift", label: "Trap Bar Deadlift" },
+ { value: "Pull-Up", label: "Pull-Up" },
+ ]), []);
  const [savingKey, setSavingKey] = useState("");
  const trainingContext = useMemo(
  () => athleteProfile?.userProfile?.trainingContext || deriveTrainingContextFromPersonalization({ personalization }),
@@ -15634,6 +15741,7 @@ function MetricsBaselinesSection({
  equipment: trainingEquipmentToEnvironmentCode(trainingContext?.equipmentAccess?.value) || "unknown",
  equipmentItems: Array.isArray(trainingContext?.equipmentAccess?.items) ? trainingContext.equipmentAccess.items.join(", ") : "",
  time: trainingContext?.sessionDuration?.confirmed ? String(trainingContext.sessionDuration.value || "").trim() || "unknown" : "unknown",
+ availableDays: trainingContext?.weekdayAvailability?.confirmed ? (trainingContext.weekdayAvailability.value || []) : [],
  }), [trainingContext]);
  const [contextDraft, setContextDraft] = useState(buildContextDraft);
  const requiredNowCards = useMemo(
@@ -15650,6 +15758,53 @@ function MetricsBaselinesSection({
 
  const updateDraft = (key, value) => setDrafts((current) => ({ ...current, [key]: value }));
  const updateContextDraft = (key, value) => setContextDraft((current) => ({ ...current, [key]: value }));
+ const toggleContextAvailableDay = (value = "") => setContextDraft((current) => {
+ const selection = normalizeTrainingWeekdayAvailability(current?.availableDays || []);
+ const normalizedValue = normalizeTrainingWeekdayKey(value);
+ if (!normalizedValue) return current;
+ const nextSelection = selection.includes(normalizedValue)
+ ? selection.filter((entry) => entry !== normalizedValue)
+ : [...selection, normalizedValue];
+ return {
+ ...current,
+ availableDays: normalizeTrainingWeekdayAvailability(nextSelection),
+ };
+ });
+ const renderMetricsChoiceChips = ({
+ items = [],
+ selectedValue = "",
+ selectedValues = [],
+ onSelect = () => {},
+ testIdPrefix = "metrics-chip",
+ multi = false,
+ } = {}) => (
+ <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+ {items.map((item) => {
+ const value = typeof item === "string" ? item : item?.value;
+ const label = typeof item === "string" ? item : item?.label || item?.value || "";
+ const selected = multi
+ ? (Array.isArray(selectedValues) ? selectedValues : []).includes(value)
+ : String(selectedValue || "") === String(value || "");
+ return (
+ <button
+ key={`${testIdPrefix}-${value}`}
+ data-testid={`${testIdPrefix}-${toTestIdFragment(value || label)}`}
+ className={selected ? "btn btn-primary" : "btn"}
+ onClick={() => onSelect(value)}
+ style={{
+ minHeight:44,
+ fontSize:"0.68rem",
+ color:selected ? "#08111d" : "#dbe7f6",
+ borderColor:selected ? "#dbe7f6" : "#324961",
+ background:selected ? "#dbe7f6" : "transparent",
+ }}
+ >
+ {label}
+ </button>
+ );
+ })}
+ </div>
+ );
  const parseEquipmentItems = (value = "") => String(value || "")
  .split(/[,/]/)
  .map((item) => item.trim())
@@ -15913,7 +16068,12 @@ function MetricsBaselinesSection({
  "One top set or recent benchmark lets the planner stop guessing on strength dose.",
  <>
  <div style={{ display:"grid", gridTemplateColumns:"1.2fr 0.8fr 0.6fr auto", gap:"0.35rem" }}>
- <input data-testid="metrics-input-lift-exercise" value={drafts.liftExercise} onChange={(e)=>updateDraft("liftExercise", e.target.value)} placeholder="Exercise" />
+ <select data-testid="metrics-input-lift-exercise" value={drafts.liftExercise} onChange={(e)=>updateDraft("liftExercise", e.target.value)} style={{ fontSize:"0.54rem" }}>
+ <option value="">Choose lift</option>
+ {liftBenchmarkOptions.map((option) => (
+ <option key={option.value} value={option.value}>{option.label}</option>
+ ))}
+ </select>
  <input data-testid="metrics-input-lift-weight" value={drafts.liftWeight} onChange={(e)=>updateDraft("liftWeight", e.target.value)} placeholder="Weight" />
  <input data-testid="metrics-input-lift-reps" value={drafts.liftReps} onChange={(e)=>updateDraft("liftReps", e.target.value)} placeholder="Reps" />
  <button
@@ -15935,7 +16095,7 @@ function MetricsBaselinesSection({
  })),
  { liftExercise: "", liftWeight: "", liftReps: "" }
  )}
- disabled={!drafts.liftWeight || !drafts.liftReps || savingKey === "lift"}
+ disabled={!drafts.liftExercise || !drafts.liftWeight || !drafts.liftReps || savingKey === "lift"}
  style={{ fontSize:"0.5rem" }}
  >
  {savingKey === "lift" ? "Saving..." : "Save"}
@@ -16150,6 +16310,19 @@ function MetricsBaselinesSection({
  <option value="60+">60+ min</option>
  </select>
  </div>
+ <div style={{ display:"grid", gap:"0.28rem" }}>
+ <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>Usual training days</div>
+ {renderMetricsChoiceChips({
+ items: TRAINING_WEEKDAY_CHIP_ITEMS,
+ selectedValues: Array.isArray(contextDraft?.availableDays) ? contextDraft.availableDays : [],
+ onSelect: (value) => toggleContextAvailableDay(value),
+ testIdPrefix: "metrics-input-environment-available-days",
+ multi: true,
+ })}
+ <div style={{ fontSize:"0.45rem", color:"#94a3b8", lineHeight:1.45 }}>
+ Anchor key work to the days that are usually realistic. The other days can stay lighter or optional.
+ </div>
+ </div>
  <input
  data-testid="metrics-input-environment-items"
  value={contextDraft.equipmentItems || ""}
@@ -16166,6 +16339,7 @@ function MetricsBaselinesSection({
  mode: contextDraft.mode,
  equipment: contextDraft.equipment,
  equipmentItems: parseEquipmentItems(contextDraft.equipmentItems),
+ availableDays: normalizeTrainingWeekdayAvailability(contextDraft.availableDays || []),
  time: contextDraft.time,
  });
  return "Saved. Future planning now uses your current setup.";
@@ -16190,3956 +16364,154 @@ function MetricsBaselinesSection({
  );
 }
 
-function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, onResetThisDevice = async () => ({ ok: false }), onOpenAuthGate = () => {}, onOpenPlan = () => {}, passwordResetBusy = false, passwordResetMessage = "", onRequestPasswordReset = () => {}, storageStatus = null, syncStateModel = null, syncSurfaceModel = null, syncDiagnostics = null, deviceSyncAudit, athleteProfile = null, planComposer = null, adaptiveLearningSnapshot = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), previewGoalManagementChange = async () => null, applyGoalManagementChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], planHistoryReviews = [], planHistoryWeekSummaries = [], focusSection = "", frictionDashboard = null, onTrackFrictionEvent = () => {} }) {
- const appleHealth = personalization?.connectedDevices?.appleHealth || {};
- const garmin = personalization?.connectedDevices?.garmin || {};
- const debugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
- const operatorHostname = typeof window !== "undefined" ? window.location.hostname : "";
- const showInternalSettingsTools = canExposeInternalOperatorTools({ debugMode, hostname: operatorHostname });
- const allowClientSuppliedAiKey = canUseClientSuppliedAiKey({ debugMode, hostname: operatorHostname });
- const appleHealthSupportedMode = typeof window !== "undefined" && safeStorageGet(localStorage, "apple_health_supported", "0") === "1";
- const appleHealthPromptSupported = debugMode || appleHealthSupportedMode;
- const [connectOpen, setConnectOpen] = useState(false);
- const [checking, setChecking] = useState(false);
- const [checkMsg, setCheckMsg] = useState("");
-const [garminMsg, setGarminMsg] = useState("");
-const [garminFix, setGarminFix] = useState("");
-const [garminBusy, setGarminBusy] = useState("");
-const [settingsSaveMsg, setSettingsSaveMsg] = useState("");
-const [settingsSavePhase, setSettingsSavePhase] = useState(SAVE_FEEDBACK_PHASES.idle);
-const [settingsSaveDetail, setSettingsSaveDetail] = useState("");
-const [settingsSaveError, setSettingsSaveError] = useState("");
-const [settingsSavedAtLabel, setSettingsSavedAtLabel] = useState("");
-const [showEnvEditor, setShowEnvEditor] = useState(false);
- const [deleteOpen, setDeleteOpen] = useState(false);
- const [deleteConfirm, setDeleteConfirm] = useState("");
- const [deleteStep, setDeleteStep] = useState(1);
- const [accountActionBusy, setAccountActionBusy] = useState("");
- const [accountActionMsg, setAccountActionMsg] = useState("");
- const [accountActionTone, setAccountActionTone] = useState("neutral");
- const [resetDeviceOpen, setResetDeviceOpen] = useState(false);
- const [resetDeviceConfirm, setResetDeviceConfirm] = useState("");
- const [backupCode, setBackupCode] = useState("");
- const [backupMsg, setBackupMsg] = useState("");
- const [planHistoryReportMarkdown, setPlanHistoryReportMarkdown] = useState("");
- const [planHistoryReportMsg, setPlanHistoryReportMsg] = useState("");
- const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
- const [pendingRestoreCode, setPendingRestoreCode] = useState("");
- const [appleImportText, setAppleImportText] = useState("");
- const [garminImportText, setGarminImportText] = useState("");
- const [importMsg, setImportMsg] = useState("");
- const [locationMsg, setLocationMsg] = useState("");
- const [selectedSettingsProgramId, setSelectedSettingsProgramId] = useState("");
- const [selectedSettingsStyleId, setSelectedSettingsStyleId] = useState("");
- const [selectedSettingsProgramFidelityMode, setSelectedSettingsProgramFidelityMode] = useState(PROGRAM_FIDELITY_MODES.adaptToMe);
- const [planManagementNotice, setPlanManagementNotice] = useState("");
- const [planManagementError, setPlanManagementError] = useState("");
- const [goalChangeMode, setGoalChangeMode] = useState(GOAL_CHANGE_MODES.refineCurrentGoal);
- const [goalChangeIntent, setGoalChangeIntent] = useState("");
- const [goalChangePreview, setGoalChangePreview] = useState(null);
- const [goalChangeError, setGoalChangeError] = useState("");
- const [goalChangeNotice, setGoalChangeNotice] = useState("");
- const [goalChangePreviewing, setGoalChangePreviewing] = useState(false);
- const [goalChangeApplying, setGoalChangeApplying] = useState(false);
- const [goalManagementNotice, setGoalManagementNotice] = useState("");
- const [goalManagementError, setGoalManagementError] = useState("");
- const [goalManagementPreview, setGoalManagementPreview] = useState(null);
- const [goalManagementBusy, setGoalManagementBusy] = useState(false);
- const [goalEditorOpen, setGoalEditorOpen] = useState(false);
- const [goalArchiveOpen, setGoalArchiveOpen] = useState(false);
- const [goalEditorMode, setGoalEditorMode] = useState("edit");
- const [goalEditorDraft, setGoalEditorDraft] = useState(null);
- const [goalEditorLibraryCategory, setGoalEditorLibraryCategory] = useState("all");
- const [goalEditorLibrarySearch, setGoalEditorLibrarySearch] = useState("");
- const [showGoalEditorCustomInput, setShowGoalEditorCustomInput] = useState(false);
- const [goalArchiveDraft, setGoalArchiveDraft] = useState({ goalId: "", archiveStatus: GOAL_ARCHIVE_STATUSES.archived });
- const [goalOrderDraftIds, setGoalOrderDraftIds] = useState([]);
- const settings = personalization?.settings || DEFAULT_PERSONALIZATION.settings;
- const profile = personalization?.profile || DEFAULT_PERSONALIZATION.profile;
- const unitSettings = settings?.units || DEFAULT_PERSONALIZATION.settings.units;
- const trainingPrefs = settings?.trainingPreferences || DEFAULT_PERSONALIZATION.settings.trainingPreferences;
- const appearance = settings?.appearance || DEFAULT_PERSONALIZATION.settings.appearance;
- const notif = settings?.notifications || DEFAULT_PERSONALIZATION.settings.notifications;
- const nutritionPrefs = personalization?.nutritionPreferenceState || DEFAULT_PERSONALIZATION.nutritionPreferenceState;
- const coachMemory = personalization?.coachMemory || DEFAULT_PERSONALIZATION.coachMemory || {};
- const [coachMemoryDraft, setCoachMemoryDraft] = useState({
- failurePatterns: (coachMemory.failurePatterns || []).join(", "),
- commonBarriers: (coachMemory.commonBarriers || []).join(", "),
- simplicityVsVariety: coachMemory.simplicityVsVariety || "",
- preferredFoodPatterns: (coachMemory.preferredFoodPatterns || []).join(", "),
- });
- const [coachApiKey, setCoachApiKey] = useState(typeof window !== "undefined"
- ? resolveStoredAiApiKey({ safeStorageGet, storageLike: localStorage, debugMode, hostname: operatorHostname })
- : "");
- const goals = athleteProfile?.goals || [];
- const goalSettingsModel = useMemo(
- () => buildGoalSettingsViewModel({
- goals,
- personalization,
- now: new Date(),
- }),
- [goals, personalization]
- );
- const programsState = useMemo(
- () => normalizeProgramsSelectionState(personalization?.programs || createDefaultProgramSelectionState()),
- [personalization?.programs]
- );
- const programDefinitions = useMemo(() => listProgramDefinitions(), []);
- const styleDefinitions = useMemo(() => listStyleDefinitions(), []);
- const activeBasisSnapshot = useMemo(
- () => buildActiveBasisSnapshot({ programsState }),
- [programsState]
- );
- const activeProgramDefinition = activeBasisSnapshot?.activeProgramDefinition || null;
- const activeStyleDefinition = activeBasisSnapshot?.activeStyleDefinition || null;
- const selectedSettingsProgramDefinition = useMemo(
- () => getProgramDefinitionById(selectedSettingsProgramId || "") || programDefinitions?.[0] || null,
- [selectedSettingsProgramId, programDefinitions]
- );
- const selectedSettingsStyleDefinition = useMemo(
- () => getStyleDefinitionById(selectedSettingsStyleId || "") || styleDefinitions?.[0] || null,
- [selectedSettingsStyleId, styleDefinitions]
- );
- const settingsProgramCompatibility = useMemo(
- () => assessProgramCompatibility({
- programDefinition: selectedSettingsProgramDefinition,
- athleteProfile,
- personalization,
- goals,
- fidelityMode: selectedSettingsProgramFidelityMode,
- }),
- [selectedSettingsProgramDefinition, athleteProfile, personalization, goals, selectedSettingsProgramFidelityMode]
- );
- const settingsStyleCompatibility = useMemo(
- () => assessStyleCompatibility({
- styleDefinition: selectedSettingsStyleDefinition,
- programDefinition: activeProgramDefinition,
- athleteProfile,
- goals,
- activeProgramInstance: programsState?.activeProgramInstance || null,
- }),
- [selectedSettingsStyleDefinition, activeProgramDefinition, athleteProfile, goals, programsState?.activeProgramInstance]
- );
- const settingsPlanBasisExplanation = useMemo(
- () => planComposer?.planningBasis?.planBasisExplanation || buildPlanBasisExplanation({
- athleteProfile,
- activeProgramInstance: programsState?.activeProgramInstance || null,
- activeStyleSelection: programsState?.activeStyleSelection || null,
- programDefinition: activeProgramDefinition,
- styleDefinition: activeStyleDefinition,
- compatibilityAssessment: programsState?.lastCompatibilityAssessment || null,
- }),
- [planComposer, athleteProfile, programsState?.activeProgramInstance, programsState?.activeStyleSelection, programsState?.lastCompatibilityAssessment, activeProgramDefinition, activeStyleDefinition]
- );
- useEffect(() => {
- const currentOrder = Array.isArray(goalSettingsModel?.currentGoalOrder) ? goalSettingsModel.currentGoalOrder : [];
- setGoalOrderDraftIds((existing) => {
- if (!existing.length) return currentOrder;
- const same = existing.length === currentOrder.length && existing.every((value, index) => value === currentOrder[index]);
- return same ? existing : currentOrder;
- });
- }, [goalSettingsModel?.currentGoalOrder]);
-
-const patchSettings = async (patch = {}) => {
-const startedAt = Date.now();
- const nextIntensityPreference = String(patch?.trainingPreferences?.intensityPreference || "").trim().toLowerCase();
- const shouldPatchIntensityPosture = [
- TRAINING_INTENSITY_VALUES.conservative,
- TRAINING_INTENSITY_VALUES.standard,
- TRAINING_INTENSITY_VALUES.aggressive,
- TRAINING_INTENSITY_VALUES.adaptive,
- ].includes(nextIntensityPreference);
- const next = mergePersonalization(personalization, {
- settings: {
- ...(settings || {}),
- ...(patch || {}),
- units: { ...(settings?.units || {}), ...(patch?.units || {}) },
- trainingPreferences: { ...(settings?.trainingPreferences || {}), ...(patch?.trainingPreferences || {}) },
- appearance: { ...(settings?.appearance || {}), ...(patch?.appearance || {}) },
- notifications: { ...(settings?.notifications || {}), ...(patch?.notifications || {}) },
- },
- trainingContext: shouldPatchIntensityPosture
- ? {
- intensityPosture: {
- value: nextIntensityPreference,
- confirmed: nextIntensityPreference !== TRAINING_INTENSITY_VALUES.unknown,
- source: TRAINING_CONTEXT_SOURCES.environmentEditor,
- },
- }
- : undefined,
-});
-setPersonalization(next);
-beginSettingsSave("Saving your settings.");
-try {
-await onPersist(next);
-finishSettingsSave("Your settings are up to date.");
-onTrackFrictionEvent({
-flow: "settings",
-action: "settings_save",
-outcome: "success",
-props: {
-duration_ms: Date.now() - startedAt,
-section: patch?.appearance ? "preferences" : patch?.trainingPreferences ? "training_preferences" : patch?.notifications ? "notifications" : "settings",
-},
-});
-} catch (error) {
-failSettingsSave("Settings did not save. Try again.");
-onTrackFrictionEvent({
-flow: "settings",
-action: "settings_save",
-outcome: "error",
-props: {
-duration_ms: Date.now() - startedAt,
-section: patch?.appearance ? "preferences" : patch?.trainingPreferences ? "training_preferences" : patch?.notifications ? "notifications" : "settings",
-error_code: String(error?.message || "settings_save_failed").toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60),
-},
-});
-}
-};
-
-const patchProfile = async (patch = {}) => {
-const startedAt = Date.now();
-const next = mergePersonalization(personalization, { profile: { ...(profile || {}), ...(patch || {}) } });
-setPersonalization(next);
-beginSettingsSave("Saving your profile.");
-try {
-await onPersist(next);
-finishSettingsSave("Your profile is up to date.");
-onTrackFrictionEvent({
-flow: "settings",
-action: "profile_save",
-outcome: "success",
-props: {
-duration_ms: Date.now() - startedAt,
-},
-});
-} catch (error) {
-failSettingsSave("Profile changes did not save. Try again.");
-onTrackFrictionEvent({
-flow: "settings",
-action: "profile_save",
-outcome: "error",
-props: {
-duration_ms: Date.now() - startedAt,
-error_code: String(error?.message || "profile_save_failed").toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60),
-},
-});
-}
-};
-
- const saveAccountProfile = async () => {
- const startedAt = Date.now();
- const birthYear = accountProfileDraft.birthYear === "" ? "" : Number(accountProfileDraft.birthYear) || "";
- const normalizedWeight = accountProfileDraft.weight === "" ? "" : Number(accountProfileDraft.weight) || "";
- const normalizedHeight = accountProfileDraft.unitsHeight === "cm"
- ? (accountProfileDraft.height === "" ? "" : Number(accountProfileDraft.height) || "")
- : accountProfileDraft.height;
- const trainingAgeYears = accountProfileDraft.trainingAgeYears === "" ? "" : Math.max(0, Number(accountProfileDraft.trainingAgeYears) || 0);
- const next = mergePersonalization(personalization, {
- profile: {
- ...(profile || {}),
- name: String(accountProfileDraft.name || "").trim(),
- timezone: String(accountProfileDraft.timezone || "").trim() || DEFAULT_TIMEZONE,
- birthYear,
- age: birthYear ? Math.max(13, new Date().getFullYear() - birthYear) : "",
- height: normalizedHeight,
- weight: normalizedWeight,
- bodyweight: normalizedWeight,
- trainingAgeYears,
- },
- settings: {
- ...(settings || {}),
- units: {
- ...(unitSettings || {}),
- weight: accountProfileDraft.unitsWeight || unitSettings?.weight || "lbs",
- height: accountProfileDraft.unitsHeight || unitSettings?.height || "ft_in",
- distance: accountProfileDraft.unitsDistance || unitSettings?.distance || "miles",
- },
- },
- });
-setPersonalization(next);
-beginSettingsSave("Saving your account details.");
-try {
-await onPersist(next);
-finishSettingsSave("Your account details are up to date.");
-onTrackFrictionEvent({
-flow: "settings",
-action: "account_profile_save",
-outcome: "success",
-props: {
-duration_ms: Date.now() - startedAt,
-},
-});
-} catch (error) {
-failSettingsSave("Account details did not save. Try again.");
-onTrackFrictionEvent({
-flow: "settings",
-action: "account_profile_save",
-outcome: "error",
-props: {
-duration_ms: Date.now() - startedAt,
-error_code: String(error?.message || "account_profile_save_failed").toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60),
-},
-});
-}
-};
-
- const saveTrainingContextInline = async ({
- mode = "Unknown",
- equipment = "unknown",
- equipmentItems = [],
- time = "unknown",
- } = {}) => {
- const selectedItems = Array.isArray(equipmentItems)
- ? equipmentItems
- : String(equipmentItems || "")
- .split(/[,/]/)
- .map((item) => item.trim())
- .filter(Boolean);
- const nextTrainingContext = buildTrainingContextFromEditor({
- mode,
- equipment,
- equipmentItems: selectedItems,
- time,
- });
- const nextEnvironmentConfig = {
- ...(personalization?.environmentConfig || {}),
- defaultMode: mode || personalization?.environmentConfig?.defaultMode || "Home",
- base: {
- mode: mode || personalization?.environmentConfig?.base?.mode || "Unknown",
- equipment: equipment || personalization?.environmentConfig?.base?.equipment || "unknown",
- equipmentItems: selectedItems,
- time: time || personalization?.environmentConfig?.base?.time || "unknown",
- },
- todayOverride: null,
- weekOverride: null,
- };
- const next = mergePersonalization(personalization, {
- environmentConfig: nextEnvironmentConfig,
- trainingContext: nextTrainingContext,
- settings: {
- ...(settings || {}),
- trainingPreferences: {
- ...(trainingPrefs || {}),
- defaultEnvironment: mode || trainingPrefs?.defaultEnvironment || "Home",
- },
- },
-});
-setPersonalization(next);
-beginSettingsSave("Saving your training setup.");
-try {
-await onPersist(next);
-finishSettingsSave("Future planning now uses this training setup.");
-} catch {
-failSettingsSave("Training setup did not save. Try again.");
-}
-};
-
-const persistAppleHealth = async (patch = {}) => {
-const next = mergePersonalization(personalization, {
- connectedDevices: {
- ...(personalization?.connectedDevices || {}),
- appleHealth: { ...appleHealth, ...(patch || {}) },
- },
-});
-setPersonalization(next);
-beginSettingsSave("Saving your Apple Health connection.");
-try {
-await onPersist(next);
-finishSettingsSave("Apple Health status was updated.");
-} catch {
-failSettingsSave("Apple Health status did not save. Try again.");
-}
-};
- const requestAppleHealth = async () => {
- const now = Date.now();
- let status = "connected";
- try {
- const handler = window?.webkit?.messageHandlers?.healthkit;
- if (handler?.postMessage) {
- handler.postMessage({ type: "request_permissions", permissions: HEALTHKIT_PERMISSIONS });
- } else {
- status = "simulated_web";
- }
- } catch {
- status = "simulated_web";
- }
- await persistAppleHealth({
- status,
- connectionMode: status === "simulated_web" ? "simulated" : "live",
- permissionRequestedAt: now,
- permissionsGranted: [...HEALTHKIT_PERMISSIONS],
- skipped: false,
- });
- setConnectOpen(false);
- };
- const callGarminApi = async (path, { method = "POST", body } = {}) => {
- if (!authSession?.access_token) {
- setGarminMsg("You must be signed in before using Garmin Connect.");
- setGarminFix("Sign in again, then retry from Settings.");
- return null;
- }
- const res = await fetch(path, {
- method,
- headers: {
- "Content-Type": "application/json",
- "Authorization": `Bearer ${authSession.access_token}`,
- },
- ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
- });
- const data = await res.json().catch(() => ({}));
- if (!res.ok) {
- setGarminMsg(data?.message || `Garmin request failed (${res.status}).`);
- setGarminFix(data?.fix || "");
- return null;
- }
- setGarminMsg(data?.message || "");
- setGarminFix(data?.fix || "");
- return data;
- };
- const connectGarmin = async () => {
- setGarminBusy("connect");
- setGarminMsg("Preparing Garmin authorization...");
- setGarminFix("");
- try {
- const data = await callGarminApi("/api/auth/garmin", { method: "POST" });
- if (data?.authorizeUrl) {
- window.location.assign(data.authorizeUrl);
- return;
- }
- } catch (e) {
- setGarminMsg("Garmin setup did not finish.");
- setGarminFix("Try again in a moment. If it keeps happening, reconnect Garmin from Settings.");
- }
- setGarminBusy("");
- };
- const syncGarminNow = async () => {
- setGarminBusy("sync");
- setGarminMsg("Syncing Garmin now...");
- setGarminFix("");
- try {
- const data = await callGarminApi("/api/auth/garmin/sync", { method: "POST" });
- if (data) await onReloadCloudData?.();
- } finally {
- setGarminBusy("");
- }
- };
- const disconnectGarmin = async () => {
- setGarminBusy("disconnect");
- setGarminFix("");
- try {
- const data = await callGarminApi("/api/auth/garmin/disconnect", { method: "POST" });
- if (data) await onReloadCloudData?.();
- } finally {
- setGarminBusy("");
- }
- };
- const activeAppleTypes = appleHealth?.permissionsGranted?.length ? appleHealth.permissionsGranted.join(", ") : "None";
- const lastGarminActivity = (garmin?.activities || []).slice(-1)[0];
- const profileWeightVal = profile?.weight ?? profile?.bodyweight ?? "";
- const profileHeightVal = profile?.height ?? "";
- const profileBirthYearVal = profile?.birthYear ?? "";
- const profileTimezoneVal = profile?.timezone || DEFAULT_TIMEZONE;
- const buildAccountProfileDraft = () => ({
- name: profile?.name || "",
- timezone: profileTimezoneVal,
- birthYear: profileBirthYearVal === "" ? "" : String(profileBirthYearVal),
- height: profileHeightVal ?? "",
- weight: profileWeightVal === "" ? "" : String(profileWeightVal),
- trainingAgeYears: profile?.trainingAgeYears === "" || profile?.trainingAgeYears == null ? "" : String(profile.trainingAgeYears),
- unitsWeight: unitSettings?.weight || "lbs",
- unitsHeight: unitSettings?.height || "ft_in",
- unitsDistance: unitSettings?.distance || "miles",
- });
-const [accountProfileDraft, setAccountProfileDraft] = useState(buildAccountProfileDraft);
-const garminLastSyncLabel = garmin?.lastSyncAt ? new Date(garmin.lastSyncAt).toLocaleString() : "never";
-const formatIntegrationTimestamp = (value) => value ? new Date(value).toLocaleString() : "never";
-const settingsSaveColor = /could not be reloaded|failed:/i.test(settingsSaveMsg) ? C.amber : C.green;
-const beginSettingsSave = (detail = "This should only take a moment.") => {
-setSettingsSavePhase(SAVE_FEEDBACK_PHASES.saving);
-setSettingsSaveDetail(detail);
-setSettingsSaveError("");
-};
-const finishSettingsSave = (detail = "Your changes are up to date.") => {
-const stamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-setSettingsSavedAtLabel(stamp);
-setSettingsSaveDetail(detail);
-setSettingsSaveError("");
-setSettingsSavePhase(SAVE_FEEDBACK_PHASES.saved);
-setSettingsSaveMsg(`Saved ${stamp}`);
-};
-const failSettingsSave = (message = "Save did not finish. Try again.") => {
-setSettingsSaveError(message);
-setSettingsSavePhase(SAVE_FEEDBACK_PHASES.error);
-setSettingsSaveMsg(message);
-};
-const settingsSaveFeedbackModel = useMemo(() => buildSaveFeedbackModel({
-phase: settingsSavePhase,
-syncState: syncStateModel,
-savedAtLabel: settingsSavedAtLabel,
-successMessage: settingsSaveDetail,
-savingMessage: settingsSaveDetail,
-errorMessage: settingsSaveError,
-}), [settingsSaveDetail, settingsSaveError, settingsSavePhase, settingsSavedAtLabel, syncStateModel]);
-const accountActionFeedbackModel = useMemo(() => {
-if (!accountActionMsg) return null;
-const busy = Boolean(accountActionBusy);
-const tone = accountActionTone === "success"
-? "success"
-: accountActionTone === "warn"
-? "caution"
-: "info";
-const chipLabel = busy
-? accountActionBusy === "reload"
-? "Refreshing"
-: accountActionBusy === "logout"
-? "Signing out"
-: accountActionBusy === "reset_device"
-? "Resetting"
-: accountActionBusy === "delete_account"
-? "Deleting"
-: "Working"
-: tone === "success"
-? "Done"
-: tone === "caution"
-? "Heads up"
-: "Working";
-return {
-tone,
-chipLabel,
-title: accountActionMsg,
-detail: "",
-support: "",
-liveMode: busy ? "assertive" : "polite",
-};
-}, [accountActionBusy, accountActionMsg, accountActionTone]);
-const settingsDiagnosticsFlag = typeof window !== "undefined"
-? safeStorageGet(localStorage, "trainer_staff_diagnostics", "0")
-: "0";
- const {
- activeSettingsSurface,
- setActiveSettingsSurface,
- lifecycleSummaryCards,
- showProtectedDiagnostics,
- } = useSettingsScreenState({
- focusSection,
- authEmail: authSession?.user?.email || "",
- debugMode,
- diagnosticsHostname: operatorHostname,
- storageReason: storageStatus?.reason || "",
- syncStateModel,
- diagnosticsLocationSearch: typeof window !== "undefined" ? window.location.search : "",
- storedDiagnosticsFlag: settingsDiagnosticsFlag,
- onTrackFrictionEvent,
- });
- const adaptiveDiagnosticsModel = useMemo(() => buildAdaptiveDiagnosticsPanelModel({
- personalization,
- adaptiveLearningSnapshot,
- planComposer,
- trustedLocalDebug: showProtectedDiagnostics,
- }), [adaptiveLearningSnapshot, personalization, planComposer, showProtectedDiagnostics]);
- const appendDebugDetail = (message = "", detail = "") => {
- const base = String(message || "").trim();
- const extra = String(detail || "").trim();
- if (!base || !debugMode || !extra || base.includes(extra)) return base;
- return `${base} (${extra})`;
- };
- const {
- deleteDiagnostics,
- refreshDeleteDiagnostics,
- } = useSettingsDeleteDiagnostics({
- activeSettingsSurface,
- authAccessToken: authSession?.access_token || "",
- authEmail: authSession?.user?.email || "",
- onTrackFrictionEvent,
- });
- const deleteAccountHelpText = buildDeleteAccountHelpText(deleteDiagnostics);
- const integrationStateTone = (state = "idle") => {
- if (state === "operational") return { color: C.green, bg: `${C.green}14` };
- if (state === "pending") return { color: C.blue, bg: `${C.blue}14` };
- if (state === "manual") return { color: C.amber, bg: `${C.amber}14` };
- if (state === "simulated") return { color: C.purple, bg: `${C.purple}14` };
- return { color: "#8fa5c8", bg: "rgba(143,165,200,0.12)" };
- };
- const integrationDevVisible = useMemo(() => {
- if (typeof window === "undefined") return appleHealth?.status === "simulated_web";
- try {
- const params = new URLSearchParams(window.location.search);
- return params.get("devtools") === "1"
- || ["localhost", "127.0.0.1"].includes(window.location.hostname)
- || appleHealth?.status === "simulated_web";
- } catch {
- return appleHealth?.status === "simulated_web";
- }
- }, [appleHealth?.status]);
- const appleMode = appleHealth?.connectionMode
- || (appleHealth?.status === "simulated_web" ? "simulated" : appleHealth?.status === "manual_import" ? "manual_import" : appleHealth?.status === "connected" ? "live" : "unavailable");
- const appleIntegration = (() => {
- if (appleMode === "live" && appleHealth?.lastSyncStatus === "garmin_detected") {
- return {
- state: "operational",
- label: "Recent data found",
- summary: "Apple Health permission was requested, and recent Garmin-origin workouts were found here.",
- detail: `Last recorded check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
- };
- }
- if (appleMode === "live") {
- return {
- state: "pending",
- label: "Connected, awaiting verification",
- summary: appleHealth?.lastSyncStatus === "health_only"
- ? "Recent Apple Health workouts were found, but Garmin-origin entries were not confirmed here yet."
- : "Apple Health permission was requested, but recent workout data has not been confirmed here yet.",
- detail: `Last recorded check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
- };
- }
- if (appleMode === "manual_import") {
- return {
- state: "manual",
- label: "Manual import only",
- summary: "Apple Health data exists from a manual JSON import, not from a live device permission flow.",
- detail: `Imported: ${formatIntegrationTimestamp(appleHealth?.importedAt)}.`,
- };
- }
- if (appleMode === "simulated") {
- return {
- state: "simulated",
- label: "Simulated on web",
- summary: "This web environment is using a simulated Apple Health placeholder, not a real device link.",
- detail: "A real Apple Health permission flow needs an iPhone-capable environment.",
- };
- }
- if (appleHealth?.skipped) {
- return {
- state: "unavailable",
- label: "Not enabled",
- summary: "Apple Health has been skipped or not enabled yet.",
- detail: "No Apple Health data is being used right now.",
- };
- }
- return {
- state: "unavailable",
- label: "Not configured",
- summary: "Apple Health is not connected.",
- detail: "No Apple Health permission state or manual import is active.",
- };
- })();
- const garminMode = garmin?.connectionMode || (garmin?.status === "manual_import" ? "manual_import" : garmin?.status === "connected" ? "live" : "unavailable");
- const garminIntegration = (() => {
- if (garminMode === "live" && garmin?.lastSyncAt && (garmin?.activities || []).length > 0) {
- return {
- state: "operational",
- label: "Recent sync found",
- summary: "Garmin authorization exists, and recent activities were pulled through the server-side connection.",
- detail: `Last sync: ${garminLastSyncLabel}.`,
- };
- }
- if (garminMode === "live") {
- return {
- state: "pending",
- label: "Connected, never synced",
- summary: "Garmin authorization exists, but no completed sync has been recorded yet.",
- detail: `Last sync: ${garminLastSyncLabel}.`,
- };
- }
- if (garminMode === "manual_import") {
- return {
- state: "manual",
- label: "Manual import only",
- summary: "Garmin activity data came from a manual import, not from the server-side connection.",
- detail: `Imported: ${formatIntegrationTimestamp(garmin?.importedAt)}.`,
- };
- }
- return {
- state: "unavailable",
- label: "Not configured",
- summary: "Garmin Connect is not configured.",
- detail: "No live authorization or manual import is active.",
- };
- })();
- const locationIntegration = (() => {
- const status = personalization?.localFoodContext?.locationStatus || personalization?.connectedDevices?.location?.status || "unknown";
- if (status === "granted") {
- return {
- state: "operational",
- label: "Permission granted",
- summary: "Location permission was granted for travel context and local nutrition suggestions.",
- };
- }
- if (status === "denied") {
- return {
- state: "unavailable",
- label: "Permission denied",
- summary: "Location access was denied, so travel/location context stays manual.",
- };
- }
- if (status === "unavailable") {
- return {
- state: "unavailable",
- label: "Unavailable here",
- summary: "Location services are unavailable in this environment.",
- };
- }
- return {
- state: "unavailable",
- label: "Not enabled",
- summary: "Location access is not enabled.",
- };
- })();
-
- const checkConnection = async () => {
- setChecking(true);
- try {
- if (appleMode === "manual_import") {
- setCheckMsg("Manual Apple Health imports do not verify a live Apple Health connection.");
- return;
- }
- const workouts = appleHealth?.workouts || {};
- const cutoff = Date.now() - (7 * 86400000);
- const recent = Object.entries(workouts).filter(([date]) => new Date(`${date}T12:00:00`).getTime() >= cutoff);
- const hasGarmin = recent.some(([, w]) => /garmin/i.test(String(w?.source || w?.device || "")));
- const msg = recent.length === 0
- ? "No Apple Health workouts found in last 7 days."
- : hasGarmin
- ? `Recent Apple Health data found: ${recent.length} workouts, including Garmin-origin sessions.`
- : `Recent Apple Health data found: ${recent.length} workouts, but Garmin-origin sessions were not detected.`;
- setCheckMsg(msg);
- await persistAppleHealth({ lastConnectionCheck: Date.now(), lastSyncStatus: hasGarmin ? "garmin_detected" : "health_only" });
- } finally {
- setChecking(false);
- }
- };
- const importDeviceData = async (provider = "apple") => {
- try {
- const raw = provider === "apple" ? appleImportText : garminImportText;
- const parsed = JSON.parse(raw || "{}");
- if (provider === "apple") {
- const workouts = Array.isArray(parsed)
- ? Object.fromEntries(parsed.map((w, idx) => [w?.date || w?.startDate || `${new Date().toISOString().split("T")[0]}_${idx}`, w]))
- : (parsed?.workouts || {});
- await persistAppleHealth({
- status: "manual_import",
- connectionMode: "manual_import",
- workouts,
- importedAt: Date.now(),
- lastSyncStatus: Object.keys(workouts || {}).length > 0 ? "health_only" : (appleHealth?.lastSyncStatus || "connected"),
- });
- setImportMsg(`Imported ${Object.keys(workouts || {}).length} Apple Health workout entries.`);
- } else {
- const activities = Array.isArray(parsed) ? parsed : (parsed?.activities || []);
- const dailySummaries = parsed?.dailySummaries || garmin?.dailySummaries || {};
- const nextGarmin = {
- ...garmin,
- status: "manual_import",
- connectionMode: "manual_import",
- activities,
- dailySummaries,
- trainingReadinessScore: Number(parsed?.trainingReadinessScore ?? garmin?.trainingReadinessScore ?? 0) || garmin?.trainingReadinessScore || null,
- importedAt: Date.now(),
- lastApiStatus: "ok",
- };
- const next = mergePersonalization(personalization, { connectedDevices: { ...(personalization?.connectedDevices || {}), garmin: nextGarmin } });
- setPersonalization(next);
- await onPersist(next);
- setImportMsg(`Imported ${activities.length} Garmin activities.`);
- }
- } catch (e) {
- setImportMsg(`Import failed: ${e?.message || "invalid JSON"}`);
- }
- };
- const requestLocationAccess = async () => {
- if (!(typeof navigator !== "undefined" && navigator?.geolocation?.getCurrentPosition)) {
- const next = mergePersonalization(personalization, {
- localFoodContext: {
- ...(personalization?.localFoodContext || {}),
- locationPermissionGranted: false,
- locationStatus: "unavailable",
- locationLabel: personalization?.localFoodContext?.locationLabel || personalization?.localFoodContext?.city || "Saved city only",
- lastUpdatedAt: Date.now(),
- },
- });
- setPersonalization(next);
- await onPersist(next);
- setLocationMsg("Location services are unavailable in this browser.");
- return;
- }
- navigator.geolocation.getCurrentPosition(async (position) => {
- const fallbackLocationLabel = personalization?.localFoodContext?.city || personalization?.localFoodContext?.locationLabel || "Nearby area";
- const next = mergePersonalization(personalization, {
- connectedDevices: {
- ...(personalization?.connectedDevices || {}),
- location: {
- status: "granted",
- lat: Number(position?.coords?.latitude || 0),
- lng: Number(position?.coords?.longitude || 0),
- accuracyM: Number(position?.coords?.accuracy || 0),
- updatedAt: Date.now(),
- source: "ios_geolocation",
- },
- },
- localFoodContext: {
- ...(personalization?.localFoodContext || {}),
- city: personalization?.localFoodContext?.city || fallbackLocationLabel,
- locationPermissionGranted: true,
- locationStatus: "granted",
- locationLabel: fallbackLocationLabel,
- lastKnownLat: Number(position?.coords?.latitude || 0),
- lastKnownLng: Number(position?.coords?.longitude || 0),
- lastUpdatedAt: Date.now(),
- },
- });
- setPersonalization(next);
- await onPersist(next);
- setLocationMsg("Location permission granted and saved.");
- }, async (err) => {
- const next = mergePersonalization(personalization, {
- connectedDevices: {
- ...(personalization?.connectedDevices || {}),
- location: { status: "denied", error: err?.message || "permission_denied", updatedAt: Date.now() },
- },
- localFoodContext: {
- ...(personalization?.localFoodContext || {}),
- locationPermissionGranted: false,
- locationStatus: "denied",
- locationLabel: personalization?.localFoodContext?.locationLabel || personalization?.localFoodContext?.city || "",
- lastUpdatedAt: Date.now(),
- },
- });
- setPersonalization(next);
- await onPersist(next);
- setLocationMsg(sanitizeDisplayText("Location permission denied. Enable it in iPhone Settings ? Privacy & Security ? Location Services."));
- }, { enableHighAccuracy: false, timeout: 12000, maximumAge: 600000 });
- };
- const handleCopyBackup = async () => {
- const payload = exportData();
- try {
- await navigator.clipboard.writeText(payload);
- setBackupMsg("Copied");
- setTimeout(() => setBackupMsg(""), 2000);
- } catch {
- setBackupCode(payload);
- setBackupMsg("Unable to copy automatically");
- }
- };
-
-const patchNutritionPreferences = async (patch = {}) => {
-const startedAt = Date.now();
- const nextNutritionPreferenceState = {
-  ...(personalization?.nutritionPreferenceState || DEFAULT_PERSONALIZATION.nutritionPreferenceState),
-  ...(patch || {}),
- };
- const next = mergePersonalization(personalization, {
-  nutritionPreferenceState: nextNutritionPreferenceState,
- });
- setPersonalization(next);
- beginSettingsSave("Saving your nutrition preferences.");
- try {
- await onPersist(next);
- finishSettingsSave("Your nutrition preferences are up to date.");
- onTrackFrictionEvent({
- flow: "settings",
- action: "nutrition_preferences_save",
- outcome: "success",
- props: {
-  duration_ms: Date.now() - startedAt,
- },
- });
- } catch (error) {
- failSettingsSave("Nutrition preferences did not save. Try again.");
- onTrackFrictionEvent({
- flow: "settings",
- action: "nutrition_preferences_save",
- outcome: "error",
- props: {
-  duration_ms: Date.now() - startedAt,
-  error_code: String(error?.message || "nutrition_preferences_save_failed").toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60),
- },
- });
- }
-};
- const buildPlanHistoryReportMarkdown = (generatedAt = new Date().toISOString()) => renderPlanEvolutionExportMarkdown(buildPlanEvolutionExport({
- title: "Plan History Reviewer Report",
- generatedAt,
- reviews: planHistoryReviews,
- weekSummaries: planHistoryWeekSummaries,
- }));
- const handleGeneratePlanHistoryReport = () => {
- const generatedAt = new Date().toISOString();
- setPlanHistoryReportMarkdown(buildPlanHistoryReportMarkdown(generatedAt));
- setPlanHistoryReportMsg(`Generated ${new Date(generatedAt).toLocaleString()}`);
- };
- const handleCopyPlanHistoryReport = async () => {
- const generatedAt = new Date().toISOString();
- const markdown = planHistoryReportMarkdown || buildPlanHistoryReportMarkdown(generatedAt);
- if (!planHistoryReportMarkdown) {
- setPlanHistoryReportMarkdown(markdown);
- }
- try {
- await navigator.clipboard.writeText(markdown);
-setPlanHistoryReportMsg("Copied plan history export.");
- } catch {
- setPlanHistoryReportMsg("Unable to copy automatically. The report stays visible below.");
- }
- };
- const handleRestoreRequest = () => {
- const raw = String(backupCode || "").trim();
- if (!raw) {
- setBackupMsg("Invalid backup code");
- return;
- }
- try {
- JSON.parse(decodeURIComponent(escape(atob(raw))));
- setPendingRestoreCode(raw);
- setBackupMsg("");
- setShowRestoreConfirm(true);
- } catch {
- setBackupMsg("Invalid backup code");
- }
- };
- const confirmRestore = async () => {
- const ok = await importData(pendingRestoreCode);
- if (!ok) {
- setBackupMsg("Invalid backup code");
- setShowRestoreConfirm(false);
- setPendingRestoreCode("");
- return;
- }
- setBackupCode("");
- setBackupMsg("");
- setPendingRestoreCode("");
- setShowRestoreConfirm(false);
- };
- useEffect(() => {
- if (typeof window === "undefined") return;
- const params = new URLSearchParams(window.location.search);
- const status = params.get("garmin_status");
- const message = params.get("garmin_message");
- const fix = params.get("garmin_fix");
- if (!status && !message && !fix) return;
- setGarminMsg(message || (status === "connected" ? "Garmin connected." : "Garmin returned with a status update."));
- setGarminFix(fix || "");
- params.delete("garmin_status");
- params.delete("garmin_message");
- params.delete("garmin_fix");
- params.delete("tab");
- const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash || ""}`;
- window.history.replaceState({}, "", nextUrl);
- }, []);
- useEffect(() => {
- if (!selectedSettingsProgramId && programDefinitions?.[0]?.id) setSelectedSettingsProgramId(programDefinitions[0].id);
- }, [programDefinitions, selectedSettingsProgramId]);
- useEffect(() => {
- if (!selectedSettingsStyleId && styleDefinitions?.[0]?.id) setSelectedSettingsStyleId(styleDefinitions[0].id);
- }, [styleDefinitions, selectedSettingsStyleId]);
- useEffect(() => {
- setCoachMemoryDraft({
- failurePatterns: (coachMemory.failurePatterns || []).join(", "),
- commonBarriers: (coachMemory.commonBarriers || []).join(", "),
- simplicityVsVariety: coachMemory.simplicityVsVariety || "",
- preferredFoodPatterns: (coachMemory.preferredFoodPatterns || []).join(", "),
- });
- }, [
- coachMemory.failurePatterns,
- coachMemory.commonBarriers,
- coachMemory.simplicityVsVariety,
- coachMemory.preferredFoodPatterns,
- ]);
- useEffect(() => {
- setAccountProfileDraft(buildAccountProfileDraft());
- }, [
- profile?.name,
- profileTimezoneVal,
- profileBirthYearVal,
- profileHeightVal,
- profileWeightVal,
- profile?.trainingAgeYears,
- unitSettings?.weight,
- unitSettings?.height,
- unitSettings?.distance,
- ]);
-const saveCoachSetup = async () => {
- const updated = mergePersonalization(personalization, {
- coachMemory: {
- ...(personalization?.coachMemory || {}),
- failurePatterns: coachMemoryDraft.failurePatterns.split(",").map((item) => item.trim()).filter(Boolean),
- commonBarriers: coachMemoryDraft.commonBarriers.split(",").map((item) => item.trim()).filter(Boolean),
- preferredFoodPatterns: coachMemoryDraft.preferredFoodPatterns.split(",").map((item) => item.trim()).filter(Boolean),
- simplicityVsVariety: coachMemoryDraft.simplicityVsVariety || "",
- },
- });
- setPersonalization(updated);
- if (allowClientSuppliedAiKey && typeof window !== "undefined") safeStorageSet(localStorage, "coach_api_key", coachApiKey || "");
- beginSettingsSave("Saving your coach setup.");
- try {
- await onPersist(updated);
- finishSettingsSave("Coach setup is up to date.");
- } catch {
- failSettingsSave("Coach setup did not save. Try again.");
- }
-};
- const commitSettingsProgramsState = async (nextProgramsState, notice = "") => {
- setPlanManagementError("");
- setPlanManagementNotice(notice);
- await saveProgramSelection(nextProgramsState);
- };
- const handleSettingsActivateProgram = async () => {
- if (!selectedSettingsProgramDefinition?.id) return;
- if (settingsProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible) {
- setPlanManagementNotice("");
- setPlanManagementError(settingsProgramCompatibility?.blockedConstraints?.[0] || settingsProgramCompatibility?.reasons?.[0] || "This program is not a clean fit right now.");
- return;
- }
- const nowIso = new Date().toISOString();
- const nextProgramInstance = createProgramInstance({
- programDefinition: selectedSettingsProgramDefinition,
- userId: "local",
- fidelityMode: selectedSettingsProgramFidelityMode,
- compatibilityAssessment: settingsProgramCompatibility,
- athleteProfile,
- activationDate: nowIso,
- });
- const nextStyleSelection = selectedSettingsProgramFidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle
- ? null
- : programsState?.activeStyleSelection || null;
- const nextHistoryEntry = buildProgramSelectionHistoryEntry({
- action: programsState?.activeProgramInstance ? "replaced_program" : "activated_program",
- programDefinition: selectedSettingsProgramDefinition,
- fidelityMode: selectedSettingsProgramFidelityMode,
- reason: settingsProgramCompatibility?.reasons?.[0] || buildCompatibilityHeadline(settingsProgramCompatibility),
- createdAt: nowIso,
- });
- await commitSettingsProgramsState({
- ...programsState,
- activeProgramInstance: nextProgramInstance,
- activeStyleSelection: nextStyleSelection,
- lastCompatibilityAssessment: settingsProgramCompatibility,
- planBasisExplanation: buildPlanBasisExplanation({
- athleteProfile,
- activeProgramInstance: nextProgramInstance,
- activeStyleSelection: nextStyleSelection,
- programDefinition: selectedSettingsProgramDefinition,
- styleDefinition: selectedSettingsProgramFidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle ? null : activeStyleDefinition,
- compatibilityAssessment: settingsProgramCompatibility,
- }),
- selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
-}, `${selectedSettingsProgramDefinition.displayName} is now your active plan layer.`);
- };
- const handleSettingsActivateStyle = async () => {
- if (!selectedSettingsStyleDefinition?.id) return;
- if (settingsStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible) {
- setPlanManagementNotice("");
-setPlanManagementError(settingsStyleCompatibility?.blockedConstraints?.[0] || settingsStyleCompatibility?.reasons?.[0] || "This style does not fit your current plan.");
- return;
- }
- const nowIso = new Date().toISOString();
- const nextStyleSelection = createStyleSelection({
- styleDefinition: selectedSettingsStyleDefinition,
- userId: "local",
- compatibleWithCurrentPlan: settingsStyleCompatibility?.outcome !== COMPATIBILITY_OUTCOMES.incompatible,
- influenceLevel: STYLE_INFLUENCE_LEVELS.standard,
- activationDate: nowIso,
- });
- const nextHistoryEntry = buildProgramSelectionHistoryEntry({
- action: programsState?.activeStyleSelection ? "replaced_style" : "activated_style",
- styleDefinition: selectedSettingsStyleDefinition,
- reason: settingsStyleCompatibility?.reasons?.[0] || buildCompatibilityHeadline(settingsStyleCompatibility),
- createdAt: nowIso,
- });
- await commitSettingsProgramsState({
- ...programsState,
- activeStyleSelection: nextStyleSelection,
- lastCompatibilityAssessment: settingsStyleCompatibility,
- planBasisExplanation: buildPlanBasisExplanation({
- athleteProfile,
- activeProgramInstance: programsState?.activeProgramInstance || null,
- activeStyleSelection: nextStyleSelection,
- programDefinition: activeProgramDefinition,
- styleDefinition: selectedSettingsStyleDefinition,
- compatibilityAssessment: settingsStyleCompatibility,
- }),
- selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
- }, `${selectedSettingsStyleDefinition.displayName} is now the active style layer.`);
- };
- const handleSettingsClearProgramLayer = async () => {
- if (!programsState?.activeProgramInstance && !programsState?.activeStyleSelection) return;
- const nowIso = new Date().toISOString();
- const nextHistoryEntry = buildProgramSelectionHistoryEntry({
- action: "cleared_basis",
- programDefinition: activeProgramDefinition,
- styleDefinition: activeStyleDefinition,
- fidelityMode: programsState?.activeProgramInstance?.fidelityMode || "",
-    reason: "Returned to FORMA's built-for-you plan.",
- createdAt: nowIso,
- });
- await commitSettingsProgramsState({
- ...programsState,
- activeProgramInstance: null,
- activeStyleSelection: null,
- lastCompatibilityAssessment: null,
- planBasisExplanation: buildPlanBasisExplanation({
- athleteProfile,
- activeProgramInstance: null,
- activeStyleSelection: null,
- programDefinition: null,
- styleDefinition: null,
- compatibilityAssessment: null,
- }),
- selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
-}, "Program and style removed. FORMA is back to building your plan around your goals and routine.");
- };
- const handleSettingsGoalPreview = async () => {
- const cleanGoalText = sanitizeIntakeText(goalChangeIntent || "");
- if (!cleanGoalText) {
- setGoalChangeError("Add the goal in plain English first.");
- setGoalChangePreview(null);
- onTrackFrictionEvent({
- flow: "settings",
- action: "experimental_goal_preview",
- outcome: "blocked",
- props: {
- mode: goalChangeMode,
- },
- });
- return;
- }
- const startedAt = Date.now();
- setGoalChangePreviewing(true);
- setGoalChangeError("");
- setGoalChangeNotice("");
- try {
- const preview = await previewGoalChange({
- rawGoalText: cleanGoalText,
- changeMode: goalChangeMode,
- });
- if (!preview?.orderedResolvedGoals?.length) {
- setGoalChangeError("Preview could not resolve a clean priority order.");
- setGoalChangePreview(null);
- onTrackFrictionEvent({
- flow: "settings",
- action: "experimental_goal_preview",
- outcome: "error",
- props: {
- duration_ms: Date.now() - startedAt,
- mode: goalChangeMode,
- },
- });
- } else {
- setGoalChangePreview(preview);
- onTrackFrictionEvent({
- flow: "settings",
- action: "experimental_goal_preview",
- outcome: "success",
- props: {
- duration_ms: Date.now() - startedAt,
- mode: goalChangeMode,
- resolved_goal_count: preview.orderedResolvedGoals.length,
- },
- });
- }
- } catch (error) {
- setGoalChangeError(error?.message || "Goal preview failed.");
- setGoalChangePreview(null);
- onTrackFrictionEvent({
- flow: "settings",
- action: "experimental_goal_preview",
- outcome: "error",
- props: {
- duration_ms: Date.now() - startedAt,
- mode: goalChangeMode,
- error_code: String(error?.message || "goal_preview_failed").toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60),
- },
- });
- } finally {
- setGoalChangePreviewing(false);
- }
- };
- const handleSettingsGoalApply = async () => {
- if (!goalChangePreview?.orderedResolvedGoals?.length) {
- setGoalChangeError("Preview the goal change before confirming it.");
- onTrackFrictionEvent({
- flow: "settings",
- action: "experimental_goal_apply",
- outcome: "blocked",
- props: {
- mode: goalChangeMode,
- },
- });
- return;
- }
- const startedAt = Date.now();
- setGoalChangeApplying(true);
- setGoalChangeError("");
- setGoalChangeNotice("");
- try {
- const result = await applyGoalChange({
- rawGoalText: goalChangeIntent,
- changeMode: goalChangeMode,
- previewBundle: goalChangePreview,
- });
- if (!result?.ok) {
- setGoalChangeError(result?.error || "Goal change could not be applied.");
- onTrackFrictionEvent({
- flow: "settings",
- action: "experimental_goal_apply",
- outcome: "error",
- props: {
- duration_ms: Date.now() - startedAt,
- mode: goalChangeMode,
- error_code: String(result?.error || "goal_apply_failed").toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60),
- },
- });
- return;
- }
- setGoalChangeNotice(`${goalChangePreview?.modeMeta?.label || "Goal change"} applied.`);
- setGoalChangeIntent("");
- setGoalChangePreview(null);
- onTrackFrictionEvent({
- flow: "settings",
- action: "experimental_goal_apply",
- outcome: "success",
- props: {
- duration_ms: Date.now() - startedAt,
- mode: goalChangeMode,
- resolved_goal_count: goalChangePreview?.orderedResolvedGoals?.length || 0,
- },
- });
- } catch (error) {
- setGoalChangeError(error?.message || "Goal change could not be applied.");
- onTrackFrictionEvent({
- flow: "settings",
- action: "experimental_goal_apply",
- outcome: "error",
- props: {
- duration_ms: Date.now() - startedAt,
- mode: goalChangeMode,
- error_code: String(error?.message || "goal_apply_failed").toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60),
- },
- });
- } finally {
- setGoalChangeApplying(false);
- }
- };
- const resolveManagedGoalId = (goal = null) => String(
- goal?.goalRecordId
- || goal?.goalManagement?.recordId
- || goal?.resolvedGoal?.id
- || goal?.id
- || ""
- ).trim();
- const findCurrentManagedGoal = (goalId = "") => (
- (goals || []).find((goal) => resolveManagedGoalId(goal) === String(goalId || "").trim()) || null
- );
- const findArchivedManagedGoal = (goalId = "") => (
- (personalization?.goalManagement?.archivedGoals || []).find((goal) => resolveManagedGoalId(goal) === String(goalId || "").trim()) || null
- );
- const resetGoalManagementWorkflow = () => {
- setGoalManagementPreview(null);
- setGoalManagementError("");
- setGoalManagementNotice("");
- };
- const closeGoalEditor = () => {
- setGoalEditorOpen(false);
- setGoalEditorMode("edit");
- setGoalEditorDraft(null);
- setGoalEditorLibraryCategory("all");
- setGoalEditorLibrarySearch("");
- setShowGoalEditorCustomInput(false);
- resetGoalManagementWorkflow();
- };
- const closeGoalArchive = () => {
- setGoalArchiveOpen(false);
- setGoalArchiveDraft({ goalId: "", archiveStatus: GOAL_ARCHIVE_STATUSES.archived });
- resetGoalManagementWorkflow();
- };
- const openGoalEditor = (goalId = "") => {
- const goal = findCurrentManagedGoal(goalId);
- if (!goal) return;
- const draft = buildGoalEditorDraft({ goal });
- setGoalEditorMode("edit");
- setGoalEditorDraft(draft);
- setGoalEditorLibraryCategory(inferGoalTemplateCategoryIdForDraft(draft));
- setGoalEditorLibrarySearch("");
- setShowGoalEditorCustomInput(draft?.entryMode === "custom");
- setGoalEditorOpen(true);
- setGoalArchiveOpen(false);
- resetGoalManagementWorkflow();
- };
- const openNewGoalEditor = () => {
- const draft = buildGoalEditorDraft({ goal: null });
- setGoalEditorMode("add");
- setGoalEditorDraft(draft);
- setGoalEditorLibraryCategory("all");
- setGoalEditorLibrarySearch("");
- setShowGoalEditorCustomInput(false);
- setGoalEditorOpen(true);
- setGoalArchiveOpen(false);
- resetGoalManagementWorkflow();
- };
- const openGoalArchive = (goalId = "", defaultStatus = GOAL_ARCHIVE_STATUSES.archived) => {
- const goal = findCurrentManagedGoal(goalId);
- if (!goal) return;
- setGoalArchiveDraft({
- goalId,
- archiveStatus: defaultStatus,
- });
- setGoalArchiveOpen(true);
- setGoalEditorOpen(false);
- resetGoalManagementWorkflow();
- };
- const selectGoalEditorTemplate = (templateId = "") => {
- const selection = buildGoalTemplateSelection({ templateId });
- if (!selection) return;
- setShowGoalEditorCustomInput(false);
- setGoalEditorDraft((current) => applyGoalTemplateSelectionToDraft({
- draft: current || buildGoalEditorDraft({ goal: null }),
- selection,
- }));
- };
- const moveGoalInSettingsOrder = (goalId = "", direction = -1) => {
- const cleanGoalId = String(goalId || "").trim();
- if (!cleanGoalId) return;
- setGoalOrderDraftIds((current) => {
- const ids = Array.isArray(current) && current.length
- ? [...current]
- : [...(goalSettingsModel?.currentGoalOrder || [])];
- const currentIndex = ids.indexOf(cleanGoalId);
- if (currentIndex < 0) return ids;
- const nextIndex = direction < 0
- ? Math.max(0, currentIndex - 1)
- : Math.min(ids.length - 1, currentIndex + 1);
- if (nextIndex === currentIndex) return ids;
- const nextIds = [...ids];
- const [moved] = nextIds.splice(currentIndex, 1);
- nextIds.splice(nextIndex, 0, moved);
- return nextIds;
- });
- resetGoalManagementWorkflow();
- };
- const resetGoalOrderDraft = () => {
- setGoalOrderDraftIds(goalSettingsModel?.currentGoalOrder || []);
- resetGoalManagementWorkflow();
- };
- const handleGoalManagementPreview = async (change) => {
- const startedAt = Date.now();
- setGoalManagementBusy(true);
- setGoalManagementError("");
- setGoalManagementNotice("");
- try {
- const preview = await previewGoalManagementChange({ change });
- if (!preview?.nextGoals?.length) {
- setGoalManagementError("Preview could not build a clean active priority order.");
- setGoalManagementPreview(null);
- onTrackFrictionEvent({
- flow: "goals",
- action: "management_preview",
- outcome: "error",
- props: {
- duration_ms: Date.now() - startedAt,
- change_type: change?.type || "unknown",
- },
- });
- return null;
- }
- setGoalManagementPreview(preview);
- onTrackFrictionEvent({
- flow: "goals",
- action: "management_preview",
- outcome: "requested",
- props: {
- duration_ms: Date.now() - startedAt,
- change_type: change?.type || "unknown",
- next_goal_count: preview.nextGoals.length,
- },
- });
- return preview;
- } catch (error) {
- setGoalManagementError(error?.message || "Goal preview failed.");
- setGoalManagementPreview(null);
- onTrackFrictionEvent({
- flow: "goals",
- action: "management_preview",
- outcome: "error",
- props: {
- duration_ms: Date.now() - startedAt,
- change_type: change?.type || "unknown",
- error_code: String(error?.message || "goal_preview_failed").toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60),
- },
- });
- return null;
- } finally {
- setGoalManagementBusy(false);
- }
- };
- const handlePreviewGoalReprioritization = async () => {
- const currentOrder = goalSettingsModel?.currentGoalOrder || [];
- const draftOrder = Array.isArray(goalOrderDraftIds) ? goalOrderDraftIds : [];
- if (!draftOrder.length || currentOrder.join("|") === draftOrder.join("|")) {
- setGoalManagementError("Move at least one goal before previewing impact.");
- return;
- }
- await handleGoalManagementPreview({
- type: GOAL_MANAGEMENT_CHANGE_TYPES.reprioritize,
- orderedGoalIds: draftOrder,
- });
- };
- const handlePreviewGoalEdit = async () => {
- const hasTemplateSelection = Boolean(goalEditorDraft?.templateId);
- const hasCustomSelection = showGoalEditorCustomInput && Boolean(String(goalEditorDraft?.summary || goalEditorDraft?.selectionGoalText || "").trim());
- if (!hasTemplateSelection && !hasCustomSelection && goalEditorMode === "add") {
- setGoalManagementError("Pick a goal path first, or write a custom goal.");
- return;
- }
- if (goalEditorMode !== "add" && !goalEditorDraft?.goalId) {
- setGoalManagementError("Pick a goal to edit first.");
- return;
- }
- const preview = await handleGoalManagementPreview({
- type: goalEditorMode === "add" ? GOAL_MANAGEMENT_CHANGE_TYPES.add : GOAL_MANAGEMENT_CHANGE_TYPES.edit,
- goalId: goalEditorMode === "add" ? "" : goalEditorDraft.goalId,
- draft: goalEditorDraft,
- });
- if (preview) setGoalEditorOpen(false);
- };
- const handlePreviewGoalArchive = async () => {
- if (!goalArchiveDraft?.goalId) {
- setGoalManagementError("Pick a goal to move first.");
- return;
- }
- const preview = await handleGoalManagementPreview({
- type: GOAL_MANAGEMENT_CHANGE_TYPES.archive,
- goalId: goalArchiveDraft.goalId,
- archiveStatus: goalArchiveDraft.archiveStatus,
- });
- if (preview) setGoalArchiveOpen(false);
- };
- const handlePreviewGoalRestore = async (goalId = "") => {
- const archivedGoal = findArchivedManagedGoal(goalId);
- if (!archivedGoal) {
- setGoalManagementError("That inactive goal could not be found.");
- return;
- }
- await handleGoalManagementPreview({
- type: GOAL_MANAGEMENT_CHANGE_TYPES.restore,
- goalId,
- });
- };
- const handleApplyGoalManagement = async () => {
- if (!goalManagementPreview?.nextGoals?.length) {
-setGoalManagementError("See the change first, then save it.");
- onTrackFrictionEvent({
- flow: "goals",
- action: "management_apply",
- outcome: "blocked",
- props: {
- change_type: goalManagementPreview?.changeType || "unknown",
- },
- });
- return;
- }
- const startedAt = Date.now();
- setGoalManagementBusy(true);
- setGoalManagementError("");
- setGoalManagementNotice("");
- try {
- const result = await applyGoalManagementChange({
- previewBundle: goalManagementPreview,
- });
- if (!result?.ok) {
- setGoalManagementError(result?.error || "Goal update could not be applied.");
- onTrackFrictionEvent({
- flow: "goals",
- action: "management_apply",
- outcome: "error",
- props: {
- duration_ms: Date.now() - startedAt,
- change_type: goalManagementPreview?.changeType || "unknown",
- error_code: String(result?.error || "goal_update_failed").toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60),
- },
- });
- return;
- }
- setGoalManagementNotice(`${goalManagementPreview?.changeLabel || "Goal update"} applied.`);
- setGoalManagementPreview(null);
- setGoalEditorOpen(false);
- setGoalEditorMode("edit");
- setGoalEditorDraft(null);
- setGoalEditorLibraryCategory("all");
- setGoalEditorLibrarySearch("");
- setShowGoalEditorCustomInput(false);
- setGoalArchiveOpen(false);
- setGoalArchiveDraft({ goalId: "", archiveStatus: GOAL_ARCHIVE_STATUSES.archived });
- onTrackFrictionEvent({
- flow: "goals",
- action: "management_apply",
- outcome: "success",
- props: {
- duration_ms: Date.now() - startedAt,
- change_type: goalManagementPreview?.changeType || "unknown",
- next_goal_count: goalManagementPreview?.nextGoals?.length || 0,
- },
- });
- } catch (error) {
- setGoalManagementError(error?.message || "Goal update could not be applied.");
- onTrackFrictionEvent({
- flow: "goals",
- action: "management_apply",
- outcome: "error",
- props: {
- duration_ms: Date.now() - startedAt,
- change_type: goalManagementPreview?.changeType || "unknown",
- error_code: String(error?.message || "goal_update_failed").toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60),
- },
- });
- } finally {
- setGoalManagementBusy(false);
- }
- };
- const handleReloadCloud = async () => {
- const startedAt = Date.now();
- setAccountActionBusy("reload");
- setAccountActionMsg("");
- try {
- await onReloadCloudData?.();
- setSettingsSaveMsg("Reloaded cloud data.");
- setAccountActionTone("success");
- setAccountActionMsg("Cloud data was reloaded for the signed-in account.");
- onTrackFrictionEvent({
- flow: "settings",
- action: "reload_cloud",
- outcome: "success",
- props: {
- duration_ms: Date.now() - startedAt,
- },
- });
- } catch (error) {
- const reloadFailureMessage = appendDebugDetail(
- "Cloud data could not be reloaded right now. This device is still using its saved local copy.",
- error?.message || ""
- );
- setSettingsSaveMsg(reloadFailureMessage);
- setAccountActionTone("warn");
- setAccountActionMsg(reloadFailureMessage);
- onTrackFrictionEvent({
- flow: "settings",
- action: "reload_cloud",
- outcome: "error",
- props: {
- duration_ms: Date.now() - startedAt,
- error_code: getDiagnosticsCode(error, "reload_cloud_failed"),
- },
- });
- } finally {
- setAccountActionBusy("");
- }
- };
- const handleLifecycleSignOut = async () => {
- setAccountActionBusy("logout");
- setAccountActionTone("neutral");
- setAccountActionMsg("Signing out now. Local data stays on this device unless you explicitly reset it.");
- onTrackFrictionEvent({
- flow: "settings",
- action: "sign_out",
- outcome: "requested",
- props: {
- surface: "account",
- },
- });
- onLogout?.();
- setDeleteOpen(false);
- setResetDeviceOpen(false);
- setDeleteConfirm("");
- setResetDeviceConfirm("");
- setAccountActionBusy("");
- };
- const handleResetDeviceSubmit = async () => {
- const startedAt = Date.now();
- setAccountActionBusy("reset_device");
- setAccountActionTone("warn");
- setAccountActionMsg("Resetting this device now. Cloud account state is unchanged.");
- try {
- await onResetThisDevice?.();
- setResetDeviceOpen(false);
- setResetDeviceConfirm("");
- setDeleteOpen(false);
- setDeleteConfirm("");
- onTrackFrictionEvent({
- flow: "settings",
- action: "reset_device",
- outcome: "success",
- props: {
- duration_ms: Date.now() - startedAt,
- },
- });
- } finally {
- setAccountActionBusy("");
- }
- };
- const handleDeleteAccountSubmit = async () => {
- const startedAt = Date.now();
- setAccountActionBusy("delete_account");
- setAccountActionMsg("");
- const latestDiagnostics = deleteDiagnostics?.checked ? { ok: true, diagnostics: deleteDiagnostics } : await refreshDeleteDiagnostics();
- const deleteSupported = latestDiagnostics?.diagnostics?.configured === true;
- if (!deleteSupported) {
- setAccountActionTone("warn");
- setAccountActionMsg(appendDebugDetail(
- "Permanent delete is not available here yet. You can still sign out or reset this device.",
- latestDiagnostics?.diagnostics?.fix || latestDiagnostics?.diagnostics?.message || ""
- ));
- onTrackFrictionEvent({
- flow: "settings",
- action: "delete_account",
- outcome: "blocked",
- props: {
- duration_ms: Date.now() - startedAt,
- missing_count: latestDiagnostics?.diagnostics?.missing?.length || 0,
- },
- });
- setAccountActionBusy("");
- return;
- }
- try {
- const result = await onDeleteAccount?.();
- if (!result?.ok) {
- setAccountActionTone("warn");
- setAccountActionMsg(appendDebugDetail(
- result?.error?.userMessage || "Account deletion could not finish right now.",
- result?.error?.diagnosticsCode || result?.error?.fix || ""
- ));
- onTrackFrictionEvent({
- flow: "settings",
- action: "delete_account",
- outcome: "error",
- props: {
- duration_ms: Date.now() - startedAt,
- error_code: getDiagnosticsCode(result?.error, "delete_account_failed"),
- },
- });
- return;
- }
- setAccountActionTone("success");
- setAccountActionMsg("Account deleted. Local cache and signed-in identity were removed from this device.");
- setDeleteOpen(false);
- setDeleteConfirm("");
- onTrackFrictionEvent({
- flow: "settings",
- action: "delete_account",
- outcome: "success",
- props: {
- duration_ms: Date.now() - startedAt,
- },
- });
- } finally {
- setAccountActionBusy("");
- }
- };
- const handleToggleResetDevicePanel = () => {
- setResetDeviceOpen((value) => !value);
- setResetDeviceConfirm("");
- setDeleteOpen(false);
- setDeleteConfirm("");
- };
- const handleToggleDeleteAccountPanel = () => {
- setDeleteOpen((value) => !value);
- setDeleteStep(1);
- setDeleteConfirm("");
- setResetDeviceOpen(false);
- setResetDeviceConfirm("");
- };
- const handleDeleteAccountExportFirst = () => {
- exportData();
- setDeleteStep(2);
- };
- const currentGoalCards = goalSettingsModel?.currentGoals || [];
- const archivedGoalCards = goalSettingsModel?.archivedGoals || [];
- const goalLifecycleSections = goalSettingsModel?.lifecycleSections || [];
- const goalHistoryFeed = goalSettingsModel?.historyFeed || [];
- const goalCounts = goalSettingsModel?.counts || {};
- const currentGoalOrder = goalSettingsModel?.currentGoalOrder || [];
- const goalArchiveStatusOptions = [
- {
- status: GOAL_ARCHIVE_STATUSES.paused,
- label: "Pause goal",
- helper: "Take it out of the live stack without treating it as finished.",
- },
- {
- status: GOAL_ARCHIVE_STATUSES.future,
- label: "Move to future goals",
- helper: "Keep it visible for later without letting it shape the current plan yet.",
- },
- {
- status: GOAL_ARCHIVE_STATUSES.completed,
- label: "Mark completed",
- helper: "Preserve the finished goal, its history, and the fact that you closed it out.",
- },
- {
- status: GOAL_ARCHIVE_STATUSES.archived,
- label: "Archive goal",
- helper: "Close it without calling it complete or dropped.",
- },
- {
- status: GOAL_ARCHIVE_STATUSES.dropped,
- label: "Drop goal",
- helper: "Record that this goal left the stack intentionally without being completed.",
- },
- ];
- const getGoalRestoreLabel = (status = "") => {
- if (status === GOAL_ARCHIVE_STATUSES.paused) return "Resume";
- if (status === GOAL_ARCHIVE_STATUSES.future) return "Start now";
- return "Restore";
- };
- const goalEditorTemplateCategories = useMemo(() => listGoalTemplateCategories(), []);
- const allGoalEditorTemplates = useMemo(() => listGoalTemplates({ categoryId: "all" }), []);
- const activeGoalEditorCategory = useMemo(
- () => goalEditorTemplateCategories.find((category) => category.id === goalEditorLibraryCategory) || goalEditorTemplateCategories[0] || null,
- [goalEditorTemplateCategories, goalEditorLibraryCategory]
- );
- const visibleGoalEditorTemplates = useMemo(() => listGoalTemplates({
- categoryId: goalEditorLibraryCategory,
- query: goalEditorLibrarySearch,
- }), [goalEditorLibraryCategory, goalEditorLibrarySearch]);
- const goalOrderDirty = currentGoalOrder.join("|") !== (Array.isArray(goalOrderDraftIds) ? goalOrderDraftIds : []).join("|");
- return (
- <div className="fi" data-testid="settings-tab" style={{ display:"grid", gap:"0.75rem" }}>
- <div className="card card-subtle">
- <div style={{ display:"grid", gap:"0.2rem", marginBottom:"0.7rem" }}>
- <div className="sect-title" style={{ color:"var(--text-strong)", marginBottom:0 }}>SETTINGS</div>
- <div style={{ fontSize:"0.55rem", color:"var(--text-soft)", lineHeight:1.55 }}>
- Edit your account, profile, preferences, and devices here. Goal changes, plan layers, and baseline repair now live in Plan.
- </div>
- {settingsSaveFeedbackModel.show && (
- <StateFeedbackBanner
- model={settingsSaveFeedbackModel}
- dataTestId="settings-save-status"
- compact
- />
- )}
- </div>
-
- <div style={{ display:"grid", gap:"0.75rem" }}>
- <SettingsSurfaceNav
- activeSurface={activeSettingsSurface}
- onSelectSurface={setActiveSettingsSurface}
- />
-
- {activeSettingsSurface === "account" && (
- <SettingsAccountSection
- colors={C}
- authEmail={authSession?.user?.email || ""}
- syncStateCallout={(
- <SyncStateCallout
- model={syncSurfaceModel}
- dataTestId="settings-sync-status"
- style={{ background:"#0f172a" }}
- />
- )}
- lifecycleSummaryCards={lifecycleSummaryCards}
- accountActionMessage={accountActionMsg}
- accountActionFeedbackModel={accountActionFeedbackModel}
- accountActionTone={accountActionTone}
- accountActionBusy={accountActionBusy}
- onReloadCloud={handleReloadCloud}
- onLifecycleSignOut={handleLifecycleSignOut}
- onOpenAuthGate={onOpenAuthGate}
- resetDevice={{
- open: resetDeviceOpen,
- confirm: resetDeviceConfirm,
- onToggle: handleToggleResetDevicePanel,
- onConfirmChange: setResetDeviceConfirm,
- onSubmit: handleResetDeviceSubmit,
- }}
- deleteAccount={{
- diagnostics: deleteDiagnostics,
- open: deleteOpen,
- step: deleteStep,
- confirm: deleteConfirm,
- helpText: deleteAccountHelpText,
- onToggle: handleToggleDeleteAccountPanel,
- onRetryDiagnostics: refreshDeleteDiagnostics,
- onExportFirst: handleDeleteAccountExportFirst,
- onConfirmChange: setDeleteConfirm,
- onSubmit: handleDeleteAccountSubmit,
- }}
- backupAndReset={{
- message: backupMsg,
- code: backupCode,
- onCodeChange: setBackupCode,
- onReviewRestore: handleRestoreRequest,
- onExportData: exportData,
- onCopyBackup: handleCopyBackup,
- onResetPlan: onStartFresh,
- }}
- historyReport={{
- message: planHistoryReportMsg,
- markdown: planHistoryReportMarkdown,
- onGenerate: handleGeneratePlanHistoryReport,
- onCopy: handleCopyPlanHistoryReport,
- }}
- passwordReset={{
- busy: passwordResetBusy,
- message: passwordResetMessage,
- onRequest: onRequestPasswordReset,
- }}
- syncDiagnostics={syncDiagnostics}
- showInternalSettingsTools={showInternalSettingsTools}
- showProtectedDiagnostics={showProtectedDiagnostics}
- />
- )}
-
- {activeSettingsSurface === "profile" && (
- <SettingsProfileSection
- colors={C}
- accountProfileDraft={accountProfileDraft}
- unitSettings={unitSettings}
- onChangeDraft={setAccountProfileDraft}
- onSaveProfile={saveAccountProfile}
- />
- )}
-
- {activeSettingsSurface === "goals" && (
- <SettingsGoalsSection
- colors={C}
- focusSection={focusSection}
- onOpenPlan={onOpenPlan}
- priorityExplanation={goalSettingsModel?.priorityExplanation || GOAL_PRIORITY_EXPLANATION}
- goalCounts={goalCounts}
- currentGoalCards={currentGoalCards}
- goalManagementError={goalManagementError}
- goalManagementNotice={goalManagementNotice}
- goalManagementBusy={goalManagementBusy}
- goalManagementPreview={goalManagementPreview}
- goalOrderDirty={goalOrderDirty}
- goalLifecycleSections={goalLifecycleSections}
- goalHistoryFeed={goalHistoryFeed}
- onAddGoal={openNewGoalEditor}
- onMoveGoal={moveGoalInSettingsOrder}
- onEditGoal={openGoalEditor}
- onArchiveGoal={openGoalArchive}
- onPreviewGoalReprioritization={handlePreviewGoalReprioritization}
- onResetGoalOrder={resetGoalOrderDraft}
- onApplyGoalManagement={handleApplyGoalManagement}
- onResetGoalManagementWorkflow={resetGoalManagementWorkflow}
- onPreviewGoalRestore={handlePreviewGoalRestore}
- getGoalRestoreLabel={getGoalRestoreLabel}
- />
- )}
-
- {activeSettingsSurface === "baselines" && (
- <SettingsBaselinesSection colors={C} focusSection={focusSection} onOpenPlan={onOpenPlan}>
- <MetricsBaselinesSection
- athleteProfile={athleteProfile}
- personalization={personalization}
- logs={logs}
- bodyweights={bodyweights}
- onPatchProfile={patchProfile}
- saveManualProgressInputs={saveManualProgressInputs}
- onSaveTrainingContext={saveTrainingContextInline}
- onSaved={setSettingsSaveMsg}
- />
- </SettingsBaselinesSection>
- )}
-
- {activeSettingsSurface === "programs" && (
- <SettingsProgramsSection
- colors={C}
- onOpenPlan={onOpenPlan}
- settingsPlanBasisExplanation={settingsPlanBasisExplanation}
- activeProgramDefinition={activeProgramDefinition}
- activeStyleDefinition={activeStyleDefinition}
- planManagementNotice={planManagementNotice}
- planManagementError={planManagementError}
- selectedSettingsProgramId={selectedSettingsProgramId}
- programDefinitions={programDefinitions}
- programFidelityModes={PROGRAM_FIDELITY_MODES}
- selectedSettingsProgramFidelityMode={selectedSettingsProgramFidelityMode}
- selectedSettingsProgramDefinition={selectedSettingsProgramDefinition}
- settingsProgramCompatibility={settingsProgramCompatibility}
- compatibilityOutcomes={COMPATIBILITY_OUTCOMES}
- styleDefinitions={styleDefinitions}
- selectedSettingsStyleId={selectedSettingsStyleId}
- selectedSettingsStyleDefinition={selectedSettingsStyleDefinition}
- settingsStyleCompatibility={settingsStyleCompatibility}
- onSelectProgramId={setSelectedSettingsProgramId}
- onSelectProgramFidelityMode={setSelectedSettingsProgramFidelityMode}
- onActivateProgram={handleSettingsActivateProgram}
- onClearProgramLayer={handleSettingsClearProgramLayer}
- onSelectStyleId={setSelectedSettingsStyleId}
- onActivateStyle={handleSettingsActivateStyle}
- />
- )}
-
- {activeSettingsSurface === "preferences" && (
- <SettingsPreferencesSection
- colors={C}
- trainingPrefs={trainingPrefs}
- nutritionPrefs={nutritionPrefs}
- appearance={appearance}
- notifications={notif}
- showEnvEditor={showEnvEditor}
- onToggleEnvEditor={() => setShowEnvEditor((value)=>!value)}
- onPatchSettings={patchSettings}
- onPatchNutritionPreferences={patchNutritionPreferences}
- AppearanceThemeSectionComponent={AppearanceThemeSection}
- />
- )}
-
- {activeSettingsSurface === "advanced" && (
- <SettingsAdvancedSection
- colors={C}
- showProtectedDiagnostics={showProtectedDiagnostics}
- showInternalSettingsTools={showInternalSettingsTools}
- frictionDashboard={frictionDashboard}
- adaptiveDiagnostics={adaptiveDiagnosticsModel}
- goalRequest={{
- mode: goalChangeMode,
- intent: goalChangeIntent,
- previewing: goalChangePreviewing,
- applying: goalChangeApplying,
- preview: goalChangePreview,
- error: goalChangeError,
- notice: goalChangeNotice,
- onModeChange: setGoalChangeMode,
- onIntentChange: setGoalChangeIntent,
- onPreview: handleSettingsGoalPreview,
- onApply: handleSettingsGoalApply,
- }}
- coachSetup={{
- memoryDraft: coachMemoryDraft,
- apiKey: coachApiKey,
- onChangeMemoryField: (field, value) => setCoachMemoryDraft((current) => ({ ...current, [field]: value })),
- onApiKeyChange: setCoachApiKey,
- onSave: saveCoachSetup,
- }}
- integrations={{
- apple: appleIntegration,
- garmin: garminIntegration,
- location: locationIntegration,
- garminBusy,
- checkMsg,
- garminMsg,
- locationMsg,
- importMsg,
- appleImportText,
- garminImportText,
- getTone: integrationStateTone,
- onRequestAppleHealth: requestAppleHealth,
- onConnectGarmin: connectGarmin,
- onRequestLocationAccess: requestLocationAccess,
- onAppleImportTextChange: setAppleImportText,
- onGarminImportTextChange: setGarminImportText,
- onImportDeviceData: importDeviceData,
- }}
- />
- )}
- </div>
- </div>
-
- {goalEditorOpen && goalEditorDraft && (
- <div onClick={closeGoalEditor} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.74)", display:"grid", placeItems:"center", zIndex:65, padding:"1rem" }}>
- <div onClick={(event)=>event.stopPropagation()} className="card card-soft" data-testid="settings-goal-editor" style={{ width:"100%", maxWidth:620, maxHeight:"88vh", overflowY:"auto", borderColor:"#30455f", background:"#0f172a", display:"grid", gap:"0.5rem" }}>
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>{goalEditorMode === "add" ? "ADD GOAL" : "EDIT GOAL"}</div>
- <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.45 }}>
-{goalEditorMode === "add"
-? "Pick a goal path first, then see how it will affect your active goals."
-: "Refine this goal with a clearer path, then see what changes before you save it."}
- </div>
- </div>
- <div data-testid="settings-goal-editor-library" style={{ display:"grid", gap:"0.45rem", border:"1px solid #243752", borderRadius:14, background:"#0b1220", padding:"0.65rem" }}>
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>GOAL LIBRARY</div>
-<div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>Start with the library. If nothing fits, write your own.</div>
- <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>
- {activeGoalEditorCategory?.helper || "Search or browse the library first to find the closest fit, then adjust from there."}
- </div>
- </div>
- <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
- {goalEditorTemplateCategories.map((category) => {
- const selected = goalEditorLibraryCategory === category.id;
- return (
- <button
- key={category.id}
- type="button"
- className="btn"
- data-testid={`settings-goal-editor-category-${category.id}`}
- onClick={() => setGoalEditorLibraryCategory(category.id)}
- style={{
- fontSize:"0.47rem",
- color:selected ? "#0f172a" : "#dbe7f6",
- background:selected ? "#dbe7f6" : "transparent",
- borderColor:selected ? "#dbe7f6" : "#2b3d55",
- }}
- >
- {category.label}
- </button>
- );
- })}
- </div>
- <input
- data-testid="settings-goal-editor-search"
- value={goalEditorLibrarySearch}
- onChange={(e)=>setGoalEditorLibrarySearch(e.target.value)}
- placeholder="Search goal paths"
- />
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.4rem", maxHeight:280, overflowY:"auto", paddingRight:"0.12rem", alignContent:"start" }}>
- {visibleGoalEditorTemplates.map((template) => {
- const selected = goalEditorDraft?.templateId === template.id;
- return (
- <button
- key={template.id}
- type="button"
- className="btn"
- data-testid={`settings-goal-editor-template-${template.id}`}
- onClick={() => selectGoalEditorTemplate(template.id)}
- style={{
- textAlign:"left",
- padding:"0.65rem",
- display:"grid",
- gap:"0.18rem",
- background:selected ? "rgba(147,197,253,0.12)" : "rgba(11,18,32,0.82)",
- borderColor:selected ? "rgba(147,197,253,0.55)" : "#22324a",
- }}
- >
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.3rem", alignItems:"flex-start" }}>
- <div style={{ fontSize:"0.56rem", color:"#f8fafc", fontWeight:600, lineHeight:1.4 }}>{template.title}</div>
- <div style={{ fontSize:"0.44rem", color:selected ? "#bfdbfe" : "#8fa5c8" }}>{selected ? "Selected" : "Use"}</div>
- </div>
- <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{template.helper}</div>
- </button>
- );
- })}
- {visibleGoalEditorTemplates.length === 0 && (
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5, border:"1px dashed #23344d", borderRadius:12, padding:"0.7rem" }}>
- No goal path matched that search yet.
- </div>
- )}
- </div>
- {(goalEditorDraft?.templateId || goalEditorDraft?.summary) && (
- <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.5rem", display:"grid", gap:"0.18rem" }}>
- <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>SELECTED PATH</div>
- <div style={{ fontSize:"0.56rem", color:"#e2e8f0", lineHeight:1.45 }}>
- {goalEditorDraft?.summary || goalEditorDraft?.templateTitle || "Goal path"}
- </div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>
- {goalEditorDraft?.templateId
- ? findGoalTemplateById(goalEditorDraft.templateId)?.helper || "Library-based goal path"
- : "Custom goal path"}
- </div>
- </div>
- )}
- <div style={{ display:"grid", gap:"0.32rem", borderTop:"1px solid #182335", paddingTop:"0.42rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>Need something unusual? Write a custom goal.</div>
- <button
- type="button"
- className="btn"
- data-testid="settings-goal-editor-toggle-custom"
- onClick={() => {
- const nextOpen = !showGoalEditorCustomInput;
- setShowGoalEditorCustomInput(nextOpen);
- if (nextOpen) {
- setGoalEditorDraft((current) => ({
- ...(current || buildGoalEditorDraft({ goal: null })),
- entryMode: "custom",
- templateId: "",
- templateCategoryId: "custom",
- templateTitle: "Custom goal",
- }));
- }
- }}
- style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#2b3d55" }}
- >
- {showGoalEditorCustomInput ? "Hide custom" : "Write a custom goal"}
- </button>
- </div>
- {showGoalEditorCustomInput && (
- <label style={{ display:"grid", gap:"0.12rem" }}>
- <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Custom goal</span>
- <input
- data-testid="settings-goal-editor-custom-summary"
- value={goalEditorDraft.summary || ""}
- onChange={(e)=>setGoalEditorDraft((current) => ({
- ...(current || buildGoalEditorDraft({ goal: null })),
- entryMode: "custom",
- templateId: "",
- templateCategoryId: "custom",
- templateTitle: "Custom goal",
- selectionGoalText: e.target.value,
- summary: e.target.value,
- }))}
- placeholder="Describe the goal in plain English"
- />
- </label>
- )}
- </div>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
- <label style={{ display:"grid", gap:"0.12rem" }}>
- <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Goal summary</span>
- <input data-testid="settings-goal-editor-summary" value={goalEditorDraft.summary || ""} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, summary: e.target.value }))} placeholder="Bench press 225 lb" />
- </label>
- <label style={{ display:"grid", gap:"0.12rem" }}>
- <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Goal focus</span>
- <select data-testid="settings-goal-editor-category" value={goalEditorDraft.planningCategory || "general_fitness"} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, planningCategory: e.target.value }))}>
- <option value="running">Running</option>
- <option value="strength">Strength</option>
- <option value="body_comp">Body composition</option>
- <option value="general_fitness">General fitness</option>
- </select>
- </label>
- <label style={{ display:"grid", gap:"0.12rem" }}>
- <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Target metric</span>
- <input data-testid="settings-goal-editor-primary-metric-label" value={goalEditorDraft.primaryMetricLabel || ""} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, primaryMetricLabel: e.target.value }))} placeholder="Bench 1RM" />
- </label>
- <label style={{ display:"grid", gap:"0.12rem" }}>
- <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Target value</span>
- <input data-testid="settings-goal-editor-primary-metric-target" value={goalEditorDraft.primaryMetricTargetValue || ""} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, primaryMetricTargetValue: e.target.value }))} placeholder="225" />
- </label>
- <label style={{ display:"grid", gap:"0.12rem" }}>
- <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Metric unit</span>
- <input data-testid="settings-goal-editor-primary-metric-unit" value={goalEditorDraft.primaryMetricUnit || ""} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, primaryMetricUnit: e.target.value }))} placeholder="lb" />
- </label>
- <label style={{ display:"grid", gap:"0.12rem" }}>
- <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Proxy tracking</span>
- <input data-testid="settings-goal-editor-proxies" value={(goalEditorDraft.proxyMetrics || []).map((metric) => metric.label).join(", ")} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, proxyMetrics: String(e.target.value || "").split(",").map((item) => item.trim()).filter(Boolean).map((label) => ({ label, unit: "" })) }))} placeholder="Waist, bodyweight trend, progress photos" />
- </label>
- </div>
- <div style={{ display:"grid", gap:"0.24rem" }}>
- <div style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Timing</div>
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- {[["open_ended","Open-ended"],["target_horizon","Target horizon"],["exact_date","Exact date"]].map(([value, label]) => (
- <button
- key={value}
- type="button"
- className="btn"
- data-testid={`settings-goal-editor-timing-${value}`}
- onClick={()=>setGoalEditorDraft((current) => ({ ...current, timingMode: value }))}
- style={{
- fontSize:"0.47rem",
- color:goalEditorDraft.timingMode === value ? "#0f172a" : "#dbe7f6",
- background:goalEditorDraft.timingMode === value ? "#dbe7f6" : "transparent",
- borderColor:goalEditorDraft.timingMode === value ? "#dbe7f6" : "#2b3d55",
- }}
- >
- {label}
- </button>
- ))}
- </div>
- <div style={{ fontSize:"0.47rem", color:"#94a3b8", lineHeight:1.5 }}>
- {buildTimingModeHelpText({
- timingMode: goalEditorDraft.timingMode || "open_ended",
- visibleHorizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS,
- })}
- </div>
- {goalEditorDraft.timingMode === "target_horizon" && (
- <label style={{ display:"grid", gap:"0.12rem" }}>
- <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Horizon in weeks</span>
- <input data-testid="settings-goal-editor-horizon" type="number" min="1" max="104" value={goalEditorDraft.targetHorizonWeeks || ""} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, targetHorizonWeeks: e.target.value }))} placeholder="12" />
- </label>
- )}
- {goalEditorDraft.timingMode === "exact_date" && (
- <label style={{ display:"grid", gap:"0.12rem" }}>
- <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Exact date</span>
- <input data-testid="settings-goal-editor-date" type="date" value={goalEditorDraft.targetDate || ""} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, targetDate: e.target.value }))} />
- </label>
- )}
- </div>
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- <button data-testid="settings-goal-editor-preview" className="btn btn-primary" onClick={handlePreviewGoalEdit} disabled={goalManagementBusy}>
-{goalManagementBusy ? "Loading..." : "See changes"}
- </button>
- <button className="btn" onClick={closeGoalEditor} disabled={goalManagementBusy} style={{ color:"#dbe7f6", borderColor:"#2b3d55" }}>Close</button>
- </div>
- </div>
- </div>
- )}
-
- {goalArchiveOpen && (
- <div onClick={closeGoalArchive} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.74)", display:"grid", placeItems:"center", zIndex:65, padding:"1rem" }}>
- <div onClick={(event)=>event.stopPropagation()} className="card card-soft" data-testid="settings-goal-archive-sheet" style={{ width:"100%", maxWidth:520, borderColor:"#30455f", background:"#0f172a", display:"grid", gap:"0.5rem" }}>
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>GOAL STATUS</div>
- <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>Choose what should happen to this goal next.</div>
- </div>
- <div style={{ display:"grid", gap:"0.24rem" }}>
- {goalArchiveStatusOptions.map((option) => {
- const status = option.status;
- const selected = goalArchiveDraft.archiveStatus === status;
- return (
- <button
- key={status}
- type="button"
- className="btn"
- data-testid={`settings-goal-archive-status-${status}`}
- onClick={()=>setGoalArchiveDraft((current) => ({ ...current, archiveStatus: status }))}
- style={{
- justifyContent:"flex-start",
- color:selected ? "#0f172a" : "#dbe7f6",
- background:selected ? "#dbe7f6" : "transparent",
- borderColor:selected ? "#dbe7f6" : "#2b3d55",
- textAlign:"left",
- display:"grid",
- gap:"0.12rem",
- }}
- >
- <span>{option.label}</span>
- <span style={{ fontSize:"0.46rem", color:selected ? "#334155" : "#8fa5c8", lineHeight:1.45 }}>{option.helper}</span>
- </button>
- );
- })}
- </div>
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- <button data-testid="settings-goal-archive-preview" className="btn btn-primary" onClick={handlePreviewGoalArchive} disabled={goalManagementBusy}>
-{goalManagementBusy ? "Loading..." : "See changes"}
- </button>
- <button className="btn" onClick={closeGoalArchive} disabled={goalManagementBusy} style={{ color:"#dbe7f6", borderColor:"#2b3d55" }}>Close</button>
- </div>
- </div>
- </div>
- )}
-
- {connectOpen && (
- <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
- <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
- <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
- {PRODUCT_BRAND.name} can read Apple Health workouts and device context that some recommendations use. You can revoke access any time.
- </div>
- <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
- <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
- Skip for now
- </button>
- </div>
- </div>
- )}
-
- {showRestoreConfirm && (
- <div onClick={()=>setShowRestoreConfirm(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
- <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f", display:"grid", gap:"0.45rem" }}>
- <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>
- Restore replaces current local data with the backup payload.
- </div>
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- <button className="btn btn-primary" onClick={confirmRestore}>Restore backup</button>
- <button className="btn" onClick={()=>setShowRestoreConfirm(false)}>Cancel</button>
- </div>
- </div>
- </div>
- )}
- </div>
- );
- if (false) return (
- <div className="fi" data-testid="today-tab">
- <div className="card card-subtle">
- <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:"0.5rem" }}>SETTINGS</div>
- {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:settingsSaveColor, marginBottom:"0.32rem" }}>{settingsSaveMsg}</div>}
- <div style={{ fontSize:"0.56rem", color:"#8ea4c7", lineHeight:1.7, marginBottom:"1rem" }}>
- Review profile, device status, preferences, appearance, notifications, and privacy in one place.
- </div>
- <div style={{ borderTop:"1px solid #233851", marginTop:"0.4rem", paddingTop:"0.75rem" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>PROFILE</div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 110px", gap:"0.35rem", marginBottom:"0.35rem" }}>
- <input value={profile?.name || ""} onChange={e=>patchProfile({ name: e.target.value })} placeholder="Name" />
- <input type="number" value={profile?.age || ""} onChange={e=>patchProfile({ age: Number(e.target.value) || "" })} placeholder="Age" />
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.35rem" }}>
- <input
- type="number"
- step="0.1"
- value={profileWeightVal}
- onChange={e=>patchProfile({ weight: e.target.value === "" ? "" : Number(e.target.value), bodyweight: e.target.value === "" ? "" : Number(e.target.value) })}
- placeholder={`Weight (${unitSettings?.weight || "lbs"})`}
- />
- {unitSettings?.height === "cm" ? (
- <input
- type="number"
- value={profileHeightVal}
- onChange={e=>patchProfile({ height: e.target.value === "" ? "" : Number(e.target.value) })}
- placeholder="Height (cm)"
- />
- ) : (
- <input
- value={profileHeightVal}
- onChange={e=>patchProfile({ height: e.target.value })}
- placeholder={`Height (${unitSettings?.height === "ft_in" ? "e.g., 6'1\"" : "value"})`}
- />
- )}
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.35rem" }}>
- <select value={unitSettings?.weight || "lbs"} onChange={e=>patchSettings({ units: { ...unitSettings, weight: e.target.value } })}>
- <option value="lbs">Weight: lbs</option>
- <option value="kg">Weight: kg</option>
- </select>
- <select value={unitSettings?.height || "ft_in"} onChange={e=>patchSettings({ units: { ...unitSettings, height: e.target.value } })}>
- <option value="ft_in">Height: ft-in</option>
- <option value="cm">Height: cm</option>
- </select>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
- <input type="number" value={profile?.restingHeartRate || ""} onChange={e=>patchProfile({ restingHeartRate: Number(e.target.value) || "" })} placeholder="Resting HR (optional)" />
- <input type="number" value={profile?.actualMaxHr || ""} onChange={e=>patchProfile({ actualMaxHr: Number(e.target.value) || "" })} placeholder="Max HR (optional)" />
- </div>
- </div>
-
- <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>INTEGRATIONS</div>
- <div style={{ fontSize:"0.55rem", color:"#8ea4c7", lineHeight:1.6, marginBottom:"0.5rem" }}>
- Connection states, manual imports, and simulated placeholders are shown separately so it is clearer what is actually active.
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))", gap:"0.4rem", marginBottom:"0.55rem" }}>
- {[
- ["Apple Health", appleIntegration],
- ["Garmin Connect", garminIntegration],
- ["Location", locationIntegration],
- ].map(([label, state]) => {
- const tone = integrationStateTone(state.state);
- return (
- <div key={label} style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.3rem", alignItems:"center", flexWrap:"wrap" }}>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>{label}</div>
- <span style={{ fontSize:"0.46rem", color:tone.color, background:tone.bg, padding:"0.14rem 0.38rem", borderRadius:999 }}>{state.label}</span>
- </div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5, marginTop:"0.16rem" }}>{state.summary}</div>
- </div>
- );
- })}
- </div>
- <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.5, marginBottom:"0.55rem" }}>
- Current device signals in use: {(deviceSyncAudit?.utilization || ["No device signals are being used yet."]).slice(0, 3).join(" ")}
- </div>
-
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:"0.6rem" }}>
- <div style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap", marginBottom:"0.26rem" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>APPLE HEALTH</div>
- <span style={{ fontSize:"0.46rem", color:integrationStateTone(appleIntegration.state).color, background:integrationStateTone(appleIntegration.state).bg, padding:"0.14rem 0.38rem", borderRadius:999 }}>{appleIntegration.label}</span>
- </div>
- <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.55 }}>{appleIntegration.summary}</div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>{appleIntegration.detail}</div>
- <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.18rem", lineHeight:1.5 }}>
- Permission request recorded: {formatIntegrationTimestamp(appleHealth?.permissionRequestedAt)} - Last check: {formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}
- </div>
- <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.12rem", lineHeight:1.5 }}>Granted categories: {activeAppleTypes}</div>
- {appleHealthPromptSupported ? (
- <>
- <div style={{ marginTop:"0.35rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- <button className="btn" onClick={()=>setConnectOpen(true)} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"40" }}>
- {appleMode === "live" || appleMode === "simulated" ? "Reconnect Apple Health" : "Connect Apple Health"}
- </button>
- <button className="btn" onClick={checkConnection} disabled={checking || appleMode === "manual_import"} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
- {checking ? "Checking..." : "Check recent data"}
- </button>
- <button className="btn" onClick={()=>persistAppleHealth({ permissionConfirmedAt: Date.now(), lastSyncStatus: "permissions_confirmed" })} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>
- I enabled permissions
- </button>
- </div>
- <div style={{ marginTop:"0.22rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
- {sanitizeDisplayText(`iPhone path: Settings ? Privacy & Security ? Health ? ${PRODUCT_BRAND.name} ? Allow all categories.`)}
- </div>
- </>
- ) : (
- <div style={{ marginTop:"0.3rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.55 }}>
- Apple Health connection is currently hidden in the normal live product flow. Manual import remains available for restore/testing.
- </div>
- )}
- {checkMsg && <div style={{ marginTop:"0.22rem", fontSize:"0.51rem", color:"#cbd5e1" }}>{checkMsg}</div>}
- </div>
-
- <div style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap", marginBottom:"0.26rem" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>GARMIN CONNECT</div>
- <span style={{ fontSize:"0.46rem", color:integrationStateTone(garminIntegration.state).color, background:integrationStateTone(garminIntegration.state).bg, padding:"0.14rem 0.38rem", borderRadius:999 }}>{garminIntegration.label}</span>
- </div>
- <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.55 }}>{garminIntegration.summary}</div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>{garminIntegration.detail}</div>
- <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.18rem", lineHeight:1.5 }}>
- Last activity: {lastGarminActivity?.startTime || "none"} - {lastGarminActivity?.type || "no synced activity"}
- </div>
- {(garmin?.lastErrorMessage || garmin?.lastErrorFix) && (
- <div style={{ marginTop:"0.18rem", fontSize:"0.49rem", color:C.amber, lineHeight:1.55 }}>
- {garmin?.lastErrorMessage || "Garmin needs attention."}
- {garmin?.lastErrorFix ? ` ${garmin.lastErrorFix}` : ""}
- </div>
- )}
- {!!garminMsg && <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#cbd5e1" }}>{garminMsg}</div>}
- {!!garminFix && integrationDevVisible && <div style={{ marginTop:"0.12rem", fontSize:"0.48rem", color:C.amber }}>{garminFix}</div>}
- <div style={{ marginTop:"0.35rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- <button className="btn" onClick={connectGarmin} disabled={garminBusy !== ""} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"35" }}>
- {garminBusy === "connect" ? "Connecting..." : garminMode === "live" ? "Reconnect Garmin" : "Connect Garmin"}
- </button>
- <button className="btn" onClick={syncGarminNow} disabled={garminBusy !== "" || garminMode !== "live"} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
- {garminBusy === "sync" ? "Syncing..." : "Sync now"}
- </button>
- <button className="btn" onClick={disconnectGarmin} disabled={garminBusy !== "" || garminMode !== "live"} style={{ fontSize:"0.52rem", color:C.red, borderColor:C.red+"35" }}>
- {garminBusy === "disconnect" ? "Disconnecting..." : "Disconnect"}
- </button>
- </div>
- </div>
- </div>
-
- <div style={{ marginTop:"0.6rem", border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap", marginBottom:"0.22rem" }}>
- <div className="sect-title" style={{ color:C.amber, marginBottom:0 }}>LOCATION SERVICES</div>
- <span style={{ fontSize:"0.46rem", color:integrationStateTone(locationIntegration.state).color, background:integrationStateTone(locationIntegration.state).bg, padding:"0.14rem 0.38rem", borderRadius:999 }}>{locationIntegration.label}</span>
- </div>
- <div style={{ fontSize:"0.52rem", color:"#9fb2d2", lineHeight:1.6 }}>{locationIntegration.summary}</div>
- <button className="btn" onClick={requestLocationAccess} style={{ marginTop:"0.35rem", fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Request location permission</button>
- <div style={{ marginTop:"0.2rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
- {sanitizeDisplayText(`iPhone path: Settings ? Privacy & Security ? Location Services ? ${PRODUCT_BRAND.name} ? While Using App.`)}
- </div>
- {!!locationMsg && <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#cbd5e1" }}>{locationMsg}</div>}
- </div>
-
- <details style={{ marginTop:"0.6rem" }}>
- <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#8fa5c8" }}>Manual imports</summary>
- <div style={{ marginTop:"0.38rem", display:"grid", gap:"0.5rem" }}>
- <div style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.28rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>Apple Health JSON import</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only for restore or testing when there is no confirmed Apple Health link.</div>
- <textarea value={appleImportText} onChange={e=>setAppleImportText(e.target.value)} placeholder='{"workouts":{"2026-04-07":{"distanceMiles":3.2,"avgHr":148}}}' style={{ minHeight:62, fontSize:"0.5rem" }} />
- <button className="btn" onClick={()=>importDeviceData("apple")} style={{ width:"fit-content", fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"35" }}>Import Apple JSON</button>
- </div>
- <div style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.28rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>Garmin JSON import</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only for restore or testing when there is no confirmed Garmin server-side connection.</div>
- <textarea value={garminImportText} onChange={e=>setGarminImportText(e.target.value)} placeholder='{"activities":[{"startTime":"2026-04-07T07:30:00Z","type":"Run","distanceMiles":4.1}]}' style={{ minHeight:62, fontSize:"0.5rem" }} />
- <button className="btn" onClick={()=>importDeviceData("garmin")} style={{ width:"fit-content", fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Import Garmin JSON</button>
- </div>
- {!!importMsg && <div style={{ fontSize:"0.51rem", color:"#cbd5e1" }}>{importMsg}</div>}
- </div>
- </details>
-
- {(integrationDevVisible || appleMode === "simulated" || !!garminFix) && (
- <details style={{ marginTop:"0.55rem" }}>
- <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#8fa5c8" }}>Developer / simulated states</summary>
- <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.35rem" }}>
- {appleMode === "simulated" && (
- <div style={{ fontSize:"0.5rem", color:"#9fb2d2", lineHeight:1.6 }}>
- Apple Health is currently marked `simulated_web`, which is a web-only placeholder and should not be read like a real connection.
- </div>
- )}
- <div style={{ fontSize:"0.5rem", color:"#9fb2d2", lineHeight:1.6 }}>
- Direct Garmin integration runs server-side so secrets and token exchange stay off the client.
- </div>
- {integrationDevVisible && (
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
- Developer setup: register the app at `developer.garmin.com`, use callback path `/auth/garmin/callback`, and configure the Garmin env vars before connecting.
- </div>
- )}
- </div>
- </details>
- )}
- </div>
-
- <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
- <div className="sect-title" style={{ color:C.purple, marginBottom:"0.35rem" }}>TRAINING PREFERENCES</div>
- <div style={{ display:"grid", gap:"0.3rem" }}>
- <button className="btn" onClick={()=>setShowEnvEditor(v=>!v)} style={{ justifyContent:"space-between", fontSize:"0.54rem", color:"#dbe7f6" }}>
- Default environment: {trainingPrefs?.defaultEnvironment || "Home"} <span>{showEnvEditor ? "Hide" : "Edit"}</span>
- </button>
- {showEnvEditor && (
- <div style={{ display:"grid", gap:"0.3rem", border:"1px solid #243752", borderRadius:9, padding:"0.45rem" }}>
- <select value={trainingPrefs?.defaultEnvironment || "Home"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, defaultEnvironment: e.target.value } })}>
- {["Home","Gym","Outdoor","Travel"].map((m)=><option key={m} value={m}>{m}</option>)}
- </select>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Use the Environment editor in Today/Plan to update equipment list and session duration presets.</div>
- </div>
- )}
- <select value={trainingPrefs?.weeklyCheckinDay || "Sun"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, weeklyCheckinDay: e.target.value } })}>
- {["Sun","Mon","Sat"].map((d)=><option key={d} value={d}>Weekly check-in day: {d}</option>)}
- </select>
- <select value={unitSettings?.distance || "miles"} onChange={e=>patchSettings({ units: { ...unitSettings, distance: e.target.value } })}>
- <option value="miles">Units: Miles</option>
- <option value="kilometers">Units: Kilometers</option>
- </select>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.28rem" }}>
- {[
- ["Conservative","Protect consistency, never overtrain"],
- ["Standard","Balanced load and progression"],
- ["Aggressive","Push harder, accept more risk"],
- ].map(([mode, desc]) => (
- <button key={mode} className="btn" onClick={()=>patchSettings({ trainingPreferences: { ...trainingPrefs, intensityPreference: mode } })} style={{ fontSize:"0.51rem", color:trainingPrefs?.intensityPreference===mode?C.green:"#9fb2d2", borderColor:trainingPrefs?.intensityPreference===mode?C.green+"35":"#324961", textAlign:"left" }}>
- <div>{mode}</div><div style={{ fontSize:"0.45rem", color:"#7f94b3", marginTop:"0.12rem" }}>{desc}</div>
- </button>
- ))}
- </div>
- </div>
- </div>
-
- <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
- <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>APPEARANCE</div>
- <AppearanceThemeSection appearance={appearance} onPatchAppearance={(nextAppearance) => patchSettings({ appearance: nextAppearance })} />
- </div>
-
- <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>NOTIFICATIONS</div>
- <div style={{ display:"grid", gap:"0.3rem" }}>
- <label style={{ fontSize:"0.53rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.allOff)} onChange={e=>patchSettings({ notifications: { ...notif, allOff: e.target.checked } })} /> All notifications off</label>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 110px", gap:"0.35rem" }}>
- <label style={{ fontSize:"0.53rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.weeklyReminderOn)} disabled={notif?.allOff} onChange={e=>patchSettings({ notifications: { ...notif, weeklyReminderOn: e.target.checked } })} /> Weekly check-in reminder</label>
- <input type="time" value={notif?.weeklyReminderTime || "18:00"} disabled={notif?.allOff || !notif?.weeklyReminderOn} onChange={e=>patchSettings({ notifications: { ...notif, weeklyReminderTime: e.target.value } })} />
- </div>
- <label style={{ fontSize:"0.53rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.proactiveNudgeOn)} disabled={notif?.allOff} onChange={e=>patchSettings({ notifications: { ...notif, proactiveNudgeOn: e.target.checked } })} /> Coach proactive nudge</label>
- <div style={{ fontSize:"0.49rem", color:"#7f94b3" }}>One message if you&apos;ve been away 3+ days</div>
- </div>
- </div>
-
- <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
- <div className="sect-title" style={{ color:C.red, marginBottom:"0.35rem" }}>DATA & PRIVACY</div>
- <div style={{ display:"grid", gap:"0.3rem" }}>
- <div style={{ border:"1px solid #243752", borderRadius:10, padding:"0.55rem 0.6rem", display:"grid", gap:"0.45rem", background:"#0d1320" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:"0.05rem" }}>Backup & Restore</div>
- <button className="btn" onClick={handleCopyBackup} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35", width:"fit-content" }}>Copy backup</button>
- <textarea value={backupCode} onChange={e=>{ setBackupCode(e.target.value); if (backupMsg) setBackupMsg(""); }} placeholder="Paste backup code" style={{ minHeight:72, fontSize:"0.58rem", resize:"vertical" }} />
- <button className="btn" onClick={handleRestoreRequest} style={{ fontSize:"0.52rem", color:"#94a3b8", borderColor:"#324961", width:"fit-content" }}>Restore</button>
- {!!backupMsg && <div style={{ fontSize:"0.54rem", color:backupMsg === "Copied" ? C.green : C.amber }}>{backupMsg}</div>}
- </div>
- <button className="btn" onClick={()=>{ setDeleteOpen(v=>!v); setDeleteStep(1); setDeleteConfirm(""); }} style={{ fontSize:"0.52rem", color:C.red, borderColor:C.red+"35" }}>Delete account</button>
- {deleteOpen && (
- <div style={{ border:"1px solid #3b2a39", borderRadius:8, padding:"0.45rem", display:"grid", gap:"0.3rem" }}>
- {deleteStep === 1 ? (
- <>
- <div style={{ fontSize:"0.52rem", color:"#f1d4dd" }}>This deletes logs, goals, check-ins, device links, and personalization. Export first if needed.</div>
- <button className="btn" onClick={()=>{ exportData(); setDeleteStep(2); }} style={{ fontSize:"0.5rem" }}>Export first, then continue</button>
- </>
- ) : (
- <>
- <div style={{ fontSize:"0.52rem", color:"#f1d4dd" }}>Type <b>DELETE</b> to confirm.</div>
- <input value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)} placeholder="DELETE" />
- <button className="btn" disabled={deleteConfirm !== "DELETE"} onClick={onDeleteAccount} style={{ fontSize:"0.5rem", color:C.red, borderColor:C.red+"35" }}>Delete account</button>
- </>
- )}
- </div>
- )}
- </div>
- </div>
-
- <div style={{ borderTop:"1px solid #233851", marginTop:"1.2rem", paddingTop:"1rem" }}>
- <div className="sect-title" style={{ color:"#8fa5c8", marginBottom:"0.3rem" }}>PLAN MANAGEMENT</div>
- <button className="btn" onClick={onStartFresh} style={{ fontSize:"0.52rem", color:"#7f94b3", borderColor:"#2d405b", background:"transparent", padding:"0.22rem 0.5rem" }}>
- Start a new plan
- </button>
- </div>
- </div>
- {appleHealthPromptSupported && connectOpen && (
- <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
- <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
- <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
- {PRODUCT_BRAND.name} may read Apple Health workouts and device context if permission is granted. We never share this data. You can revoke access anytime in iOS Settings.
- </div>
- <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
- <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
- Skip for now
- </button>
- </div>
- </div>
- )}
- {showRestoreConfirm && (
- <div onClick={()=>setShowRestoreConfirm(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:65, padding:"1rem" }}>
- <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:420, borderColor:"#30455f" }}>
- <div style={{ fontSize:"0.6rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.75rem" }}>
- This will replace all current data with the backup. This cannot be undone. Continue?
- </div>
- <div style={{ display:"flex", gap:"0.4rem", justifyContent:"flex-end" }}>
- <button className="btn btn-primary" onClick={()=>setShowRestoreConfirm(false)} style={{ fontSize:"0.52rem" }}>Cancel</button>
- <button className="btn" onClick={confirmRestore} style={{ fontSize:"0.52rem", color:"#94a3b8", borderColor:"#324961" }}>Restore</button>
- </div>
- </div>
- </div>
- )}
- </div>
- );
-}
-
-function OnboardingCoachLegacy({ onComplete }) {
- const SCRIPT = [
- { key: "primary_goal", text: "What's your primary goal?", type: "buttons", options: Object.values(PRIMARY_GOAL_LABELS), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
- { key: "experience_level", text: "What's your training experience level?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
- { key: "training_days", text: "How many days per week can you realistically train? Not your best week - your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
- { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
- { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
- { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Outdoor","Both","Varies"] },
- ];
- const [messages, setMessages] = useState([{ role: "coach", text: SCRIPT[0].text }]);
- const [answers, setAnswers] = useState({});
- const [step, setStep] = useState(0);
- const [draft, setDraft] = useState("");
- const [awaitingTimeline, setAwaitingTimeline] = useState(false);
- const [awaitingAdjustConfirm, setAwaitingAdjustConfirm] = useState(false);
- const [building, setBuilding] = useState(false);
- const current = SCRIPT[step];
- const needsEquipment = Boolean(answers.__needs_equipment);
-
- const askNext = (nextStep) => {
- if (nextStep >= SCRIPT.length) return;
- setMessages((prev) => [...prev, { role: "coach", text: SCRIPT[nextStep].text }]);
- setStep(nextStep);
- setDraft("");
- };
-
- const submitAnswer = async (value) => {
- const clean = String(value || "").trim();
- if (!clean && current?.type === "text") return;
- const answerText = clean || "None currently";
- setMessages((prev) => [...prev, { role: "user", text: answerText }]);
-
- if (answers.__needs_equipment) {
- const patched = { ...answers, equipment_text: answerText, __needs_equipment: false };
- setAnswers(patched);
- setAwaitingTimeline(true);
- const assessment = await buildTypedIntakeAssessment({ answers: patched });
- setMessages((prev) => [...prev, { role: "coach", text: assessment?.text || buildIntakeTimelineFallback(patched) }]);
- setAwaitingTimeline(false);
- setAwaitingAdjustConfirm(true);
- return;
- }
-
- const nextAnswers = { ...answers, [current.key]: answerText };
- setAnswers(nextAnswers);
- if (current.key === "training_location" && ["Home", "Varies"].includes(answerText)) {
- setAnswers({ ...nextAnswers, __needs_equipment: true });
- setMessages((prev) => [...prev, { role: "coach", text: "What equipment is available where you train?" }]);
- setDraft("");
- return;
- }
- if (step < SCRIPT.length - 1) {
- askNext(step + 1);
- return;
- }
- setAwaitingTimeline(true);
- const assessment = await buildTypedIntakeAssessment({ answers: nextAnswers });
- setMessages((prev) => [...prev, { role: "coach", text: assessment?.text || buildIntakeTimelineFallback(nextAnswers) }]);
- setAwaitingTimeline(false);
- setAwaitingAdjustConfirm(true);
- };
-
- const finalize = async (adjust = "") => {
- if (adjust.trim()) setMessages((prev) => [...prev, { role: "user", text: adjust.trim() }]);
- setBuilding(true);
- setMessages((prev) => [...prev, { role: "coach", text: "Building your plan..." }]);
- await onComplete({
- ...answers,
- training_days: answers.training_days || "3",
- secondary_goals: answers.other_goals || "",
- primary_goal_detail: answers.primary_goal_text || "",
- timeline_feedback: adjust.trim(),
- timeline_assessment: messages.filter((m) => m.role === "coach").slice(-1)[0]?.text || "",
- });
- setBuilding(false);
- };
- const activeAppleTypes = appleHealth?.permissionsGranted?.length ? appleHealth.permissionsGranted.join(", ") : "None";
- const lastGarminActivity = (garmin?.activities || []).slice(-1)[0];
- const profileWeightVal = profile?.weight ?? profile?.bodyweight ?? "";
- const profileHeightVal = profile?.height ?? "";
-
- const checkConnection = async () => {
- setChecking(true);
- try {
- const workouts = appleHealth?.workouts || {};
- const cutoff = Date.now() - (7 * 86400000);
- const recent = Object.entries(workouts).filter(([date]) => new Date(`${date}T12:00:00`).getTime() >= cutoff);
- const hasGarmin = recent.some(([, w]) => /garmin/i.test(String(w?.source || w?.device || "")));
- const msg = recent.length === 0
- ? "No Apple Health workouts found in last 7 days."
- : hasGarmin
- ? `Connected: ${recent.length} workouts found, Garmin sessions detected.`
- : `Apple Health connected: ${recent.length} workouts found, but Garmin source not detected yet.`;
- setCheckMsg(msg);
- await persistAppleHealth({ lastConnectionCheck: Date.now(), lastSyncStatus: hasGarmin ? "garmin_detected" : "health_only" });
- } finally {
- setChecking(false);
- }
- };
- return (
- <div className="fi">
- <div className="card card-subtle">
- <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:"0.5rem" }}>SETTINGS</div>
- {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:settingsSaveColor, marginBottom:"0.32rem" }}>{settingsSaveMsg}</div>}
- <div style={{ fontSize:"0.56rem", color:"#8ea4c7", lineHeight:1.7, marginBottom:"1rem" }}>
- Manage profile, devices, preferences, appearance, notifications, and privacy in one place.
- </div>
- <div style={{ borderTop:"1px solid #233851", marginTop:"0.4rem", paddingTop:"0.75rem" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>PROFILE</div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 110px", gap:"0.35rem", marginBottom:"0.35rem" }}>
- <input value={profile?.name || ""} onChange={e=>patchProfile({ name: e.target.value })} placeholder="Name" />
- <input type="number" value={profile?.age || ""} onChange={e=>patchProfile({ age: Number(e.target.value) || "" })} placeholder="Age" />
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.35rem" }}>
- <input
- type="number"
- step="0.1"
- value={profileWeightVal}
- onChange={e=>patchProfile({ weight: e.target.value === "" ? "" : Number(e.target.value), bodyweight: e.target.value === "" ? "" : Number(e.target.value) })}
- placeholder={`Weight (${unitSettings?.weight || "lbs"})`}
- />
- {unitSettings?.height === "cm" ? (
- <input
- type="number"
- value={profileHeightVal}
- onChange={e=>patchProfile({ height: e.target.value === "" ? "" : Number(e.target.value) })}
- placeholder="Height (cm)"
- />
- ) : (
- <input
- value={profileHeightVal}
- onChange={e=>patchProfile({ height: e.target.value })}
- placeholder={`Height (${unitSettings?.height === "ft_in" ? "e.g., 6'1\"" : "value"})`}
- />
- )}
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.35rem" }}>
- <select value={unitSettings?.weight || "lbs"} onChange={e=>patchSettings({ units: { ...unitSettings, weight: e.target.value } })}>
- <option value="lbs">Weight: lbs</option>
- <option value="kg">Weight: kg</option>
- </select>
- <select value={unitSettings?.height || "ft_in"} onChange={e=>patchSettings({ units: { ...unitSettings, height: e.target.value } })}>
- <option value="ft_in">Height: ft-in</option>
- <option value="cm">Height: cm</option>
- </select>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
- <input type="number" value={profile?.restingHeartRate || ""} onChange={e=>patchProfile({ restingHeartRate: Number(e.target.value) || "" })} placeholder="Resting HR (optional)" />
- <input type="number" value={profile?.actualMaxHr || ""} onChange={e=>patchProfile({ actualMaxHr: Number(e.target.value) || "" })} placeholder="Max HR (optional)" />
- </div>
- </div>
-
- <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>CONNECTED DEVICES</div>
- <div style={{ fontSize:"0.54rem", color:"#8ea4c7", lineHeight:1.6, marginBottom:"0.35rem" }}>
- Your Garmin data will appear in Apple Health automatically once connected. Here&apos;s how:
- </div>
- <div style={{ fontSize:"0.53rem", color:"#9fb2d2", lineHeight:1.7 }}>
- {sanitizeDisplayText("Step 1: Open Garmin Connect app")}<br />
- {sanitizeDisplayText("Step 2: Tap your profile photo ? Settings ? Connected Apps ? Apple Health ? Enable All")}<br />
- {sanitizeDisplayText("Step 3: Come back here and tap \"Check Connection\"")}
- </div>
- <div style={{ marginTop:"0.45rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- <button className="btn" onClick={()=>setConnectOpen(true)} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"40" }}>
- {appleHealth?.status === "connected" || appleHealth?.status === "simulated_web" ? "Reconnect Apple Health" : "Connect Apple Health"}
- </button>
- <button className="btn" onClick={checkConnection} disabled={checking} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
- {checking ? "Checking..." : "Check Connection"}
- </button>
- <button className="btn" onClick={()=>persistAppleHealth({ permissionConfirmedAt: Date.now(), lastSyncStatus: "permissions_confirmed" })} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>
- I enabled Health permissions
- </button>
- </div>
- <div style={{ marginTop:"0.28rem", fontSize:"0.5rem", color:"#6f85a7" }}>
- {joinDisplayParts([
- `Status: ${sanitizeStatusLabel(appleHealth?.status, "not_connected")}`,
- `Last check: ${appleHealth?.lastConnectionCheck ? new Date(appleHealth.lastConnectionCheck).toLocaleString() : "never"}`,
- ])}
- </div>
- <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>
- Permission confirmed: {appleHealth?.permissionConfirmedAt ? new Date(appleHealth.permissionConfirmedAt).toLocaleString() : "not confirmed"}
- </div>
- <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:appleHealth?.lastSyncStatus === "garmin_detected" ? C.green : appleHealth?.status === "connected" || appleHealth?.status === "simulated_web" ? C.blue : "#8fa5c8" }}>
- {appleHealth?.lastSyncStatus === "garmin_detected"
- ? "Sync verified: Garmin activity detected in Apple Health."
- : appleHealth?.lastSyncStatus === "permissions_confirmed"
- ? "Permissions confirmed. Complete one Health workout, then tap Check Connection."
- : appleHealth?.lastSyncStatus === "health_only"
- ? "Connected, but Garmin source not detected yet."
- : appleHealth?.status === "connected" || appleHealth?.status === "simulated_web"
- ? "Connected. Run one workout, then tap Check Connection."
- : "Not connected yet."}
- </div>
- <div style={{ marginTop:"0.24rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.7 }}>
- {sanitizeDisplayText(`iPhone permission path: Settings ? Privacy & Security ? Health ? ${PRODUCT_BRAND.name} (or browser app) ? Allow all categories.`)}
- </div>
- <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>Active data types: {activeAppleTypes}</div>
- {checkMsg && <div style={{ marginTop:"0.25rem", fontSize:"0.53rem", color:"#cbd5e1" }}>{checkMsg}</div>}
- </div>
- <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>GARMIN CONNECT</div>
- <div style={{ fontSize:"0.53rem", color:"#8ea4c7", lineHeight:1.6, marginBottom:"0.35rem" }}>
- Secondary data layer over Apple Health. OAuth 1.0a is used for Garmin authorization.
- </div>
- <button className="btn" onClick={connectGarmin} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"35" }}>
- Connect Garmin
- </button>
- <div style={{ marginTop:"0.25rem", fontSize:"0.52rem", color:garmin?.status === "connected" ? C.green : "#8fa5c8" }}>
- {garmin?.status === "connected" ? joinDisplayParts(["Garmin connected", garmin?.deviceName || "device"]) : "Garmin not connected"}
- </div>
- <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#6f85a7" }}>
- {joinDisplayParts([
- `Last activity synced: ${lastGarminActivity?.startTime || "none"}`,
- sanitizeDisplayText(lastGarminActivity?.type || ""),
- ])}
- </div>
- <a href="#" onClick={(e)=>{ e.preventDefault(); setConnectOpen(true); }} style={{ display:"inline-block", marginTop:"0.18rem", fontSize:"0.5rem", color:C.blue }}>{sanitizeDisplayText("How to sync Garmin ? Apple Health")}</a>
- {!!garminMsg && <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:"#cbd5e1" }}>{garminMsg}</div>}
- </div>
-
- <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
- <div className="sect-title" style={{ color:C.purple, marginBottom:"0.35rem" }}>TRAINING PREFERENCES</div>
- <div style={{ display:"grid", gap:"0.3rem" }}>
- <button className="btn" onClick={()=>setShowEnvEditor(v=>!v)} style={{ justifyContent:"space-between", fontSize:"0.54rem", color:"#dbe7f6" }}>
- Default environment: {trainingPrefs?.defaultEnvironment || "Home"} <span>{showEnvEditor ? "Hide" : "Edit"}</span>
- </button>
- {showEnvEditor && (
- <div style={{ display:"grid", gap:"0.3rem", border:"1px solid #243752", borderRadius:9, padding:"0.45rem" }}>
- <select value={trainingPrefs?.defaultEnvironment || "Home"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, defaultEnvironment: e.target.value } })}>
- {["Home","Gym","Outdoor","Travel"].map((m)=><option key={m} value={m}>{m}</option>)}
- </select>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Use the Environment editor in Today/Plan to update equipment list and session duration presets.</div>
- </div>
- )}
- <select value={trainingPrefs?.weeklyCheckinDay || "Sun"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, weeklyCheckinDay: e.target.value } })}>
- {["Sun","Mon","Sat"].map((d)=><option key={d} value={d}>Weekly check-in day: {d}</option>)}
- </select>
- <select value={unitSettings?.distance || "miles"} onChange={e=>patchSettings({ units: { ...unitSettings, distance: e.target.value } })}>
- <option value="miles">Units: Miles</option>
- <option value="kilometers">Units: Kilometers</option>
- </select>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.28rem" }}>
- {[
- ["Conservative","Protect consistency, never overtrain"],
- ["Standard","Balanced load and progression"],
- ["Aggressive","Push harder, accept more risk"],
- ].map(([mode, desc]) => (
- <button key={mode} className="btn" onClick={()=>patchSettings({ trainingPreferences: { ...trainingPrefs, intensityPreference: mode } })} style={{ fontSize:"0.51rem", color:trainingPrefs?.intensityPreference===mode?C.green:"#9fb2d2", borderColor:trainingPrefs?.intensityPreference===mode?C.green+"35":"#324961", textAlign:"left" }}>
- <div>{mode}</div><div style={{ fontSize:"0.45rem", color:"#7f94b3", marginTop:"0.12rem" }}>{desc}</div>
- </button>
- ))}
- </div>
- </div>
- </div>
-
- <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
- <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>APPEARANCE</div>
- <AppearanceThemeSection appearance={appearance} onPatchAppearance={(nextAppearance) => patchSettings({ appearance: nextAppearance })} />
- </div>
-
- <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>NOTIFICATIONS</div>
- <div style={{ display:"grid", gap:"0.3rem" }}>
- <label style={{ fontSize:"0.53rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.allOff)} onChange={e=>patchSettings({ notifications: { ...notif, allOff: e.target.checked } })} /> All notifications off</label>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 110px", gap:"0.35rem" }}>
- <label style={{ fontSize:"0.53rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.weeklyReminderOn)} disabled={notif?.allOff} onChange={e=>patchSettings({ notifications: { ...notif, weeklyReminderOn: e.target.checked } })} /> Weekly check-in reminder</label>
- <input type="time" value={notif?.weeklyReminderTime || "18:00"} disabled={notif?.allOff || !notif?.weeklyReminderOn} onChange={e=>patchSettings({ notifications: { ...notif, weeklyReminderTime: e.target.value } })} />
- </div>
- <label style={{ fontSize:"0.53rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.proactiveNudgeOn)} disabled={notif?.allOff} onChange={e=>patchSettings({ notifications: { ...notif, proactiveNudgeOn: e.target.checked } })} /> Coach proactive nudge</label>
- <div style={{ fontSize:"0.49rem", color:"#7f94b3" }}>One message if you&apos;ve been away 3+ days</div>
- </div>
- </div>
-
- <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
- <div className="sect-title" style={{ color:C.red, marginBottom:"0.35rem" }}>DATA & PRIVACY</div>
- <div style={{ display:"grid", gap:"0.3rem" }}>
- <button className="btn" onClick={exportData} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>Export my data</button>
- <button className="btn" onClick={()=>{ setDeleteOpen(v=>!v); setDeleteStep(1); setDeleteConfirm(""); }} style={{ fontSize:"0.52rem", color:C.red, borderColor:C.red+"35" }}>Delete account</button>
- {deleteOpen && (
- <div style={{ border:"1px solid #3b2a39", borderRadius:8, padding:"0.45rem", display:"grid", gap:"0.3rem" }}>
- {deleteStep === 1 ? (
- <>
- <div style={{ fontSize:"0.52rem", color:"#f1d4dd" }}>This deletes logs, goals, check-ins, device links, and personalization. Export first if needed.</div>
- <button className="btn" onClick={()=>{ exportData(); setDeleteStep(2); }} style={{ fontSize:"0.5rem" }}>Export first, then continue</button>
- </>
- ) : (
- <>
- <div style={{ fontSize:"0.52rem", color:"#f1d4dd" }}>Type <b>DELETE</b> to confirm.</div>
- <input value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)} placeholder="DELETE" />
- <button className="btn" disabled={deleteConfirm !== "DELETE"} onClick={onDeleteAccount} style={{ fontSize:"0.5rem", color:C.red, borderColor:C.red+"35" }}>Delete account</button>
- </>
- )}
- </div>
- )}
- </div>
- </div>
-
- <div style={{ borderTop:"1px solid #233851", marginTop:"1.2rem", paddingTop:"1rem" }}>
- <div className="sect-title" style={{ color:"#8fa5c8", marginBottom:"0.3rem" }}>PLAN MANAGEMENT</div>
- <button className="btn" onClick={onStartFresh} style={{ fontSize:"0.52rem", color:"#7f94b3", borderColor:"#2d405b", background:"transparent", padding:"0.22rem 0.5rem" }}>
- Start a new plan
- </button>
- </div>
- </div>
- {connectOpen && (
- <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
- <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
- <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
- {PRODUCT_BRAND.name} can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
- </div>
- <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
- <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
- Skip for now
- </button>
- </div>
- </div>
- )}
- </div>
- );
-}
-
-function OnboardingCoachLegacyFallback({ onComplete }) {
- const SCRIPT = [
- { key: "primary_goal", text: "What's your primary goal?", type: "buttons", options: Object.values(PRIMARY_GOAL_LABELS), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
- { key: "experience_level", text: "What's your training experience level?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
- { key: "training_days", text: "How many days per week can you realistically train? Not your best week - your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
- { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
- { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
- { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Outdoor","Both","Varies"] },
- ];
- const [messages, setMessages] = useState([{ role: "coach", text: sanitizeIntakeText(SCRIPT[0].text) }]);
- const [answers, setAnswers] = useState({});
- const [step, setStep] = useState(0);
- const [draft, setDraft] = useState("");
- const [awaitingTimeline, setAwaitingTimeline] = useState(false);
- const [awaitingAdjustConfirm, setAwaitingAdjustConfirm] = useState(false);
- const [building, setBuilding] = useState(false);
- const current = SCRIPT[step];
- const needsEquipment = Boolean(answers.__needs_equipment);
-
- const askNext = (nextStep) => {
- if (nextStep >= SCRIPT.length) return;
- setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText(SCRIPT[nextStep].text) }]);
- setStep(nextStep);
- setDraft("");
- };
-
- const submitAnswer = async (value) => {
- const clean = String(value || "").trim();
- if (!clean && current?.type === "text") return;
- const answerText = clean || "None currently";
- setMessages((prev) => [...prev, { role: "user", text: answerText }]);
-
- if (answers.__needs_equipment) {
- const patched = { ...answers, equipment_text: answerText, __needs_equipment: false };
- setAnswers(patched);
- setAwaitingTimeline(true);
- const assessment = await buildTypedIntakeAssessment({ answers: patched });
- setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText(assessment?.text || buildIntakeTimelineFallback(patched)) }]);
- setAwaitingTimeline(false);
- setAwaitingAdjustConfirm(true);
- return;
- }
-
- const storedVal = current?.valueMap?.[answerText] ?? answerText;
- const nextAnswers = { ...answers, [current.key]: storedVal };
- setAnswers(nextAnswers);
- if (current.key === "training_location" && ["Home", "Varies"].includes(answerText)) {
- setAnswers({ ...nextAnswers, __needs_equipment: true });
- setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText("What equipment is available where you train?") }]);
- setDraft("");
- return;
- }
- if (step < SCRIPT.length - 1) {
- askNext(step + 1);
- return;
- }
- setAwaitingTimeline(true);
- const assessment = await buildTypedIntakeAssessment({ answers: nextAnswers });
- setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText(assessment?.text || buildIntakeTimelineFallback(nextAnswers)) }]);
- setAwaitingTimeline(false);
- setAwaitingAdjustConfirm(true);
- };
-
- const finalize = async (adjust = "") => {
- if (adjust.trim()) setMessages((prev) => [...prev, { role: "user", text: adjust.trim() }]);
- setBuilding(true);
- setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText("Building your plan...") }]);
- await onComplete({
- ...answers,
- training_days: answers.training_days || "3",
- timeline_feedback: adjust.trim(),
- timeline_assessment: messages.filter((m) => m.role === "coach").slice(-1)[0]?.text || "",
- });
- setBuilding(false);
- };
-
- return (
- <div style={{ maxWidth:860, margin:"0 auto" }}>
- <div className="card card-action" style={{ padding:"1rem" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:"0.45rem" }}>COACH INTAKE</div>
- <div style={{ display:"grid", gap:"0.35rem", maxHeight:"58vh", overflowY:"auto", marginBottom:"0.55rem" }}>
- {messages.map((m, i) => (
- <div key={i} style={{ justifySelf:m.role === "user" ? "end" : "start", maxWidth:"92%", background:m.role === "user" ? "#16324b" : "#0f172a", border:"1px solid #22364f", borderRadius:10, padding:"0.45rem 0.55rem", fontSize:"0.58rem", lineHeight:1.65, color:"#dbe7f6" }}>
- {m.text}
- </div>
- ))}
- {awaitingTimeline && <div style={{ fontSize:"0.54rem", color:"#8fa5c8" }}>Coach is assessing your timeline...</div>}
- </div>
-
- {!awaitingAdjustConfirm && !building && (
- <div style={{ display:"grid", gap:"0.35rem" }}>
- {!needsEquipment && current?.type === "buttons" ? (
- <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:"0.3rem" }}>
- {current.options.map((opt) => <button key={opt} className="btn" onClick={()=>submitAnswer(opt)} style={{ fontSize:"0.56rem", color:C.green, borderColor:C.green+"35" }}>{opt}</button>)}
- </div>
- ) : (
- <>
- <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder={needsEquipment ? "Example: dumbbells, pull-up bar, treadmill" : (current?.placeholder || "Type your response...")} />
- <button className="btn btn-primary" onClick={()=>submitAnswer(draft)}>Send</button>
- </>
- )}
- </div>
- )}
-
- {awaitingAdjustConfirm && !building && (
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Anything to adjust before I generate the plan?" />
- <div style={{ display:"flex", gap:"0.35rem" }}>
-<button className="btn btn-primary" onClick={()=>finalize(draft)} style={{ flex:1 }}>Build my plan</button>
- <button className="btn" onClick={()=>finalize("")} style={{ flex:1, color:C.green, borderColor:C.green+"35" }}>No changes</button>
- </div>
- </div>
- )}
- </div>
- </div>
- );
-}
-
-// TODAY TAB
-function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTodayWorkout, currentWeek, rollingHorizon = [], logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, athleteProfile = null, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, onGoProgram = () => {}, onDismissPostIntakeReady = () => {}, loading, storageStatus, syncStateModel = null, syncSurfaceModel = null, authError }) {
- const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
- const userProfile = athleteProfile?.userProfile || {};
- const todayUnitSettings = personalization?.settings?.units || DEFAULT_PERSONALIZATION.settings.units;
- const planDayRecovery = planDay?.resolved?.recovery || null;
- const planDaySupplements = planDay?.resolved?.supplements || null;
- const planDayLogging = planDay?.resolved?.logging || null;
- const planDayWeek = planDay?.week || null;
- const currentPlanWeek = planDayWeek?.planWeek || null;
- const safeRollingHorizon = Array.isArray(rollingHorizon) ? rollingHorizon : [];
- const zones = todayWorkout?.zones;
+function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTodayWorkout, dailyStory = null, setEnvironmentMode = async () => null, environmentSelection = null, onGoProgram = () => {}, onDismissPostIntakeReady = () => {}, syncSurfaceModel = null, authError = "", ..._unusedTodayProps }) {
+ const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout || null;
+ const plannedWorkout = planDay?.base?.training || legacyTodayWorkout || null;
+ const todayTraining = todayWorkout || plannedWorkout || null;
  const todayKey = new Date().toISOString().split("T")[0];
- const todayLog = logs[todayKey];
- const savedPlanDayCheckin = planDayLogging?.dailyCheckin || dailyCheckins?.[todayKey] || todayLog?.checkin || {};
- const [injuryArea, setInjuryArea] = useState(personalization.injuryPainState.area || "Achilles");
- const [injurySide, setInjurySide] = useState(personalization?.injuryPainState?.side || "unspecified");
- const [injuryLimitations, setInjuryLimitations] = useState(Array.isArray(personalization?.injuryPainState?.limitations) ? personalization.injuryPainState.limitations : []);
- const [injuryNotesDraft, setInjuryNotesDraft] = useState(personalization?.injuryPainState?.notes || "");
- const defaultCheckin = {
- ...DEFAULT_DAILY_CHECKIN,
- ...(savedPlanDayCheckin || {}),
- readiness: {
- ...(DEFAULT_DAILY_CHECKIN.readiness || {}),
- ...((savedPlanDayCheckin || {}).readiness || {}),
- },
- actualRecovery: {
- ...(DEFAULT_DAILY_CHECKIN.actualRecovery || {}),
- ...((savedPlanDayCheckin || {}).actualRecovery || {}),
- },
- };
- const [checkin, setCheckin] = useState(defaultCheckin);
- const [checkinAck, setCheckinAck] = useState("");
- const [postSaveInsight, setPostSaveInsight] = useState("");
- const [todayDataError, setTodayDataError] = useState("");
- const [checkinSaving, setCheckinSaving] = useState(false);
- const [showQuickLogComposer, setShowQuickLogComposer] = useState(false);
- const [sessionVariant, setSessionVariant] = useState("standard");
- const [todayAdjustmentState, setTodayAdjustmentState] = useState(TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS);
- const [adjustTodayOpen, setAdjustTodayOpen] = useState(false);
- const [shiftChoiceOpen, setShiftChoiceOpen] = useState(false);
- const [shiftUndo, setShiftUndo] = useState(null);
- const [showEnvEditor, setShowEnvEditor] = useState(false);
- const [envDraft, setEnvDraft] = useState({
- equipment: environmentSelection?.equipment || "unknown",
- equipmentItems: Array.isArray(environmentSelection?.equipmentItems) ? environmentSelection.equipmentItems.join(", ") : "",
- time: environmentSelection?.time || "unknown",
- mode: environmentSelection?.mode || "Unknown",
- scope: "today",
- });
- const [showInjuryPanel, setShowInjuryPanel] = useState(false);
  const todaySessionCardRef = useRef(null);
- const todayAdjustmentStorageKey = useMemo(() => (
- `today_prescription_adjustments_${todayKey}_${String(todayWorkout?.label || todayWorkout?.type || "session").toLowerCase().replace(/[^a-z0-9]+/g, "_")}`
- ), [todayKey, todayWorkout?.label, todayWorkout?.type]);
- useEffect(() => {
- setInjuryArea(personalization?.injuryPainState?.area || "Achilles");
- setInjurySide(personalization?.injuryPainState?.side || "unspecified");
- setInjuryLimitations(Array.isArray(personalization?.injuryPainState?.limitations) ? personalization.injuryPainState.limitations : []);
- setInjuryNotesDraft(personalization?.injuryPainState?.notes || "");
- }, [
- personalization?.injuryPainState?.area,
- personalization?.injuryPainState?.side,
- personalization?.injuryPainState?.notes,
- Array.isArray(personalization?.injuryPainState?.limitations) ? personalization.injuryPainState.limitations.join("|") : "",
- ]);
- const toggleInjuryLimitation = (value) => {
- setInjuryLimitations((current) => (
- current.includes(value)
- ? current.filter((item) => item !== value)
- : [...current, value]
- ));
- };
- const [strengthInputs, setStrengthInputs] = useState({});
- const [showMoreAdjustments, setShowMoreAdjustments] = useState(false);
- const [dismissedAdjustmentIds, setDismissedAdjustmentIds] = useState([]);
- const [activeCoachAdjustment, setActiveCoachAdjustment] = useState(null);
- const [coachAdjustmentDetail, setCoachAdjustmentDetail] = useState("");
- const [coachAdjustmentLoading, setCoachAdjustmentLoading] = useState(false);
- useEffect(() => {
- setAdjustTodayOpen(false);
- try {
- const raw = sessionStorage.getItem(todayAdjustmentStorageKey);
- if (!raw) {
- setSessionVariant("standard");
- setTodayAdjustmentState(TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS);
- return;
- }
- const parsed = JSON.parse(raw);
- setSessionVariant(["standard", "short", "extended"].includes(parsed?.sessionVariant) ? parsed.sessionVariant : "standard");
- setTodayAdjustmentState({
- ...TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS,
- ...(parsed?.adjustments || {}),
- });
- } catch {
- setSessionVariant("standard");
- setTodayAdjustmentState(TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS);
- }
- }, [todayAdjustmentStorageKey]);
- useEffect(() => {
- try {
- sessionStorage.setItem(todayAdjustmentStorageKey, JSON.stringify({
- sessionVariant,
- adjustments: todayAdjustmentState,
- }));
- } catch {}
- }, [todayAdjustmentStorageKey, sessionVariant, todayAdjustmentState]);
- useEffect(() => { setShowQuickLogComposer(false); }, [todayKey]);
- useEffect(() => {
- setEnvDraft({
-  equipment: environmentSelection?.equipment || "unknown",
- equipmentItems: Array.isArray(environmentSelection?.equipmentItems) ? environmentSelection.equipmentItems.join(", ") : "",
- time: environmentSelection?.time || "unknown",
- mode: environmentSelection?.mode || "Unknown",
- scope: "today",
- });
- }, [environmentSelection?.equipment, environmentSelection?.equipmentItems, environmentSelection?.time, environmentSelection?.mode]);
- useEffect(() => {
- if (!shiftUndo?.expiresAt) return;
- const timer = setTimeout(() => setShiftUndo(null), Math.max(0, shiftUndo.expiresAt - Date.now()));
- return () => clearTimeout(timer);
- }, [shiftUndo?.expiresAt]);
- useEffect(() => {
- if (todayDataError) setShowQuickLogComposer(true);
- }, [todayDataError]);
- const reduceRunDescriptor = (text = "", ratio = 0.55) => String(text || "").replace(/(\d+(\.\d+)?)/g, (m) => {
- const n = Number(m);
- if (!Number.isFinite(n)) return m;
- const reduced = Math.max(1, Math.round(n * ratio * 10) / 10);
- return String(reduced);
- });
- const activeWorkout = useMemo(() => {
- const base = { ...(todayWorkout || {}) };
- if (sessionVariant === "standard") return { ...base, variantBadge: "" };
- if (sessionVariant === "short") {
- const canCompress = ["hard-run", "easy-run", "long-run", "run+strength", "strength+prehab", "conditioning"].includes(base?.type || "");
- if (!canCompress) {
- return { ...base, label: "20-min stimulus swap", fallback: "Could not preserve today's structure under 20 min. Swapped to: 12-min tempo + 8-min strength finisher.", variantBadge: "20-min version active" };
- }
- return {
- ...base,
- label: `${base.label || "Session"} (20-min version)`,
- run: base.run ? { ...base.run, d: reduceRunDescriptor(base.run.d || "20 min", 0.55) } : base.run,
- strengthDuration: "12-15 min",
- strengthTrack: base.strengthTrack,
- compressed: true,
- variantBadge: "20-min version active",
- compressionWhy: base.run?.t ? `Primary stimulus preserved (${base.run.t}); total volume reduced by ~45%.` : "Volume reduced to preserve primary stimulus in a 20-minute window.",
- };
- }
- return {
- ...base,
- label: `${base.label || "Session"} (Extended)`,
- run: base.run ? { ...base.run, d: reduceRunDescriptor(base.run.d || "20 min", 1.25) } : base.run,
- strengthDuration: "45-55 min",
- extendedFinisher: base.run?.t
- ? "Extended finisher: 4 x 20s strides with 40s walk."
- : "Extended finisher: 2 rounds - 12 DB goblet squats, 10 push-ups, 30s plank.",
- variantBadge: "Extended",
- };
- }, [todayWorkout, sessionVariant]);
- const primaryTrigger = proactiveTriggers?.[0] || null;
- const isTravelModeSuggestion = primaryTrigger?.actionType === "SWITCH_TRAVEL_MODE";
- const isTodayTravelOverride = environmentSelection?.scope === "today" && String(environmentSelection?.mode || "").toLowerCase() === "travel";
- const toggleTravelModeForToday = async () => {
- if (isTodayTravelOverride) {
- await setEnvironmentMode({ scope: "today", clearTodayOverride: true });
- setEnvDraft(prev => ({ ...prev, scope: "today" }));
- return;
- }
- await setEnvironmentMode({ mode: "Travel", scope: "today" });
- setEnvDraft({ equipment: "none", time: "20", mode: "Travel", scope: "today" });
- };
- const conciseFocusSource = (dailyStory && (dailyStory.focus || dailyStory.brief)) || "Execute todays session cleanly.";
- const conciseFocus = String(conciseFocusSource).replace(new RegExp("^execute\\s*", "i"), "").split(".")[0];
- const conciseSuccess = (dailyStory?.success || "Complete the session and log it.").split(".")[0];
- const currentProgramBlock = planDayWeek?.programBlock || null;
- const phase = planDayWeek?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
- const datedLogs = Object.entries(logs || {}).sort((a, b) => a[0].localeCompare(b[0]));
- const todayDate = new Date();
- todayDate.setHours(0, 0, 0, 0);
- const todayIso = todayDate.toISOString().split("T")[0];
- const currentDayOfWeek = todayDate.getDay();
- const historicalLogs = datedLogs.filter(([date]) => date < todayIso);
- const latestHistoricalLog = historicalLogs[historicalLogs.length - 1]?.[1] || null;
- const yesterday = new Date(todayDate);
- yesterday.setDate(todayDate.getDate() - 1);
- const yesterdayKey = yesterday.toISOString().split("T")[0];
- const yesterdayLog = logs?.[yesterdayKey] || null;
- const hardSessionRegex = /(interval|tempo|long|hard|race)/i;
- const hadHardSessionYesterday = hardSessionRegex.test(String(yesterdayLog?.type || ""));
- const lastSessionType = latestHistoricalLog?.type || "recent session";
- const lastSessionFeel = latestHistoricalLog?.checkin?.sessionFeel || latestHistoricalLog?.feel || "about_right";
- const weeklyIntensityLoad = historicalLogs
- .slice(-7)
- .filter(([, entry]) => hardSessionRegex.test(String(entry?.type || ""))).length;
- const raceDate = new Date("2026-07-19T00:00:00");
- raceDate.setHours(0, 0, 0, 0);
- const daysToRace = Math.max(0, Math.ceil((raceDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24)));
- const isScheduledEasyDay = todayWorkout?.type === "easy-run" || todayWorkout?.type === "rest" || todayWorkout?.run?.t === "Easy";
- const todayWhyNow = buildTodayWhyNowSentence({
- phase,
- lastSessionType,
- lastSessionFeel,
- daysToRace,
- weeklyIntensityLoad,
- isScheduledEasyDay,
- hadHardSessionYesterday,
- });
- const recentSessionRows = historicalLogs.slice(-5).map(([, entry]) => entry || {});
- const feelToScore = (entry = {}) => {
- const numeric = Number(entry?.feel);
- if (Number.isFinite(numeric) && numeric > 0) return numeric;
- const feelTag = String(entry?.checkin?.sessionFeel || "").toLowerCase();
- if (feelTag === "easier_than_expected") return 4;
- if (feelTag === "harder_than_expected") return 2;
- return 3;
- };
- const easierSessionsObservation = buildEasierSessionsObservation({
- feelRatingsLast5: recentSessionRows.map(feelToScore),
- sessionTypes: recentSessionRows.map((r) => r?.type || r?.label || "session"),
- currentPaceTargets: { easy: zones?.easy, tempo: zones?.tempo, int: zones?.int, long: zones?.long },
- phase,
- weeksToRace: Math.max(0, Math.ceil(daysToRace / 7)),
- });
- const currentHour = new Date().getHours();
- const timePalette = currentHour < 11
- ? { label: "Morning ramp", tint: "rgba(255,164,77,0.24)", base: "rgba(255,122,89,0.16)" }
- : currentHour < 17
- ? { label: "Midday drive", tint: "rgba(0,194,255,0.22)", base: "rgba(124,92,255,0.16)" }
- : { label: "Evening focus", tint: "rgba(79,140,255,0.24)", base: "rgba(79,90,255,0.16)" };
- const intensityLevel = todayWorkout?.type === "hard-run" || todayWorkout?.run?.t === "Intervals"
- ? "high"
- : todayWorkout?.type === "long-run" || todayWorkout?.run?.t === "Tempo"
- ? "build"
- : todayWorkout?.type === "rest"
- ? "reset"
- : "steady";
- const intensityPalette = intensityLevel === "high"
- ? { glow: "rgba(255,61,129,0.36)", streak: "rgba(255,138,0,0.28)" }
- : intensityLevel === "build"
- ? { glow: "rgba(124,92,255,0.33)", streak: "rgba(0,194,255,0.26)" }
- : intensityLevel === "reset"
- ? { glow: "rgba(86,112,153,0.28)", streak: "rgba(72,97,133,0.2)" }
- : { glow: "rgba(39,245,154,0.28)", streak: "rgba(0,194,255,0.22)" };
- const activeTrainingContext = userProfile?.trainingContext || deriveTrainingContextFromPersonalization({ personalization });
- const trainingContextSummary = summarizeTrainingContext(activeTrainingContext);
- const activeIssueContext = deriveActiveIssueContextFromPersonalization({ personalization });
- const equipmentLabel = environmentSelection?.equipment === "none"
- ? "No equipment"
- : environmentSelection?.equipment === "basic_gym"
- ? "Basic gym"
- : environmentSelection?.equipment === "full_gym"
- ? "Full gym"
- : environmentSelection?.equipment === "mixed"
- ? "Mixed equipment"
- : environmentSelection?.equipment === "unknown"
-? "Start here"
- : "Dumbbells";
- const timeLabel = environmentSelection?.time === "60+"
- ? "60+ min"
- : environmentSelection?.time === "45+"
- ? "45+ min"
- : environmentSelection?.time === "unknown"
- ? "Time not confirmed"
- : `${environmentSelection?.time || "30"} min`;
- const injuryLevel = personalization.injuryPainState.level;
- const injuryCapabilityProfile = injuryRule?.profile || activeIssueContext?.capabilityProfile || buildInjuryCapabilityProfile(personalization?.injuryPainState || {});
- const injuryBadge = injuryLevel === "none" ? null : injuryLevel === "mild_tightness" ? { label: "Mild", color: C.blue } : injuryLevel === "moderate_pain" ? { label: "Moderate", color: C.amber } : { label: "Pain/Stop", color: C.red };
- const contextStatusTone = !activeTrainingContext?.environment?.confirmed || !activeTrainingContext?.equipmentAccess?.confirmed
- ? C.amber
- : C.green;
- const environmentSourceLabel = describeTrainingContextSource(activeTrainingContext?.environment?.source);
- const equipmentSourceLabel = describeTrainingContextSource(activeTrainingContext?.equipmentAccess?.source);
- const durationSourceLabel = describeTrainingContextSource(activeTrainingContext?.sessionDuration?.source);
- const toPlainContextSource = (label = "") => {
- if (label === "Confirmed in intake") return "Confirmed in profile";
- if (label === "Edited by user") return "Set by you";
- if (label === "Recovered from older settings") return "Recovered from earlier settings";
- if (label === "Inferred from older profile") return "Inferred from older profile";
- if (label === "Historical carry-over") return "Carried over from earlier training";
- if (label === "Default placeholder") return "Fallback default";
- return label || "Source unclear";
- };
- const plainEnvironmentSourceLabel = toPlainContextSource(environmentSourceLabel);
- const plainEquipmentSourceLabel = toPlainContextSource(equipmentSourceLabel);
- const plainDurationSourceLabel = toPlainContextSource(durationSourceLabel);
- const issueContextLabel = activeIssueContext?.active
- ? `${activeIssueContext.area || "Issue"} ${String(activeIssueContext.level || "").replaceAll("_", " ")}`
- : activeIssueContext?.historicalNotes
- ? "Historical note excluded from planning"
- : "No active issue context";
- const readinessPromptSignal = coachPlanAdjustments?.extra?.readinessSignals?.[todayKey] || null;
- const readinessInfluence = planDayRecovery || deriveDeterministicReadinessState({
- todayKey,
- checkin,
- promptSignal: readinessPromptSignal,
- workout: activeWorkout,
- logs,
- dailyCheckins,
- personalization,
- momentum,
- userProfile: userProfile || {},
- });
- const readinessMetrics = readinessInfluence?.metrics || {};
- const displayWorkout = planDay
- ? (sessionVariant === "standard" ? todayWorkout : activeWorkout)
- : (readinessInfluence?.adjustedWorkout || activeWorkout);
- const readinessState = readinessInfluence?.state || displayWorkout?.readinessState || "steady";
- const readinessTone = ["recovery", "reduced_load"].includes(readinessState) ? C.amber : readinessState === "progression" ? C.green : "#cbd5e1";
- const cardColor = dayColors[displayWorkout?.type] || (["recovery", "reduced_load"].includes(readinessState) ? C.amber : C.green);
- const todayUsesDeviceRecovery = Boolean(planDay?.flags?.deviceModified) || /garmin readiness|device signals/i.test(`${todayWorkout?.label || ""} ${todayWorkout?.explanation || ""}`);
- const todayProvenance = planDay?.provenance?.summary || buildProvenanceText({
- inputs: [
- "your active goals",
- historicalLogs.length ? "recent training momentum" : "today's planned session",
- environmentSelection?.mode ? `today's ${String(environmentSelection.mode || "training").toLowerCase()} setup` : "today's setup",
- readinessMetrics?.countableCount ? "recent workout completion" : null,
- readinessMetrics?.hardSessions7d ? "recent intensity load" : null,
- readinessMetrics?.hasTodayRecoveryInput
- ? "today's readiness check-in"
- : readinessMetrics?.hasRecoveryHistory
- ? "recent recovery check-ins"
- : todayUsesDeviceRecovery
- ? "device recovery signals"
- : null,
- ],
- limitation: !historicalLogs.length ? "Recent training history is still limited." : "",
- });
- const livePlanningBasis = planDay?.week?.planningBasis || planComposer?.planningBasis || null;
- const livePlanBasisExplanation = livePlanningBasis?.planBasisExplanation || null;
- const liveChangeSummary = planDay?.week?.changeSummary || currentPlanWeek?.changeSummary || planComposer?.changeSummary || null;
- const todayChangeLine = sanitizeDisplayText(
- surfaceModel?.preferenceAndAdaptationLine
- || surfaceModel?.changeSummaryLine
- || surfaceModel?.planningBasisLine
- || surfaceModel?.canonicalReasonLine
- || liveChangeSummary?.surfaceLine
- || [liveChangeSummary?.headline, liveChangeSummary?.preserved].filter(Boolean).join(" ")
- || ""
- );
- const canonicalTodayLabel = sanitizeDisplayText(
- surfaceModel?.display?.sessionLabel
- || todayWorkout?.label
- || displayWorkout?.label
- || "Today's session"
- );
- const normalizedTodayChangeLine = sanitizeDisplayText(todayChangeLine).toLowerCase();
- const normalizedTodayCanonicalReason = sanitizeDisplayText(surfaceModel?.canonicalReasonLine).toLowerCase();
- const normalizedTodayProvenanceLine = sanitizeDisplayText(surfaceModel?.provenanceLine).toLowerCase();
- const canonicalTodayReasonLine = sanitizeDisplayText(
- (surfaceModel?.canonicalReasonLine && normalizedTodayCanonicalReason !== normalizedTodayChangeLine
- ? surfaceModel.canonicalReasonLine
- : !surfaceModel?.canonicalReasonLine && surfaceModel?.provenanceLine && normalizedTodayProvenanceLine !== normalizedTodayChangeLine
- ? surfaceModel.provenanceLine
- : "")
- || (!surfaceModel?.canonicalReasonLine && !surfaceModel?.provenanceLine ? todayProvenance : "")
- );
- const strTrack = displayWorkout?.strengthTrack || todayWorkout?.strengthTrack || (environmentSelection?.neutral ? "" : "home");
- const strSess = displayWorkout?.strSess || todayWorkout?.strSess || "A";
- const strengthSetupLabel = sanitizeDisplayText(
- displayWorkout?.strengthTrackLabel
- || todayWorkout?.strengthTrackLabel
- || (strTrack === "hotel" ? "Gym" : strTrack === "program" ? "Plan" : "Home")
- );
- const displayRun = sanitizeWorkoutRun(displayWorkout?.run);
- const todayPrescriptionSummary = sessionVariant === "standard" && surfaceModel?.display
- ? surfaceModel.display
- : buildDayPrescriptionDisplay({
- training: displayWorkout,
- week: {
- weeklyIntent: planDay?.week?.weeklyIntent || null,
- summary: planDay?.week?.summary || "",
- successDefinition: planDay?.week?.successDefinition || "",
- programBlock: planDay?.week?.programBlock || null,
- },
- provenance: planDay?.provenance || null,
- prescribedExercises: buildStrengthPrescriptionEntriesForLogging(displayWorkout),
- });
-const normalizedRollingHorizon = useMemo(() => mergeCurrentPlanWeekIntoHorizon({
-  rollingHorizon: safeRollingHorizon,
-  currentWeek,
-  currentPlanWeek,
-}), [safeRollingHorizon, currentWeek, currentPlanWeek]);
-const currentWeekRoadmapRow = useMemo(() => (
-  normalizedRollingHorizon.find((row) => Number(row?.absoluteWeek || 0) === Number(currentWeek || 0))
-  || (currentPlanWeek
-  ? {
-  absoluteWeek: currentWeek,
-  weekLabel: currentPlanWeek?.label || `Week ${currentWeek}`,
-  planWeek: currentPlanWeek,
+ const [adjustTodayOpen, setAdjustTodayOpen] = useState(false);
+ const [todayAdjustmentState, setTodayAdjustmentState] = useState(() => {
+  if (typeof window === "undefined") return { ...TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS };
+  try {
+   const raw = window.sessionStorage.getItem(`today_prescription_adjustments_${todayKey}`);
+   const parsed = raw ? JSON.parse(raw) : null;
+   return {
+    ...TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS,
+    ...(parsed || {}),
+   };
+  } catch {
+   return { ...TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS };
   }
-  : null)
-), [normalizedRollingHorizon, currentWeek, currentPlanWeek]);
-const postIntakeReadyModel = useMemo(() => buildPostIntakeReadyModel({
-  currentWeek,
-  currentDayOfWeek,
-  currentWeekRow: currentWeekRoadmapRow,
-  rollingHorizon: normalizedRollingHorizon,
-  liveTodayTraining: displayWorkout || null,
-  fallbackSessionsByDay: planComposer?.dayTemplates || {},
-  todayPrescriptionSummary,
- todayLog,
- }), [
-  currentWeek,
-  currentDayOfWeek,
-  currentWeekRoadmapRow,
-  normalizedRollingHorizon,
-  displayWorkout,
-  planComposer?.dayTemplates,
-  todayPrescriptionSummary,
- todayLog,
- ]);
- const weekOneReadyDate = String(personalization?.profile?.weekOneReadyDate || "").trim();
- const hasPostIntakeActivity = useMemo(() => {
- if (!weekOneReadyDate) return false;
- const hasLog = Object.entries(logs || {}).some(([date, entry]) => date >= weekOneReadyDate && Boolean(entry?.ts));
- if (hasLog) return true;
- return Object.entries(dailyCheckins || {}).some(([date, entry]) => (
- date >= weekOneReadyDate
- && entry
- && String(entry?.status || "").trim()
- && entry.status !== "not_logged"
- ));
- }, [logs, dailyCheckins, weekOneReadyDate]);
- const showPostIntakeReady = Boolean(
- weekOneReadyDate
- && !String(personalization?.profile?.weekOneReadySeenAt || "").trim()
- && !hasPostIntakeActivity
- && postIntakeReadyModel?.firstAction?.title
- );
- const dismissPostIntakeReady = useCallback(() => {
- try {
- return Promise.resolve(onDismissPostIntakeReady?.());
- } catch {
- return Promise.resolve();
- }
- }, [onDismissPostIntakeReady]);
- const strExercises = buildStrengthPrescriptionEntriesForLogging(displayWorkout);
- const todayTimeAdjustment = sessionVariant === "short"
- ? "short"
- : sessionVariant === "extended"
- ? "extended"
- : "standard";
- const todayAdjustmentSnapshot = useMemo(() => ({
- ...todayAdjustmentState,
- time: todayTimeAdjustment,
- }), [todayAdjustmentState, todayTimeAdjustment]);
+ });
+
+ useEffect(() => {
+  setAdjustTodayOpen(false);
+  if (typeof window === "undefined") {
+   setTodayAdjustmentState({ ...TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS });
+   return;
+  }
+  try {
+   const raw = window.sessionStorage.getItem(`today_prescription_adjustments_${todayKey}`);
+   const parsed = raw ? JSON.parse(raw) : null;
+   setTodayAdjustmentState({
+    ...TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS,
+    ...(parsed || {}),
+   });
+  } catch {
+   setTodayAdjustmentState({ ...TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS });
+  }
+ }, [todayKey, todayTraining?.label, todayTraining?.type]);
+
+ useEffect(() => {
+  if (typeof window === "undefined") return;
+  try {
+   window.sessionStorage.setItem(
+    `today_prescription_adjustments_${todayKey}`,
+    JSON.stringify(todayAdjustmentState)
+   );
+  } catch {}
+ }, [todayAdjustmentState, todayKey]);
+
+ const prescribedExercises = buildStrengthPrescriptionEntriesForLogging(todayTraining);
+ const todayPrescriptionSummary = useMemo(() => (
+  surfaceModel?.display || buildDayPrescriptionDisplay({
+   training: todayTraining,
+   includeWhy: false,
+   prescribedExercises,
+  })
+ ), [surfaceModel?.display, todayTraining, prescribedExercises]);
+
  const todayPrescriptionModel = useMemo(() => buildTodayPrescriptionSurfaceModel({
- dateKey: todayKey,
- training: displayWorkout,
- summary: todayPrescriptionSummary,
- surfaceModel,
- whyNowLine: todayWhyNow,
- prescribedExercises: strExercises,
- adjustments: todayAdjustmentSnapshot,
- environmentSelection,
+  dateKey: todayKey,
+  training: todayTraining,
+  summary: todayPrescriptionSummary,
+  surfaceModel,
+  whyNowLine: dailyStory?.brief || dailyStory?.focus || "",
+  prescribedExercises,
+  adjustments: todayAdjustmentState,
+  environmentSelection,
  }), [
- todayKey,
- displayWorkout,
- todayPrescriptionSummary,
- surfaceModel,
- todayWhyNow,
- strExercises,
- todayAdjustmentSnapshot,
- environmentSelection,
+  todayKey,
+  todayTraining,
+  todayPrescriptionSummary,
+  surfaceModel,
+  dailyStory?.brief,
+  dailyStory?.focus,
+  prescribedExercises,
+  todayAdjustmentState,
+  environmentSelection,
  ]);
- const updateTodayAdjustmentState = useCallback((patch = {}) => {
- setTodayAdjustmentState((current) => ({
- ...current,
- ...(patch || {}),
- }));
- }, []);
- const resetTodayAdjustmentState = useCallback(() => {
- setSessionVariant("standard");
- setTodayAdjustmentState(TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS);
- }, []);
- const toggleTodayTimeVariant = useCallback((nextVariant = "standard") => {
- setSessionVariant((current) => current === nextVariant ? "standard" : nextVariant);
- }, []);
- const toggleTodayRecovery = useCallback(() => {
- setTodayAdjustmentState((current) => ({
- ...current,
- recovery: current?.recovery === "low_energy" ? "standard" : "low_energy",
- }));
- }, []);
- const toggleTodaySoreness = useCallback((nextValue = "none") => {
- setTodayAdjustmentState((current) => ({
- ...current,
- soreness: current?.soreness === nextValue ? "none" : nextValue,
- }));
- }, []);
- const toggleTodayLowImpact = useCallback(() => {
- setTodayAdjustmentState((current) => ({
- ...current,
- impact: current?.impact === "low_impact" ? "normal" : "low_impact",
- }));
- }, []);
- const toggleTodayCardioSwap = useCallback((nextValue = "as_planned") => {
- setTodayAdjustmentState((current) => ({
- ...current,
- cardioSwap: current?.cardioSwap === nextValue ? "as_planned" : nextValue,
- }));
- }, []);
- const toggleTodayExerciseSwap = useCallback(() => {
- setTodayAdjustmentState((current) => ({
- ...current,
- swapExercises: !current?.swapExercises,
- }));
- }, []);
- const prehabExercises = activeIssueContext?.active ? ACHILLES.map(sanitizeWorkoutEntry) : [];
- const hasStrength = displayWorkout?.type === "run+strength" || displayWorkout?.type === "strength+prehab";
- const hasPrehab = displayWorkout?.type === "strength+prehab" && activeIssueContext?.active;
- const runColor = displayRun?.t === "Intervals" ? C.amber : displayRun?.t === "Long" ? C.red : displayRun?.t === "Tempo" ? C.amber : readinessTone;
- const runPace = displayRun ? sanitizeWorkoutDetailText(displayRun.t === "Intervals" ? zones?.int : displayRun.t === "Long" ? zones?.long : displayRun.t === "Tempo" ? zones?.tempo : zones?.easy) : null;
- const tomorrowDate = new Date(`${todayKey}T12:00:00`);
- tomorrowDate.setDate(tomorrowDate.getDate() + 1);
- const tomorrowDayOfWeek = tomorrowDate.getDay();
- const tomorrowWeek = new Date().getDay() === 0 ? currentWeek + 1 : currentWeek;
- const tomorrowPlanWeek = tomorrowWeek === currentWeek
- ? currentPlanWeek
- : safeRollingHorizon.find((row) => row?.kind === "plan" && row?.absoluteWeek === tomorrowWeek)?.planWeek || null;
- const tomorrowWorkout = tomorrowPlanWeek?.sessionsByDay?.[tomorrowDayOfWeek] || getTodayWorkout(tomorrowWeek, tomorrowDayOfWeek);
- const tomorrowHasSession = !!tomorrowWorkout?.label && tomorrowWorkout?.type !== "rest";
- const activeStrengthAdjustments = normalizePendingStrengthAdjustments(personalization?.strengthProgression?.pendingByDate?.[todayKey]);
- const activeStrengthAdjustment = activeStrengthAdjustments[0] || null;
- const activeDayOverride = coachPlanAdjustments?.dayOverrides?.[todayKey] || null;
- const activeNutritionOverride = coachPlanAdjustments?.nutritionOverrides?.[todayKey] || null;
- const fitnessLevel = personalization?.fitnessSignals?.fitnessLevel || "unknown";
- const garminSummary = personalization?.connectedDevices?.garmin?.dailySummaries?.[todayKey] || {};
- const garminReadinessScore = Number(garminSummary?.trainingReadinessScore ?? personalization?.connectedDevices?.garmin?.trainingReadinessScore ?? 0) || null;
- const garminConnected = (personalization?.connectedDevices?.garmin?.status || "").includes("connected");
- const garminApiStaleError = garminConnected
- && personalization?.connectedDevices?.garmin?.lastApiStatus === "rate_limited"
- && ((Date.now() - Number(personalization?.connectedDevices?.garmin?.lastApiErrorAt || 0)) > (48 * 60 * 60 * 1000));
- const consistent21 = Object.entries(logs || {}).filter(([date, l]) => {
- const dd = (Date.now() - new Date(`${date}T12:00:00`).getTime()) / 86400000;
- return dd <= 21 && ["completed_as_planned","completed_modified","partial_completed"].includes(l?.checkin?.status);
- }).length >= 9;
- const advancedVolumeFinisher = fitnessLevel === "advanced" && currentWeek >= 2 ? "Optional finisher: +1 aerobic cooldown set or +1 accessory set." : "";
- const developingVolumeGuardrail = fitnessLevel === "developing" && !consistent21 ? "Volume guardrail: hold current volume until 3 consistent weeks complete." : "";
 
- useEffect(() => { setCheckin(defaultCheckin); }, [todayKey, savedPlanDayCheckin?.ts]);
- useEffect(() => {
- try {
- const raw = sessionStorage.getItem(`dismissed_coach_adjustments_${todayKey}`);
- const parsed = raw ? JSON.parse(raw) : [];
- setDismissedAdjustmentIds(Array.isArray(parsed) ? parsed : []);
- } catch {
- setDismissedAdjustmentIds([]);
- }
- setShowMoreAdjustments(false);
- setActiveCoachAdjustment(null);
- setCoachAdjustmentDetail("");
- setCoachAdjustmentLoading(false);
- }, [todayKey]);
- useEffect(() => {
- if (!hasStrength) return;
- const initial = {};
- strExercises.forEach((ex) => {
- const key = normalizeExerciseKey(ex?.ex || "");
- const normalized = normalizeStrengthExercise(ex || {});
- const mode = inferExerciseMode(ex?.ex || "");
- const prescription = personalization?.strengthProgression?.prescriptions?.[key] || {};
- initial[key] = {
- exercise: ex?.ex || "Exercise",
- weightUsed: prescription?.workingWeight ?? "",
- actualWeight: prescription?.workingWeight ?? "",
- repsCompleted: "",
- actualReps: "",
- actualSets: parseSetCount(normalized.sets),
- prescribedSets: parseSetCount(normalized.sets),
- prescribedReps: Number(prescription?.reps || parseRepTarget(normalized.reps)),
- prescribedSetsText: normalized.sets,
- prescribedRepsText: normalized.reps,
- prescribedWeight: prescription?.workingWeight ?? null,
- bandTension: prescription?.bandTension || "",
- bodyweightOnly: mode === "bodyweight",
- mode,
- bucket: inferExerciseBucketV2(ex?.ex || ""),
- };
- });
- setStrengthInputs(initial);
- }, [hasStrength, strSess, strTrack, todayKey, personalization?.strengthProgression?.prescriptions]);
-
- const normalizeCoachOneLine = (line = "") => {
- const trimmed = String(line || "").replace(/\s+/g, " ").trim();
- if (!trimmed) return "";
- const firstSentence = trimmed.split(/[.!?]/)[0].trim();
- return firstSentence.length > 100 ? `${firstSentence.slice(0, 99).trim()}...` : firstSentence;
- };
- const dedupeTodayLines = (lines = []) => {
- const seen = new Set();
- return lines
- .map((line) => sanitizeDisplayText(line))
- .filter(Boolean)
- .filter((line) => {
- const key = line.toLowerCase();
- if (seen.has(key)) return false;
- seen.add(key);
- return true;
- });
- };
-
- const adjustmentCards = useMemo(() => {
- const cards = [];
- if (activeStrengthAdjustment) {
- const oldW = Number(activeStrengthAdjustment?.oldWeight || 0);
- const newW = Number(activeStrengthAdjustment?.newWeight || 0);
- const icon = newW > oldW ? "?" : newW < oldW ? "?" : "!";
- cards.push({
- id: activeStrengthAdjustment?.id || `strength_${todayKey}_${activeStrengthAdjustment?.exercise || "session"}`,
- icon,
- type: newW > oldW ? "weight_up" : newW < oldW ? "weight_down" : "session_mod",
- impact: newW !== oldW ? 100 : 80,
- summary: normalizeCoachOneLine(activeStrengthAdjustment?.note || activeStrengthAdjustment?.inlineNote || `${icon} Load adjusted for today.`),
- detail: activeStrengthAdjustment?.explanation || "",
- reason: String(activeStrengthAdjustment?.reason || "progressive_overload").replaceAll("_", " "),
- coachLine: activeStrengthAdjustment?.coachLine || "",
- });
- }
- if (activeDayOverride) {
- const reason = String(activeDayOverride?.reason || "session adjustment").toLowerCase();
- const provenanceReason = describeProvenanceRecord(activeDayOverride?.provenance || null, reason.replaceAll("_", " "));
- const isSwap = /shift|move|swap/.test(reason) || /moved/.test(String(activeDayOverride?.label || "").toLowerCase());
- cards.push({
- id: `day_override_${todayKey}_${reason}`,
- icon: isSwap ? "S" : "!",
- type: isSwap ? "session_swap" : "session_mod",
- impact: isSwap ? 75 : 90,
- summary: normalizeCoachOneLine(activeDayOverride?.coachOneLine || activeDayOverride?.fallback || `${isSwap ? "Session moved in schedule today" : "Session structure adjusted today"} - ${provenanceReason}.`),
- detail: activeDayOverride?.explain || "",
- reason: provenanceReason,
- });
- }
- if (activeNutritionOverride) {
- const nutritionDayType = getNutritionOverrideDayType(activeNutritionOverride);
- const nutritionReason = describeProvenanceRecord(activeNutritionOverride?.provenance || null, String(activeNutritionOverride?.reason || nutritionDayType || "nutrition override").replaceAll("_", " "));
- cards.push({
- id: `nutrition_${todayKey}_${nutritionDayType || "override"}`,
- icon: "N",
- type: "nutrition_mod",
- impact: 60,
- summary: normalizeCoachOneLine(`Nutrition target set to ${String(nutritionDayType || "custom").replaceAll("_", " ")} today.`),
- detail: "",
- reason: nutritionReason,
- });
- }
- return cards
- .filter((card) => card.summary)
- .filter((card, idx, arr) => arr.findIndex(c => c.id === card.id) === idx)
- .sort((a, b) => Number(b.impact || 0) - Number(a.impact || 0));
- }, [activeStrengthAdjustment, activeDayOverride, activeNutritionOverride, todayKey]);
-
- const visibleAdjustmentCards = adjustmentCards.filter(card => !dismissedAdjustmentIds.includes(card.id));
- const primaryAdjustment = visibleAdjustmentCards[0] || null;
- const secondaryAdjustments = [];
-
- const dismissAdjustment = (id) => {
- const next = Array.from(new Set([...(dismissedAdjustmentIds || []), id]));
- setDismissedAdjustmentIds(next);
- try { sessionStorage.setItem(`dismissed_coach_adjustments_${todayKey}`, JSON.stringify(next)); } catch {}
- };
-
- const openAdjustmentDetail = async (card) => {
- setActiveCoachAdjustment(card);
- if (card?.detail) {
- setCoachAdjustmentDetail(card?.coachLine ? `${card.coachLine}\n\n${card.detail}` : card.detail);
- setCoachAdjustmentLoading(false);
- return;
- }
- setCoachAdjustmentDetail("");
- setCoachAdjustmentLoading(true);
- try {
- const generated = await callAnthropic({
- system: "You are a concise running and strength coach. Explain plan changes plainly.",
- user: `Write 3-5 conversational sentences explaining this training adjustment.\nAdjustment type: ${card?.type || "session_mod"}\nOne-line notification: ${card?.summary || ""}\nReason: ${card?.reason || "coach adjustment"}\nTone: specific, direct, no pep talk fluff.`,
- maxTokens: 180,
- });
- const detail = (generated || "").trim() || "This change keeps load progression controlled while preserving session intent.";
- setCoachAdjustmentDetail(card?.coachLine ? `${card.coachLine}\n\n${detail}` : detail);
- } catch {
- setCoachAdjustmentDetail("This change keeps load progression controlled while preserving session intent.");
- } finally {
- setCoachAdjustmentLoading(false);
- }
- };
-
- // Coach context lines (formerly in "More context" dropdown)
- const contextLines = [
- salvageLayer.active ? salvageLayer.compressedPlan.success : null,
- validationLayer?.coachNudge || null,
- ].filter(Boolean);
- const readinessBadgeLabel = readinessInfluence?.stateLabel || displayWorkout?.variantBadge || readinessInfluence?.badge || "On plan";
- const shortProvenance = normalizeCoachOneLine(todayProvenance || "");
- const todayTrust = buildTrustSummary({
- explicitUserInput: Boolean(readinessMetrics?.hasTodayRecoveryInput),
- loggedActuals: Boolean(historicalLogs.length || readinessMetrics?.countableCount),
- deviceData: Boolean(todayUsesDeviceRecovery || garminReadinessScore),
- inferredHeuristics: true,
- limitation: !historicalLogs.length ? "Recent training history is still limited." : "",
- stale: Boolean(garminApiStaleError),
- });
- const programBlockLine = currentProgramBlock
- ? `${currentProgramBlock.label}. ${currentProgramBlock.recoveryPosture?.summary || currentProgramBlock.dominantEmphasis?.objective || ""}`.trim()
- : "";
- const todayTrustTone = buildReviewBadgeTone(
- todayTrust.level === "grounded" ? "match" : todayTrust.level === "partial" ? "changed" : "recovery"
- , C);
- const rationaleHeadline = normalizeCoachOneLine(primaryAdjustment?.summary || readinessInfluence?.coachLine || conciseFocus);
- const rationaleSupport = normalizeCoachOneLine(primaryAdjustment?.reason || livePlanBasisExplanation?.todayLine || readinessInfluence?.userVisibleLine || shortProvenance);
- const successHeadline = normalizeCoachOneLine(displayWorkout?.success || conciseSuccess || "Complete the session and log it.");
- const planBasisHeadline = normalizeCoachOneLine(livePlanBasisExplanation?.todayLine || livePlanBasisExplanation?.basisSummary || "");
- const planBasisSupportLine = normalizeCoachOneLine(livePlanBasisExplanation?.personalizationSummary || "");
- const planBasisCompromiseLine = normalizeCoachOneLine(livePlanBasisExplanation?.compromiseSummary || livePlanningBasis?.compromiseLine || "");
- const planBasisModeLabel = livePlanBasisExplanation?.effectiveFidelityMode === "strict"
- ? "Run mostly as written"
- : livePlanBasisExplanation?.effectiveFidelityMode === "style_only"
- ? "Style-led"
- : livePlanBasisExplanation?.effectiveFidelityMode === "adapted"
- ? "Adapted"
- : "";
- const readinessBasisLine = (() => {
- if (readinessMetrics?.hasTodayRecoveryInput) return "Using today's check-in first.";
- if (todayUsesDeviceRecovery) return "Using recent device recovery signals.";
- if (readinessMetrics?.hasRecoveryHistory) return "Using recent logged training and recovery.";
- if (readinessMetrics?.countableCount) return "Using recent logged training.";
- return "Using the current plan with limited recent data.";
- })();
- const reducedLoadSourceLine = ["recovery", "reduced_load"].includes(readinessState)
- ? `Reduced load is based on ${readinessMetrics?.hasTodayRecoveryInput
- ? "today's check-in"
- : todayUsesDeviceRecovery
- ? "recent device recovery signals"
- : readinessMetrics?.hasRecoveryHistory
- ? "recent recovery history"
- : readinessMetrics?.countableCount
- ? "recent training load"
- : "the current plan"
- }.`
- : "";
- const recoveryPrescription = planDayRecovery?.prescription || null;
- const actualRecovery = planDayRecovery?.actual || null;
- const recoveryPrescriptionLine = recoveryPrescription?.summary || planDayRecovery?.recoveryLine || "Recovery guidance currently follows today's daily decision.";
-const recoveryActualLine = actualRecovery?.loggedAt
-? actualRecovery.summary
-: "Recovery actuals have not been logged yet.";
-const supplementActualLine = planDaySupplements?.actual?.summary || "Supplement adherence can appear here after nutrition logging.";
-const tomorrowPreviewText = `${tomorrowWorkout?.label || "Rest"}${tomorrowWorkout?.run ? ` - ${tomorrowWorkout.run.d}` : ""}`;
-const primaryActionSummary = sessionVariant === "short"
-? "Short version active"
-: sessionVariant === "extended"
-? "Extended version active"
-: "Primary actions";
-const todayLoggedLine = checkinAck
-|| (todayLog?.ts
-? `Saved ${new Date(todayLog.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. ${sanitizeStatusLabel(todayLog?.checkin?.status, "logged")}.`
-: "");
-const todaySaveFeedbackModel = buildSaveFeedbackModel({
- phase: checkinSaving
- ? SAVE_FEEDBACK_PHASES.saving
- : todayDataError
- ? SAVE_FEEDBACK_PHASES.error
- : todayLoggedLine
- ? SAVE_FEEDBACK_PHASES.saved
- : SAVE_FEEDBACK_PHASES.idle,
- syncState: syncStateModel,
- successMessage: todayLoggedLine,
- savingMessage: "Saving today's update.",
- errorMessage: todayDataError,
-});
-const todayChangePreview = sanitizeDisplayText(
- (environmentSelection?.scope === "today" ? displayWorkout?.environmentNote : "")
- || todayChangeLine
- || canonicalTodayReasonLine
- || planBasisHeadline
- || rationaleSupport
- || "Today is staying on plan."
- );
-const todayNextStepLine = sanitizeDisplayText(
- successHeadline
- || displayWorkout?.success
- || "Complete today's session and log it."
- );
- const hasSavedToday = Boolean(
- todayLog?.ts
- || savedPlanDayCheckin?.ts
- || (savedPlanDayCheckin?.status && savedPlanDayCheckin.status !== "not_logged")
- );
- const todayCommandCenter = buildTodayCommandCenterModel({
- training: displayWorkout,
- summary: todayPrescriptionSummary,
- readinessState,
- changeSummary: todayChangePreview,
- explanation: surfaceModel?.explanationModel || null,
- nextStep: todayNextStepLine,
- hasLogged: hasSavedToday,
- });
- const sharedTodaySessionSummary = buildSharedSessionSummaryModel({
- surfaceModel,
- commandCenterModel: todayCommandCenter,
- });
- const quietStatusPills = [
- readinessBadgeLabel
- ? {
- key: "readiness",
- label: readinessBadgeLabel,
- style: {
- color: readinessTone,
- background: `${readinessTone}15`,
- borderColor: `${readinessTone}24`,
- },
- }
- : null,
- (sessionVariant === "short" || sessionVariant === "extended")
- ? {
- key: "variant",
- label: primaryActionSummary,
- style: {
- color: "var(--consumer-text)",
- background: "var(--consumer-subpanel)",
- borderColor: "var(--consumer-border-strong)",
- },
- }
- : null,
- ].filter(Boolean);
- const showQuietSyncChip = Boolean(syncSurfaceModel?.showCompactChip && syncSurfaceModel?.tone !== "healthy");
- const primaryWhyChangedLine = sanitizeDisplayText(rationaleHeadline || todayCommandCenter.adaptationSummary);
- const canonicalWhyChangedLine = sanitizeDisplayText(
- canonicalTodayReasonLine
- && canonicalTodayReasonLine !== primaryWhyChangedLine
- && canonicalTodayReasonLine !== todayCommandCenter.adaptationSummary
- ? canonicalTodayReasonLine
- : ""
- );
- const whyChangedSupportLines = dedupeTodayLines([
- todayChangeLine && todayChangeLine !== todayChangePreview ? todayChangeLine : "",
- planBasisSupportLine,
- planBasisCompromiseLine ? `Adjustment: ${planBasisCompromiseLine}` : "",
- reducedLoadSourceLine,
- ]);
- const showStorageBanner = Boolean(syncSurfaceModel?.showFullCard);
- const handleDismissPostIntakeReady = () => {
- dismissPostIntakeReady();
- };
- const handleStartTodayFromReady = () => {
- dismissPostIntakeReady();
- if (typeof window === "undefined") return;
- window.requestAnimationFrame(() => {
- todaySessionCardRef.current?.scrollIntoView({ behavior:"smooth", block:"start" });
- });
- };
- const handleViewWeekFromReady = () => {
- dismissPostIntakeReady();
- onGoProgram();
- };
- const getReadyToneColor = (tone = "steady") => {
- if (tone === "quality") return C.amber;
- if (tone === "long_run") return C.red;
- if (tone === "strength") return C.blue;
- if (tone === "rest") return "var(--consumer-text-muted)";
- return C.green;
- };
- const handleSaveTodayQuickCheckin = async () => {
- if (checkin.status === "not_logged" || checkinSaving) return;
- setCheckinSaving(true);
- setCheckinAck("");
- setTodayDataError("");
- try {
- const parsed = parseMicroCheckin(checkin.note || "");
- const basePayload = parsed ? { ...checkin, ...parsed } : { ...checkin };
- const readinessUpdate = deriveReadinessAdjustedCheckin(basePayload);
- const strengthPerformance = hasStrength
- ? Object.values(strengthInputs || {})
- .map((row) => ({
- ...row,
- weightUsed: row?.bodyweightOnly || row?.bandTension ? null : toFiniteNumber(row?.weightUsed ?? row?.actualWeight, null),
- actualWeight: row?.bodyweightOnly || row?.bandTension ? null : toFiniteNumber(row?.actualWeight ?? row?.weightUsed, null),
- repsCompleted: Number(row?.repsCompleted || row?.actualReps || 0),
- actualReps: Number(row?.actualReps || row?.repsCompleted || 0),
- actualSets: Number(row?.actualSets || row?.prescribedSets || 0),
- }))
- .filter((row) => row.exercise && Number(row.actualReps || 0) > 0 && Number(row.actualSets || 0) > 0)
- : [];
- const payload = {
- ...basePayload,
- ...(readinessUpdate.adjusted || {}),
- readiness: readinessUpdate.readiness || basePayload.readiness || DEFAULT_DAILY_CHECKIN.readiness,
- strengthPerformance,
- };
- await saveDailyCheckin(todayKey, payload);
- if (checkin.bodyweight && !Number.isNaN(parseFloat(checkin.bodyweight))) {
- const entry = { date: todayKey, w: parseFloat(checkin.bodyweight) };
- const nextBW = [...bodyweights.filter((item) => item.date !== todayKey), entry].sort((a, b) => a.date.localeCompare(b.date));
- await saveBodyweights(nextBW);
- }
- const savedTime = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
- const statusLine = payload.status === "completed_as_planned"
- ? "Marked complete as planned."
- : payload.status === "completed_modified"
- ? "Marked complete with changes."
- : payload.status === "partial_completed"
- ? "Marked partially complete."
- : payload.status === "skipped"
- ? "Marked skipped."
- : "Saved.";
- setCheckinAck(`Saved ${savedTime}. ${statusLine}`);
- setPostSaveInsight(
- payload.status === "skipped"
- ? `Tomorrow ${tomorrowHasSession ? `stays scheduled as ${tomorrowWorkout?.label || "planned"}.` : "is unchanged."}`
- : (reducedLoadSourceLine || "Tomorrow is unchanged.")
- );
- } catch {
- setCheckinAck("");
- setTodayDataError("Save did not finish. Try again. Your local data is still available.");
- } finally {
- setCheckinSaving(false);
- }
- };
-
- const todayFocusLine = sanitizeDisplayText(
- todayPrescriptionModel?.focusLine
- || conciseFocus
- || "Recovery, aerobic base, and core."
- );
+ const todayFocusLine = todayPrescriptionModel?.focusLine || "Today's work, kept simple.";
  const todayVisibleWhyLine = sanitizeDisplayText(
- todayPrescriptionModel?.whyLine
- || primaryWhyChangedLine
- || todayWhyNow
- || "Today moves the week forward without adding unnecessary fatigue."
+  todayPrescriptionModel?.whyLine
+  || surfaceModel?.changeSummaryLine
+  || surfaceModel?.preferenceAndAdaptationLine
+  || surfaceModel?.canonicalReasonLine
+  || "Today moves the week forward without adding unnecessary fatigue."
  );
- const todaySecondaryWhyLine = sanitizeDisplayText(
- todayPrescriptionModel?.canonicalReasonLine
- && todayPrescriptionModel.canonicalReasonLine.toLowerCase() !== todayVisibleWhyLine.toLowerCase()
- ? todayPrescriptionModel.canonicalReasonLine
- : ""
+ const todayTrustModel = todayPrescriptionModel?.trustModel || null;
+ const todayBlocks = Array.isArray(todayPrescriptionModel?.blocks) ? todayPrescriptionModel.blocks : [];
+ const todayRules = Array.isArray(todayPrescriptionModel?.rules) ? todayPrescriptionModel.rules : [];
+ const sessionVariant = String(todayAdjustmentState?.time || "standard");
+ const showStorageBanner = Boolean(syncSurfaceModel?.showFullCard);
+ const showQuietSyncChip = Boolean(syncSurfaceModel?.showCompactChip && syncSurfaceModel?.tone !== "healthy");
+ const cardColor = dayColors[todayTraining?.type] || (
+  todayPrescriptionModel?.family === "strength"
+   ? C.blue
+   : todayPrescriptionModel?.family === "hybrid"
+   ? C.blue
+   : todayPrescriptionModel?.family === "recovery"
+   ? "var(--consumer-text-muted)"
+   : C.green
  );
- const todayBlocks = Array.isArray(todayPrescriptionModel?.blocks) ? todayPrescriptionModel.blocks.filter(Boolean).slice(0, 5) : [];
- const todayRules = Array.isArray(todayPrescriptionModel?.rules) ? todayPrescriptionModel.rules.filter(Boolean).slice(0, 4) : [];
- const todayAdjustmentLabels = Array.isArray(todayPrescriptionModel?.adjustmentSummary) ? todayPrescriptionModel.adjustmentSummary.filter(Boolean) : [];
- const todayAdjustmentIntroLine = todayAdjustmentLabels.length
- ? `Active now: ${todayAdjustmentLabels.join(" • ")}.`
- : "Change time, recovery, soreness, or setup without rebuilding the day.";
- const buildTodayAdjustmentButtonStyle = (active, color = C.blue) => ({
- fontSize:"0.5rem",
- minHeight:40,
- color:active ? "#08111d" : color,
- background:active ? color : "transparent",
- borderColor:`${color}35`,
- whiteSpace:"normal",
- lineHeight:1.35,
+ const canonicalTodayLabel = resolveCanonicalSurfaceSessionLabel({
+  sessionType: todayPrescriptionSummary?.sessionType || surfaceModel?.display?.sessionType || todayTraining?.type || "",
+  sessionLabel: todayPrescriptionSummary?.sessionLabel || todayPrescriptionModel?.sessionLabel || surfaceModel?.display?.sessionLabel || todayTraining?.label || "",
+  fallback: "Today's session",
+  isHybrid: todayPrescriptionModel?.family === "hybrid",
+ });
+ const todayAdjustmentIntroLine = environmentSelection?.scope === "today" && sanitizeDisplayText(environmentSelection?.mode || "")
+  ? `Active now: ${sanitizeDisplayText(environmentSelection.mode)} setup. Adjustments only change today's displayed prescription.`
+  : "Use this only when real-world constraints change today's session.";
+
+ const setTodayAdjustmentField = (fieldKey, nextValue) => {
+  setTodayAdjustmentState((current) => ({
+   ...current,
+   [fieldKey]: nextValue,
+  }));
+ };
+ const toggleTodayTimeVariant = (value) => {
+  setTodayAdjustmentField("time", todayAdjustmentState?.time === value ? "standard" : value);
+ };
+ const toggleTodayRecovery = () => {
+  setTodayAdjustmentField("recovery", todayAdjustmentState?.recovery === "low_energy" ? "standard" : "low_energy");
+ };
+ const toggleTodaySoreness = (value) => {
+  setTodayAdjustmentField("soreness", todayAdjustmentState?.soreness === value ? "none" : value);
+ };
+ const toggleTodayLowImpact = () => {
+  setTodayAdjustmentField("impact", todayAdjustmentState?.impact === "low_impact" ? "normal" : "low_impact");
+ };
+ const toggleTodayCardioSwap = (value) => {
+  setTodayAdjustmentField("cardioSwap", todayAdjustmentState?.cardioSwap === value ? "as_planned" : value);
+ };
+ const toggleTodayExerciseSwap = () => {
+  setTodayAdjustmentField("swapExercises", !todayAdjustmentState?.swapExercises);
+ };
+ const resetTodayAdjustmentState = () => {
+  setTodayAdjustmentState({ ...TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS });
+ };
+ const buildTodayAdjustmentButtonStyle = (selected, accentColor) => ({
+  minHeight: 46,
+  borderRadius: 18,
+  justifyContent: "center",
+  fontSize: "0.5rem",
+  color: selected ? "var(--accent-contrast)" : "var(--consumer-text)",
+  background: selected ? accentColor : "linear-gradient(180deg, color-mix(in srgb, var(--consumer-subpanel) 96%, transparent) 0%, color-mix(in srgb, var(--consumer-panel) 92%, transparent) 100%)",
+  borderColor: selected ? accentColor : "color-mix(in srgb, var(--consumer-border-strong) 88%, rgba(255,255,255,0.04))",
+  boxShadow: selected ? "var(--shadow-1)" : "none",
  });
 
  return (
@@ -20164,23 +16536,39 @@ const todayNextStepLine = sanitizeDisplayText(
  variant="elevated"
  style={{
  display:"grid",
- gap:"0.85rem",
- padding:"0.95rem",
- borderRadius:24,
+ gap:"0.92rem",
+ padding:"1rem 1.05rem",
+ borderRadius:28,
  borderColor:`${cardColor}2b`,
- background:"linear-gradient(180deg, color-mix(in srgb, var(--consumer-panel-strong) 90%, transparent), color-mix(in srgb, var(--consumer-panel) 96%, transparent))",
+ background:"linear-gradient(180deg, color-mix(in srgb, var(--consumer-panel-strong) 96%, transparent), color-mix(in srgb, var(--consumer-panel) 98%, transparent))",
  boxShadow:"var(--shadow-2)",
  }}
  >
  <div style={{ display:"grid", gap:"0.18rem" }}>
- <div style={{ fontSize:"0.48rem", color:cardColor, letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ <div style={{ fontSize:"0.48rem", color:cardColor, letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:700 }}>
  {todayPrescriptionModel?.dateLabel || "Today"}
  </div>
- <div style={{ fontSize:"0.96rem", color:"var(--consumer-text)", fontWeight:700, lineHeight:1.2 }}>
+ <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"flex-start", flexWrap:"wrap" }}>
+ <div style={{ display:"grid", gap:"0.12rem", minWidth:0 }}>
+ <div style={{ fontFamily:"var(--font-display)", fontSize:"1.02rem", color:"var(--consumer-text)", fontWeight:700, lineHeight:1.08 }}>
  {todayPrescriptionModel?.headerTitle || "Today's Plan"}
  </div>
- <div data-testid="today-canonical-session-label" style={{ fontSize:"0.6rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
+ <div data-testid="today-canonical-session-label" style={{ fontSize:"0.58rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
  {todayPrescriptionModel?.sessionLabel || canonicalTodayLabel}
+ </div>
+ </div>
+ {showQuietSyncChip && (
+ <div style={{ minWidth:210 }}>
+ <CompactSyncStatus
+ model={syncSurfaceModel}
+ dataTestId="today-sync-status"
+ style={{
+ background:"rgba(11, 20, 32, 0.32)",
+ opacity:0.88,
+ }}
+ />
+ </div>
+ )}
  </div>
  </div>
 
@@ -20200,76 +16588,52 @@ const todayNextStepLine = sanitizeDisplayText(
  <div data-testid="today-change-summary" style={{ fontSize:"0.56rem", color:"var(--consumer-text-soft)", lineHeight:1.55 }}>
  {todayVisibleWhyLine}
  </div>
- {!!todaySecondaryWhyLine && (
- <div data-testid="today-canonical-reason" style={{ fontSize:"0.48rem", color:"var(--consumer-text-faint)", lineHeight:1.45 }}>
- {todaySecondaryWhyLine}
- </div>
- )}
  </div>
 
- {!!todayAdjustmentLabels.length && (
- <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
- {todayAdjustmentLabels.map((label, index) => (
- <SurfacePill key={`today-adjustment-pill-${index}`} style={{ color:cardColor, background:`${cardColor}12`, borderColor:`${cardColor}24` }}>
- {label}
- </SurfacePill>
- ))}
- </div>
- )}
-
- <div style={{ display:"flex", justifyContent:"flex-start" }}>
- <button
- type="button"
- data-testid="today-primary-cta"
- className="btn btn-primary"
- onClick={() => setAdjustTodayOpen((current) => !current)}
- style={{ fontSize:"0.52rem" }}
- >
- {adjustTodayOpen ? "Hide adjustments" : "Adjust Today"}
- </button>
- </div>
+ <CompactTrustRow model={todayTrustModel} dataTestId="today-trust-row" />
 
  <div data-testid="today-session-plan" style={{ display:"grid", gap:"0.5rem" }}>
  <div style={{ fontSize:"0.45rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
  Workout
  </div>
- <div data-testid="today-full-workout" style={{ display:"grid", gap:"0.45rem" }}>
+ <div data-testid="today-full-workout" style={{ display:"grid", gap:"0.3rem" }}>
  {todayBlocks.map((block) => (
  <div
  key={block.key || block.number}
  style={{
  display:"grid",
  gridTemplateColumns:"auto 1fr",
- gap:"0.48rem",
+ gap:"0.58rem",
  alignItems:"flex-start",
- border:"1px solid var(--consumer-border)",
- borderRadius:18,
- padding:"0.7rem",
- background:"color-mix(in srgb, var(--consumer-panel) 94%, transparent)",
+ border:"1px solid color-mix(in srgb, var(--consumer-border) 88%, rgba(255,255,255,0.04))",
+ borderRadius:20,
+ padding:"0.72rem 0.76rem",
+ background:"linear-gradient(180deg, color-mix(in srgb, var(--consumer-subpanel) 96%, transparent) 0%, color-mix(in srgb, var(--consumer-panel) 94%, transparent) 100%)",
+ boxShadow:"inset 0 1px 0 rgba(255,255,255,0.03)",
  }}
  >
  <div
  style={{
- width:24,
- height:24,
+ width:28,
+ height:28,
  borderRadius:999,
- border:`1px solid ${cardColor}38`,
- background:`${cardColor}14`,
+ border:`1px solid ${cardColor}34`,
+ background:`${cardColor}15`,
  color:cardColor,
  display:"inline-flex",
  alignItems:"center",
  justifyContent:"center",
  fontSize:"0.54rem",
- fontWeight:700,
+ fontWeight:800,
  }}
  >
  {block.number}
  </div>
  <div style={{ display:"grid", gap:"0.18rem", minWidth:0 }}>
- <div style={{ fontSize:"0.58rem", color:"var(--consumer-text)", fontWeight:700, lineHeight:1.4 }}>
+ <div style={{ fontSize:"0.6rem", color:"var(--consumer-text)", fontWeight:700, lineHeight:1.35 }}>
  {block.title}
  </div>
- <div style={{ fontSize:"0.54rem", color:"var(--consumer-text-soft)", lineHeight:1.5 }}>
+ <div style={{ fontSize:"0.53rem", color:"var(--consumer-text-soft)", lineHeight:1.56 }}>
  {block.prescription}
  </div>
  {!!block.effort && (
@@ -20282,6 +16646,10 @@ const todayNextStepLine = sanitizeDisplayText(
  {block.variant}
  </div>
  )}
+ <ExerciseHowDisclosure
+ dataTestId={`today-exercise-help-${block.key || block.number}`}
+ query={block.guidanceSource || ""}
+ />
  </div>
  </div>
  ))}
@@ -20308,9 +16676,10 @@ const todayNextStepLine = sanitizeDisplayText(
  style={{
  display:"grid",
  gap:"0.6rem",
- padding:"0.8rem",
- borderRadius:22,
- borderColor:"var(--consumer-border-strong)",
+ padding:"0.78rem 0.84rem",
+ borderRadius:24,
+ borderColor:"color-mix(in srgb, var(--consumer-border-strong) 88%, rgba(255,255,255,0.04))",
+ background:"linear-gradient(180deg, color-mix(in srgb, var(--consumer-panel) 98%, transparent) 0%, color-mix(in srgb, var(--consumer-subpanel) 92%, transparent) 100%)",
  }}
  >
  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"flex-start", flexWrap:"wrap" }}>
@@ -20322,6 +16691,20 @@ const todayNextStepLine = sanitizeDisplayText(
  {todayAdjustmentIntroLine}
  </div>
  </div>
+ <button
+ type="button"
+ data-testid="today-primary-cta"
+ className={adjustTodayOpen ? "btn" : "btn btn-primary"}
+ onClick={() => setAdjustTodayOpen((current) => !current)}
+ style={{
+ fontSize:"0.5rem",
+ minHeight:42,
+ color:adjustTodayOpen ? "var(--consumer-text-muted)" : undefined,
+ borderColor:adjustTodayOpen ? "var(--consumer-border-strong)" : undefined,
+ }}
+ >
+ {adjustTodayOpen ? "Hide adjustments" : "Adjust today"}
+ </button>
  </div>
 
  {adjustTodayOpen && (
@@ -20437,9580 +16820,11 @@ const todayNextStepLine = sanitizeDisplayText(
  </SurfaceCard>
  </div>
  );
-
- return (
- <div className="fi" data-testid="today-tab" style={{ display:"grid", gap:"0.75rem" }}>
- {authError && (
- <div className="card card-soft" style={{ borderColor:C.amber+"35", fontSize:"0.54rem", color:C.amber }}>
- {authError}
- </div>
- )}
- {showStorageBanner && (
- <SyncStateCallout
- model={syncSurfaceModel}
- dataTestId="today-sync-status"
- compact
- style={{ background:"rgba(11, 20, 32, 0.76)" }}
- />
- )}
-
- {showPostIntakeReady && (
- <div
- data-testid="post-intake-ready-card"
- className="card card-strong"
- style={{
- borderColor:C.green+"26",
- background:"linear-gradient(135deg, var(--consumer-panel-strong), var(--consumer-panel))",
- boxShadow:"var(--shadow-2)",
- }}
- >
- <div style={{ display:"grid", gap:"0.7rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"flex-start", flexWrap:"wrap" }}>
- <div style={{ display:"grid", gap:"0.22rem", minWidth:0, flex:"1 1 300px" }}>
- <div className="ui-eyebrow" style={{ color:C.green }}>Ready</div>
- <div data-testid="post-intake-ready-headline" style={{ fontSize:"0.82rem", color:"var(--consumer-text)", lineHeight:1.28, overflowWrap:"anywhere" }}>
- {postIntakeReadyModel.title}
- </div>
- <div style={{ fontSize:"0.58rem", color:"var(--consumer-text)", lineHeight:1.45, overflowWrap:"anywhere" }}>
- {postIntakeReadyModel.headline}
- </div>
- <div data-testid="post-intake-ready-credibility" style={{ fontSize:"0.52rem", color:"var(--consumer-text-soft)", lineHeight:1.5, overflowWrap:"anywhere" }}>
- {postIntakeReadyModel.credibilityLine}
- </div>
- </div>
- <button
- type="button"
- data-testid="post-intake-ready-dismiss"
- className="btn"
- onClick={handleDismissPostIntakeReady}
- style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)", borderColor:"var(--consumer-border-strong)" }}
- >
- Hide
- </button>
- </div>
-
- <div
- data-testid="post-intake-ready-first-action"
- style={{
- border:"1px solid var(--consumer-border-strong)",
- borderRadius:18,
- padding:"0.72rem",
- background:"var(--consumer-panel)",
- display:"grid",
- gap:"0.45rem",
- }}
- >
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" }}>
- <div style={{ fontSize:"0.5rem", color:C.green, letterSpacing:"0.08em", textTransform:"uppercase" }}>
- {postIntakeReadyModel.firstAction.eyebrow}
- </div>
- <div className="ui-pill" style={{ color:C.green, background:C.green+"14", borderColor:C.green+"24" }}>
- {postIntakeReadyModel.firstAction.meta}
- </div>
- </div>
- <div style={{ fontSize:"0.74rem", color:"var(--consumer-text)", lineHeight:1.3, overflowWrap:"anywhere" }}>
- {postIntakeReadyModel.firstAction.title}
- </div>
- <div style={{ fontSize:"0.54rem", color:"var(--consumer-text-soft)", lineHeight:1.5, overflowWrap:"anywhere" }}>
- {postIntakeReadyModel.firstAction.detail}
- </div>
- {!!postIntakeReadyModel.firstAction.support && (
- <div style={{ fontSize:"0.49rem", color:"var(--consumer-text-muted)", lineHeight:1.45, overflowWrap:"anywhere" }}>
- {postIntakeReadyModel.firstAction.support}
- </div>
- )}
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- <button data-testid="post-intake-ready-start" className="btn btn-primary" onClick={handleStartTodayFromReady} style={{ fontSize:"0.54rem" }}>
- Start today
- </button>
- <button data-testid="post-intake-ready-see-week" className="btn" onClick={handleViewWeekFromReady} style={{ fontSize:"0.52rem", color:"var(--consumer-text)", borderColor:"var(--consumer-border-strong)" }}>
- See full week
- </button>
- </div>
- </div>
-
- <div
- data-testid="post-intake-ready-week-shape"
- style={{
- border:"1px solid var(--consumer-border)",
- borderRadius:16,
- padding:"0.65rem",
- background:"var(--consumer-panel)",
- display:"grid",
- gap:"0.42rem",
- }}
- >
- <div style={{ display:"grid", gap:"0.12rem" }}>
- <div style={{ fontSize:"0.5rem", color:"var(--consumer-text)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
- This week&apos;s shape
- </div>
- <div style={{ fontSize:"0.52rem", color:"var(--consumer-text-soft)", lineHeight:1.45, overflowWrap:"anywhere" }}>
- {postIntakeReadyModel.weekShape.summary}
- </div>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(72px,1fr))", gap:"0.35rem" }}>
- {postIntakeReadyModel.weekShape.cells.map((cell) => {
- const toneColor = getReadyToneColor(cell.tone);
- return (
- <div
- key={`post-intake-week-shape-${cell.dayKey}`}
- data-testid={`post-intake-week-shape-day-${String(cell.dayLabel || "").toLowerCase()}`}
- style={{
- border:"1px solid",
- borderColor:cell.isToday ? `${toneColor}40` : "var(--consumer-border)",
- borderRadius:14,
- padding:"0.42rem",
- background:cell.isToday ? `${toneColor}12` : "var(--consumer-subpanel)",
- display:"grid",
- gap:"0.15rem",
- minHeight:82,
- }}
- >
- <div style={{ fontSize:"0.46rem", color:cell.isToday ? toneColor : "var(--consumer-text-muted)", letterSpacing:"0.06em", textTransform:"uppercase" }}>
- {cell.dayLabel}{cell.isToday ? " / Today" : ""}
- </div>
- <div style={{ fontSize:"0.52rem", color:"var(--consumer-text)", lineHeight:1.35, overflowWrap:"anywhere" }}>
- {cell.shortTitle}
- </div>
- <div style={{ fontSize:"0.45rem", color:"var(--consumer-text-soft)", lineHeight:1.4, overflowWrap:"anywhere" }}>
- {cell.shortDetail || (cell.isRest ? "Reset" : "Planned")}
- </div>
- </div>
- );
- })}
- </div>
- </div>
-
- <div
- data-testid="post-intake-ready-roadmap"
- style={{
- border:"1px solid var(--consumer-border)",
- borderRadius:16,
- padding:"0.65rem",
- background:"var(--consumer-panel)",
- display:"grid",
- gap:"0.42rem",
- }}
- >
- <div style={{ display:"grid", gap:"0.12rem" }}>
- <div style={{ fontSize:"0.5rem", color:"var(--consumer-text)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
- Next few weeks
- </div>
- <div style={{ fontSize:"0.52rem", color:"var(--consumer-text-soft)", lineHeight:1.45, overflowWrap:"anywhere" }}>
- {postIntakeReadyModel.roadmap.summary}
- </div>
- </div>
- <div style={{ display:"flex", gap:"0.4rem", overflowX:"auto", paddingBottom:"0.1rem", scrollbarWidth:"thin" }}>
- {postIntakeReadyModel.roadmap.rows.map((row) => (
- <div
- key={`post-intake-roadmap-${row.absoluteWeek}`}
- data-testid={`post-intake-roadmap-week-${row.absoluteWeek}`}
- style={{
- minWidth:168,
- border:"1px solid",
- borderColor:row.isCurrentWeek ? `${C.green}38` : "var(--consumer-border)",
- borderRadius:14,
- padding:"0.48rem 0.52rem",
- background:row.isCurrentWeek ? `${C.green}10` : "var(--consumer-subpanel)",
- display:"grid",
- gap:"0.18rem",
- }}
- >
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.3rem", alignItems:"center" }}>
- <div style={{ fontSize:"0.48rem", color:row.isCurrentWeek ? C.green : "var(--consumer-text-muted)", letterSpacing:"0.06em", textTransform:"uppercase" }}>
- {row.label}
- </div>
- {!!row.secondaryLine && (
- <div style={{ fontSize:"0.44rem", color:row.cutback ? C.blue : "var(--consumer-text-muted)", lineHeight:1.35, textAlign:"right" }}>
- {row.secondaryLine}
- </div>
- )}
- </div>
- <div style={{ fontSize:"0.55rem", color:"var(--consumer-text)", lineHeight:1.35, overflowWrap:"anywhere" }}>
- {row.phaseLabel}
- </div>
- <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-soft)", lineHeight:1.45, overflowWrap:"anywhere" }}>
- {row.focus}
- </div>
- <div style={{ fontSize:"0.46rem", color:"var(--consumer-text)", lineHeight:1.4, overflowWrap:"anywhere" }}>
- {row.primaryLine}
- </div>
- </div>
- ))}
- </div>
- </div>
-
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(100%, 220px),1fr))", gap:"0.5rem" }}>
- <details
- data-testid="post-intake-ready-adapts"
- style={{
- border:"1px solid var(--consumer-border)",
- borderRadius:16,
- padding:"0.65rem",
- background:"var(--consumer-panel)",
- }}
- >
- <summary style={{ padding:"0 0 0.1rem", cursor:"pointer", color:"var(--consumer-text)" }}>
- <span style={{ fontSize:"0.5rem", letterSpacing:"0.08em", textTransform:"uppercase" }}>
- {postIntakeReadyModel.adaptation.title}
- </span>
- </summary>
- <div style={{ display:"grid", gap:"0.32rem", paddingTop:"0.12rem" }}>
- {postIntakeReadyModel.adaptation.lines.map((line, index) => (
- <div key={`post-intake-adapt-${index}`} style={{ fontSize:"0.5rem", color:"var(--consumer-text-soft)", lineHeight:1.5, overflowWrap:"anywhere" }}>
- {line}
- </div>
- ))}
- </div>
- </details>
-
- <details
- data-testid="post-intake-ready-checklist"
- style={{
- border:"1px solid var(--consumer-border)",
- borderRadius:16,
- padding:"0.65rem",
- background:"var(--consumer-panel)",
- }}
- >
- <summary style={{ padding:"0 0 0.1rem", cursor:"pointer", color:"var(--consumer-text)" }}>
- <span style={{ fontSize:"0.5rem", letterSpacing:"0.08em", textTransform:"uppercase" }}>
- {postIntakeReadyModel.checklist.title}
- </span>
- </summary>
- <div style={{ display:"grid", gap:"0.32rem", paddingTop:"0.12rem" }}>
- {postIntakeReadyModel.checklist.items.map((item, index) => (
- <div
- key={`post-intake-check-${item.id}`}
- style={{
- display:"grid",
- gridTemplateColumns:"22px minmax(0,1fr)",
- gap:"0.35rem",
- alignItems:"start",
- }}
- >
- <div
- style={{
- width:22,
- height:22,
- borderRadius:999,
- border:"1px solid",
- borderColor:item.done ? `${C.green}44` : "var(--consumer-border-strong)",
- color:item.done ? C.green : "var(--consumer-text-muted)",
- background:item.done ? `${C.green}14` : "transparent",
- display:"inline-flex",
- alignItems:"center",
- justifyContent:"center",
- fontSize:"0.48rem",
- fontWeight:700,
- }}
- >
- {item.done ? "OK" : index + 1}
- </div>
- <div style={{ fontSize:"0.5rem", color:item.done ? "var(--consumer-text)" : "var(--consumer-text-soft)", lineHeight:1.5, overflowWrap:"anywhere" }}>
- {item.label}
- </div>
- </div>
- ))}
- </div>
- </details>
- </div>
- </div>
- </div>
- )}
-
- <SurfaceHero ref={todaySessionCardRef} data-testid="today-session-card" accentColor={cardColor}>
- <SurfaceHeroHeader>
- <SurfaceHeroCopy>
- <SessionSummaryBlock
- model={sharedTodaySessionSummary}
- accentColor={cardColor}
- eyebrow="Today"
- eyebrowColor={cardColor}
- titleTestId="today-canonical-session-label"
- rationaleTestId="today-change-summary"
- titleSize="hero"
- extraPills={quietStatusPills}
- />
- <div style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)", lineHeight:1.45, overflowWrap:"anywhere" }}>
- <span style={{ color:"var(--consumer-text)" }}>Next:</span> {todayCommandCenter.nextStepLine}
- </div>
- </SurfaceHeroCopy>
- </SurfaceHeroHeader>
-
- <SurfaceActions>
- <button data-testid="today-primary-cta" className="btn btn-primary" onClick={() => setShowQuickLogComposer(true)} style={{ fontSize:"0.54rem" }}>
- {todayCommandCenter.primaryActionLabel}
- </button>
- <button data-testid="today-secondary-cta" className="btn" onClick={onGoProgram} style={{ fontSize:"0.52rem", color:"var(--consumer-text)", borderColor:"var(--consumer-border-strong)" }}>
- {todayCommandCenter.secondaryActionLabel}
- </button>
- </SurfaceActions>
-
- {(injuryBadge || todaySaveFeedbackModel.show || showQuietSyncChip) && (
- <SurfaceQuietPanel data-testid="today-quiet-status">
- <SurfaceMetaRow>
- {injuryBadge && (
- <button
- type="button"
- className="btn"
- onClick={()=>setShowInjuryPanel((current) => !current)}
- style={{ fontSize:"0.46rem", color:injuryBadge.color, background:injuryBadge.color+"15", borderColor:injuryBadge.color+"24", minHeight:"var(--pill-height)", padding:"0.16rem 0.48rem" }}
- >
- {injuryBadge.label}
- </button>
- )}
- </SurfaceMetaRow>
- {todaySaveFeedbackModel.show && (
- <StateFeedbackBanner
- model={todaySaveFeedbackModel}
- dataTestId="today-save-status"
- compact
- style={{ overflowWrap:"anywhere" }}
- />
- )}
- {showQuietSyncChip && (
- <CompactSyncStatus
- model={syncSurfaceModel}
- dataTestId="today-sync-status"
- style={{
- background:"rgba(11, 20, 32, 0.32)",
- opacity:0.88,
- }}
- />
- )}
- </SurfaceQuietPanel>
- )}
- </SurfaceHero>
-
- {showQuickLogComposer && (
- <SurfaceCard variant="action" accentColor={C.green} data-testid="today-quick-log">
- <SurfaceHeading
- eyebrow="Quick log"
- title={todayCommandCenter.composerTitle}
- supporting={todayCommandCenter.composerHint}
- eyebrowColor={C.green}
- />
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(100%, 124px),1fr))", gap:"0.35rem" }}>
- {CHECKIN_STATUS_OPTIONS.map((opt) => (
- <button key={opt.key} className="btn" onClick={()=>setCheckin((current) => ({ ...current, status: opt.key }))} style={{ fontSize:"0.52rem", color:checkin.status===opt.key?C.green:"var(--consumer-text-muted)", borderColor:checkin.status===opt.key?C.green+"40":"var(--consumer-border)", minWidth:0, whiteSpace:"normal", lineHeight:1.35 }}>
- {opt.label}
- </button>
- ))}
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(100%, 112px),1fr))", gap:"0.35rem" }}>
- {CHECKIN_FEEL_OPTIONS.map((opt) => (
- <button key={opt.key} className="btn" onClick={()=>setCheckin((current) => ({ ...current, sessionFeel: opt.key }))} style={{ fontSize:"0.52rem", color:checkin.sessionFeel===opt.key?C.blue:"var(--consumer-text-muted)", borderColor:checkin.sessionFeel===opt.key?C.blue+"40":"var(--consumer-border)", minWidth:0, whiteSpace:"normal", lineHeight:1.35 }}>
- {opt.label}
- </button>
- ))}
- </div>
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <textarea
- aria-label="Quick note about today's session"
- value={checkin.note || ""}
- onChange={e=>setCheckin((current) => ({ ...current, note: e.target.value }))}
- placeholder="Optional note"
- rows={3}
- style={{ minHeight:78, resize:"vertical" }}
- />
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(100%, 136px),1fr))", gap:"0.35rem", minWidth:0 }}>
- <input aria-label={`Bodyweight in ${todayUnitSettings?.weight || "lb"}`} type="number" step="0.1" value={checkin.bodyweight || ""} onChange={e=>setCheckin((current) => ({ ...current, bodyweight: e.target.value }))} placeholder={`Bodyweight (${todayUnitSettings?.weight || "lb"})`} />
- <button data-testid="today-save-log" className="btn btn-primary" disabled={checkin.status === "not_logged" || checkinSaving} onClick={handleSaveTodayQuickCheckin} style={{ fontSize:"0.54rem", opacity:(checkin.status === "not_logged" || checkinSaving) ? 0.45 : 1, minWidth:0 }}>
- {checkinSaving ? "Saving..." : "Save log"}
- </button>
- </div>
- </div>
- {postSaveInsight && <div style={{ fontSize:"0.52rem", color:"var(--consumer-text-soft)", lineHeight:1.45, overflowWrap:"anywhere" }}>{postSaveInsight}</div>}
- </div>
- <details style={{ marginTop:"0.45rem" }}>
- <summary style={{ cursor:"pointer", fontSize:"0.52rem", color:"var(--consumer-text-muted)" }}>Add recovery detail</summary>
- <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.35rem" }}>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:"0.3rem" }}>
- <input aria-label="Sleep hours" type="number" step="0.5" value={checkin?.actualRecovery?.sleepHours || ""} onChange={e=>setCheckin((current) => ({ ...current, actualRecovery: { ...(current?.actualRecovery || {}), sleepHours: e.target.value } }))} placeholder="Sleep hrs" />
- <input aria-label="Mobility minutes" type="number" step="1" value={checkin?.actualRecovery?.mobilityMinutes || ""} onChange={e=>setCheckin((current) => ({ ...current, actualRecovery: { ...(current?.actualRecovery || {}), mobilityMinutes: e.target.value } }))} placeholder="Mobility min" />
- <input aria-label="Tissue work minutes" type="number" step="1" value={checkin?.actualRecovery?.tissueWorkMinutes || ""} onChange={e=>setCheckin((current) => ({ ...current, actualRecovery: { ...(current?.actualRecovery || {}), tissueWorkMinutes: e.target.value } }))} placeholder="Tissue work" />
- </div>
- {hasStrength && (
- <div style={{ display:"grid", gap:"0.28rem" }}>
- {strExercises.slice(0, 4).map((ex) => {
- const key = normalizeExerciseKey(ex?.ex || "");
- const row = strengthInputs?.[key] || {};
- return (
- <div key={key} style={{ display:"grid", gap:"0.24rem", border:"1px solid var(--consumer-border)", borderRadius:12, padding:"0.38rem 0.42rem", background:"var(--consumer-subpanel)", minWidth:0 }}>
- <div style={{ fontSize:"0.5rem", color:"var(--consumer-text)", lineHeight:1.4, overflowWrap:"anywhere" }}>{ex.ex}</div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:"0.25rem", minWidth:0 }}>
- <input aria-label={`${ex.ex} load`} type="number" step="2.5" placeholder="Load" value={row.weightUsed || ""} onChange={e=>setStrengthInputs((prev) => ({ ...prev, [key]: { ...prev[key], exercise: ex.ex, weightUsed: e.target.value, actualWeight: e.target.value } }))} />
- <input aria-label={`${ex.ex} sets`} type="number" placeholder="Sets" value={row.actualSets || ""} onChange={e=>setStrengthInputs((prev) => ({ ...prev, [key]: { ...prev[key], exercise: ex.ex, actualSets: e.target.value } }))} />
- <input aria-label={`${ex.ex} reps`} type="number" placeholder="Reps" value={row.repsCompleted || ""} onChange={e=>setStrengthInputs((prev) => ({ ...prev, [key]: { ...prev[key], exercise: ex.ex, repsCompleted: e.target.value, actualReps: e.target.value } }))} />
- </div>
- </div>
- );
- })}
- </div>
- )}
- </div>
- </details>
- </div>
- )}
-
- <SurfaceDisclosure data-testid="today-session-plan" summary="Session plan">
- <div data-testid="today-full-workout">
- <TodaySessionStackPreview summary={todayPrescriptionSummary} accentColor={cardColor} />
- </div>
- </SurfaceDisclosure>
-
- <SurfaceDisclosure data-testid="today-why-changed" summary="Why this changed">
- {!!todayCommandCenter.adaptationSourceLabel && (
- <div style={{ fontSize:"0.46rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
- {todayCommandCenter.adaptationSourceLabel}
- </div>
- )}
- <div style={{ fontSize:"0.58rem", color:"var(--consumer-text)", lineHeight:1.45 }}>{primaryWhyChangedLine || todayCommandCenter.adaptationSummary}</div>
- {!!todayCommandCenter.adaptationDetailLine && (
- <div style={{ fontSize:"0.5rem", color:"var(--consumer-text-soft)", lineHeight:1.5, overflowWrap:"anywhere" }}>
- {todayCommandCenter.adaptationDetailLine}
- </div>
- )}
- {!!canonicalWhyChangedLine && (
- <div data-testid="today-canonical-reason" style={{ fontSize:"0.5rem", color:"var(--consumer-text-soft)", lineHeight:1.5, overflowWrap:"anywhere" }}>
- {canonicalWhyChangedLine}
- </div>
- )}
- <div style={{ fontSize:"0.47rem", color:"var(--consumer-text-faint)", lineHeight:1.45 }}>Tomorrow: {tomorrowPreviewText}</div>
-</SurfaceDisclosure>
-
- <SurfaceDisclosure data-testid="today-session-details-drawer" summary="Full session details">
- <PlannedSessionDetailCard
- session={{
- day: "Today",
- title: displayWorkout?.label || "Today's session",
- summary: todayPrescriptionSummary,
- }}
- accentColor={cardColor}
- sessionPlanTestId="today-session-detail-plan"
- />
- </SurfaceDisclosure>
-
-<details className="card">
-<summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"var(--consumer-text)" }}>Adjust today</summary>
-<div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
-<div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
- {["Home", "Gym", "Outdoor", "Travel"].map((mode) => {
- const selected = environmentSelection?.scope === "today" && String(environmentSelection?.mode || "").toLowerCase() === mode.toLowerCase();
- return (
- <button
- key={mode}
- className="btn"
- onClick={async ()=>setEnvironmentMode({ mode, scope:"today" })}
- style={{
- fontSize:"0.5rem",
- color:selected ? "#0f172a" : C.blue,
- background:selected ? C.blue : "transparent",
- borderColor:`${C.blue}35`,
- }}
- >
- {mode}
- </button>
- );
- })}
-{environmentSelection?.scope === "today" && (
-<button className="btn" onClick={async ()=>setEnvironmentMode({ scope:"today", clearTodayOverride:true })} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
-Use default setup
-</button>
-)}
-</div>
-<div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(100%, 180px),1fr))", gap:"0.35rem" }}>
- <button
- className="btn"
- onClick={async ()=>setEnvironmentMode({
- mode: "Outdoor",
- scope: "today",
- behavior: environmentSelection?.scope === "today" && environmentSelection?.behavior === "outdoor_session" ? "" : "outdoor_session",
- })}
- style={{
- fontSize:"0.52rem",
- color: environmentSelection?.scope === "today" && environmentSelection?.behavior === "outdoor_session" ? "#0f172a" : C.blue,
- background: environmentSelection?.scope === "today" && environmentSelection?.behavior === "outdoor_session" ? C.blue : "transparent",
- borderColor:C.blue+"30",
- whiteSpace:"normal",
- lineHeight:1.35,
- }}
- >
- {environmentSelection?.scope === "today" && environmentSelection?.behavior === "outdoor_session"
- ? "Outdoor session active"
- : "Make today outdoor"}
- </button>
- <button className="btn" onClick={()=>setSessionVariant((value)=>value === "short" ? "standard" : "short")} style={{ fontSize:"0.52rem", color: sessionVariant === "short" ? "#0f172a" : C.green, background: sessionVariant === "short" ? C.green : "transparent", borderColor:C.green+"30", whiteSpace:"normal", lineHeight:1.35 }}>
- {sessionVariant === "short" ? "Short version active" : "Shorten to 20 min"}
- </button>
- <button className="btn" onClick={()=>setSessionVariant((value)=>value === "extended" ? "standard" : "extended")} style={{ fontSize:"0.52rem", color: sessionVariant === "extended" ? "#0f172a" : C.amber, background: sessionVariant === "extended" ? C.amber : "transparent", borderColor:C.amber+"35", whiteSpace:"normal", lineHeight:1.35 }}>
- {sessionVariant === "extended" ? "Extended version active" : "Extend by 15 min"}
- </button>
- </div>
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- <button className="btn" onClick={async ()=>{
- if (tomorrowHasSession) { setShiftChoiceOpen(true); return; }
- const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" });
- setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 });
- }} style={{ fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"30" }}>Move to tomorrow</button>
- {shiftUndo && <button className="btn" onClick={async ()=>{ await restoreShiftTodayWorkout(shiftUndo); setShiftUndo(null); }} style={{ fontSize:"0.5rem", color:C.amber, borderColor:C.amber+"35" }}>Undo move</button>}
- </div>
- {shiftChoiceOpen && (
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- <button className="btn" onClick={async ()=>{ const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" }); setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 }); setShiftChoiceOpen(false); }} style={{ fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}>Replace tomorrow</button>
- <button className="btn" onClick={async ()=>{ const undo = await shiftTodayWorkout({ daysForward: 1, mode: "add_second" }); setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 }); setShiftChoiceOpen(false); }} style={{ fontSize:"0.48rem", color:C.green, borderColor:C.green+"35" }}>Add second session</button>
- <button className="btn" onClick={()=>setShiftChoiceOpen(false)} style={{ fontSize:"0.48rem" }}>Cancel</button>
- </div>
- )}
- </div>
- </details>
- </div>
- );
- if (false) return (
- <div className="fi">
- {loading && (
- <div className="card card-soft" style={{ marginBottom:"0.7rem", borderColor:"#2a3b56", fontSize:"0.56rem", color:"#9fb2d2" }}>
- Loading today's training state...
- </div>
- )}
- {!loading && authError && (
- <div className="card card-soft" style={{ marginBottom:"0.7rem", borderColor:C.amber+"35", fontSize:"0.56rem", color:C.amber }}>
- {authError}
- </div>
- )}
- {!loading && !authError && storageStatus?.mode === "local" && (
- <div className="card card-soft" style={{ marginBottom:"0.7rem", borderColor:"#2a3b56", fontSize:"0.56rem", color:"#8fa5c8" }}>
- {storageBannerCopy}
- </div>
- )}
- {garminApiStaleError && (
- <div className="card card-soft" style={{ marginBottom:"0.7rem", borderColor:C.amber+"35", fontSize:"0.56rem", color:C.amber }}>
- Garmin data has been unavailable for over 48 hours. Using Apple Health instead.
- </div>
- )}
-
- <div className="card card-soft" style={{ marginBottom:"0.8rem", borderColor:contextStatusTone+"30", background:"rgba(8,14,25,0.82)" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"flex-start", flexWrap:"wrap" }}>
- <div>
- <div className="sect-title" style={{ color:contextStatusTone, marginBottom:"0.18rem" }}>ACTIVE CONTEXT</div>
- <div style={{ fontSize:"0.55rem", color:"#9fb4d3", lineHeight:1.55 }}>
- What Today is using right now.
- </div>
- </div>
- <button
- className="btn"
- onClick={() => {
- setEnvDraft({
- equipment: environmentSelection?.equipment || "unknown",
- equipmentItems: Array.isArray(environmentSelection?.equipmentItems) ? environmentSelection.equipmentItems.join(", ") : "",
- time: environmentSelection?.time || "unknown",
- mode: environmentSelection?.mode || "Unknown",
- scope: "base",
- });
- setShowEnvEditor(true);
- }}
- style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#324961" }}
- >
- Review / edit
- </button>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:"0.45rem", marginTop:"0.55rem" }}>
- {[
- { label: "Environment", value: trainingContextSummary.environmentLabel, meta: plainEnvironmentSourceLabel },
- { label: "Equipment", value: trainingContextSummary.equipmentLabel, meta: plainEquipmentSourceLabel },
- { label: "Session window", value: trainingContextSummary.sessionLabel, meta: plainDurationSourceLabel },
- { label: "Issue context", value: issueContextLabel, meta: activeIssueContext?.active ? "Active in plan" : activeIssueContext?.historicalNotes ? "Older note kept out" : "No active issue" },
- ].map((item) => (
- <div key={item.label} style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:12, padding:"0.65rem", background:"rgba(15,23,42,0.72)" }}>
- <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.18rem" }}>{item.label}</div>
- <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.45 }}>{item.value}</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.45 }}>{item.meta}</div>
- </div>
- ))}
- </div>
- {activeIssueContext?.historicalNotes && !activeIssueContext?.active && (
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55, marginTop:"0.5rem" }}>
- Older note kept out of today's plan: {activeIssueContext.historicalNotes}
- </div>
- )}
- </div>
-
- <div style={{ marginBottom:"0.8rem", display:"grid", gap:"0.55rem" }}>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
- <div className="card card-soft" style={{ borderColor:readinessTone+"26", background:"#0d1420" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.26rem" }}>READINESS</div>
- <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:"0.45rem", flexWrap:"wrap" }}>
- <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.45 }}>{readinessBadgeLabel}</div>
- <span style={{ fontSize:"0.46rem", color:todayTrustTone.color, background:todayTrustTone.bg, padding:"0.14rem 0.4rem", borderRadius:999 }}>{todayTrust.label}</span>
- </div>
- <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
- {reducedLoadSourceLine || readinessBasisLine}
- </div>
- </div>
- <div className="card card-soft" style={{ borderColor:C.green+"26", background:"#0d1711" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.26rem" }}>WIN TODAY</div>
- <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.45 }}>{successHeadline}</div>
- </div>
- <div className="card card-soft" style={{ borderColor:"#2b3f5e", background:"#0d1420" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.26rem" }}>NEXT</div>
- <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.45 }}>Tomorrow: {tomorrowPreviewText}</div>
- <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.4 }}>{primaryActionSummary}</div>
- </div>
- </div>
-
- {primaryAdjustment && (
- <div className="card card-soft" style={{ borderColor:C.blue+"28", background:"#0d1420", padding:"0.65rem 0.75rem" }}>
- <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:"0.45rem", flexWrap:"wrap" }}>
- <button className="btn" onClick={() => openAdjustmentDetail(primaryAdjustment)} style={{ border:"none", background:"none", padding:0, fontSize:"0.56rem", color:"#dbe7f6", textAlign:"left", justifyContent:"flex-start" }}>
- {primaryAdjustment.icon} {primaryAdjustment.summary}
- </button>
- <button className="btn" onClick={() => dismissAdjustment(primaryAdjustment.id)} style={{ border:"none", background:"none", padding:0, fontSize:"0.62rem", color:"#64748b", minWidth:18 }} aria-label="Dismiss coach adjustment notification">x</button>
- </div>
- </div>
- )}
-
- <details className="card card-soft" style={{ borderColor:"#2b3f5e", background:"#0d1420", marginBottom:0 }}>
- <summary style={{ cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.45rem", listStyle:"none" }}>
- <span style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>Why this setup</span>
- <span style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Optional</span>
- </summary>
- <div style={{ marginTop:"0.55rem", display:"grid", gap:"0.4rem" }}>
- <div style={{ fontSize:"0.56rem", color:"#e2e8f0", lineHeight:1.5 }}>{rationaleHeadline}</div>
- {!!rationaleSupport && <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{rationaleSupport}</div>}
- {!!planBasisSupportLine && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{planBasisSupportLine}</div>}
-{!!planBasisCompromiseLine && <div style={{ fontSize:"0.49rem", color:C.amber, lineHeight:1.45 }}>Adjustment: {planBasisCompromiseLine}</div>}
- <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>Recovery: {recoveryPrescriptionLine}</div>
- {!!programBlockLine && <div style={{ fontSize:"0.49rem", color:"#93c5fd", lineHeight:1.45 }}>Current block: {programBlockLine}</div>}
- <div style={{ fontSize:"0.48rem", color:"#64748b", lineHeight:1.4 }}>
-Support signals: {readinessBasisLine}{shortProvenance ? ` ${shortProvenance}` : ""}
- </div>
- </div>
- </details>
- </div>
- {/* Proactive nudge */}
- {primaryTrigger && (
- <div style={{ marginBottom:"0.65rem", display:"grid", gap:"0.3rem" }}>
- <div style={{ fontSize:"0.54rem", color:"#94a3b8", lineHeight:1.55 }}>{primaryTrigger.msg}</div>
- <div style={{ display:"flex", gap:"0.35rem", alignItems:"center" }}>
- <button
- className="btn"
- onClick={() => isTravelModeSuggestion ? toggleTravelModeForToday() : onApplyTrigger(primaryTrigger)}
- style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}
- >
- {isTravelModeSuggestion ? (isTodayTravelOverride ? "Exit travel mode" : "Switch travel mode") : (primaryTrigger.actionLabel || "Apply")}
- </button>
- <button className="btn" onClick={()=>onDismissTrigger(primaryTrigger.id)} style={{ fontSize:"0.52rem" }}>Dismiss</button>
- </div>
- </div>
- )}
-
- {/* Injury panel (shown when injury badge tapped) */}
- {showInjuryPanel && (
- <div className="card card-soft" style={{ marginBottom:"0.75rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.35rem" }}>
- <div className="sect-title" style={{ color:C.amber }}>INJURY STATUS</div>
- <button onClick={()=>setShowInjuryPanel(false)} style={{ background:"none", border:"none", color:"#64748b", cursor:"pointer", fontSize:"0.7rem" }}>x</button>
- </div>
- <div style={{ display:"grid", gap:"0.35rem", marginBottom:"0.38rem" }}>
- <label style={{ display:"grid", gap:"0.16rem" }}>
- <span style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>AREA</span>
- <select value={injuryArea} onChange={e=>setInjuryArea(e.target.value)} style={{ fontSize:"0.56rem" }}>
- {AFFECTED_AREAS.map(a => <option key={a} value={a}>{a}</option>)}
- </select>
- </label>
- <div style={{ display:"grid", gap:"0.16rem" }}>
- <span style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>SIDE</span>
- <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
- {INJURY_SIDE_OPTIONS.map((option) => {
- const selected = injurySide === option.value;
- return (
- <button
- key={`today-injury-side-${option.value}`}
- className={selected ? "btn btn-selected" : "btn"}
- onClick={() => setInjurySide(option.value)}
- style={{ fontSize:"0.5rem", color:selected ? "var(--text-strong)" : "#dbe7f6", borderColor:selected ? "var(--border-strong)" : "#324961", background:selected ? "var(--accent-soft)" : "transparent" }}
- >
- {option.label}
- </button>
- );
- })}
- </div>
- </div>
- <div style={{ display:"grid", gap:"0.16rem" }}>
- <span style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>LIMITED TODAY</span>
- <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
- {INJURY_LIMITATION_OPTIONS.map((option) => {
- const selected = injuryLimitations.includes(option.value);
- return (
- <button
- key={`today-injury-limit-${option.value}`}
- className={selected ? "btn btn-selected" : "btn"}
- onClick={() => toggleInjuryLimitation(option.value)}
- style={{ fontSize:"0.48rem", color:selected ? "var(--text-strong)" : "#dbe7f6", borderColor:selected ? "var(--border-strong)" : "#324961", background:selected ? "var(--accent-soft)" : "transparent" }}
- >
- {option.label}
- </button>
- );
- })}
- </div>
- </div>
- <label style={{ display:"grid", gap:"0.16rem" }}>
- <span style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>NOTES</span>
- <textarea
- value={injuryNotesDraft}
- onChange={(e)=>setInjuryNotesDraft(e.target.value)}
- placeholder="Optional context. Example: no running, bench is still fine."
- rows={2}
- style={{ minHeight:60, resize:"vertical", fontSize:"0.56rem", lineHeight:1.45 }}
- />
- </label>
- </div>
- <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
- <button
- className="btn"
- onClick={() => {
- setInjuryLimitations([]);
- setInjuryNotesDraft("");
- setInjurySide("unspecified");
- setInjuryState("none", { area: injuryArea, side: "unspecified", limitations: [], notes: "", impact: "" });
- }}
- style={{ color:C.green, borderColor:C.green+"35" }}
- >
- Clear
- </button>
- <button className="btn" onClick={()=>setInjuryState("mild_tightness", { area: injuryArea, side: injurySide, limitations: injuryLimitations, notes: injuryNotesDraft, impact: injuryLimitations.length ? "Structured limits selected" : "" })} style={{ color:C.blue, borderColor:C.blue+"35" }}>Mild</button>
- <button className="btn" onClick={()=>setInjuryState("moderate_pain", { area: injuryArea, side: injurySide, limitations: injuryLimitations, notes: injuryNotesDraft, impact: injuryLimitations.length ? "Structured limits selected" : "" })} style={{ color:C.amber, borderColor:C.amber+"35" }}>Moderate</button>
- <button className="btn" onClick={()=>setInjuryState("sharp_pain_stop", { area: injuryArea, side: injurySide, limitations: injuryLimitations, notes: injuryNotesDraft, impact: injuryLimitations.length ? "Structured limits selected" : "" })} style={{ color:C.red, borderColor:C.red+"35" }}>Sharp/Stop</button>
- </div>
- <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" }}>{injuryLevel.replaceAll("_"," ")} - {injuryRule.why}</div>
- {injuryCapabilityProfile?.active && (
- <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.18rem", fontSize:"0.53rem", color:"#9fb4d3", lineHeight:1.45 }}>
- <div>Protect today: {injuryCapabilityProfile.protectedLine}</div>
- <div>Still available: {injuryCapabilityProfile.preservedLine}</div>
- </div>
- )}
- </div>
- )}
-
- {/* CONTEXT */}
- <div style={{ display:"none" }}>CONTEXT</div>
-
- {/* Coach adjustments */}
- {false && primaryAdjustment && (
- <div style={{ marginBottom:"0.65rem", padding:"0.15rem 0.05rem 0.1rem 0.15rem" }}>
- <div style={{ display:"grid", gap:"0.25rem" }}>
- <div style={{ display:"grid", gridTemplateColumns:"1fr auto", alignItems:"center", gap:"0.35rem" }}>
- <button
- className="btn"
- onClick={() => openAdjustmentDetail(primaryAdjustment)}
- style={{ border:"none", background:"none", padding:0, fontSize:"0.56rem", color:"#cbd5e1", textAlign:"left", justifyContent:"flex-start" }}
- >
- <span style={{ color:"#dbe7f6" }}>{primaryAdjustment.icon} {primaryAdjustment.summary}</span>
- </button>
- <button
- className="btn"
- onClick={() => dismissAdjustment(primaryAdjustment.id)}
- style={{ border:"none", background:"none", padding:0, fontSize:"0.62rem", color:"#64748b", minWidth:18 }}
- aria-label="Dismiss coach adjustment notification"
- >
- x
- </button>
- </div>
- {primaryAdjustment.reason && (
- <div style={{ fontSize:"0.5rem", color:"#7f92aa", lineHeight:1.5, paddingLeft:"0.15rem" }}>
- Why: {primaryAdjustment.reason}
- </div>
- )}
- {secondaryAdjustments.length > 0 && (
- <button
- className="btn"
- onClick={() => setShowMoreAdjustments(v => !v)}
- style={{ border:"none", background:"none", padding:0, fontSize:"0.52rem", color:"#8fa5c8", justifyContent:"flex-start" }}
- >
- {showMoreAdjustments ? "Hide extra adjustments" : `+ ${secondaryAdjustments.length} more adjustments`}
- </button>
- )}
- {showMoreAdjustments && secondaryAdjustments.map((card) => (
- <div key={card.id} style={{ display:"grid", gap:"0.2rem", paddingLeft:"0.15rem" }}>
- <div style={{ display:"grid", gridTemplateColumns:"1fr auto", alignItems:"center", gap:"0.35rem" }}>
- <button
- className="btn"
- onClick={() => openAdjustmentDetail(card)}
- style={{ border:"none", background:"none", padding:0, fontSize:"0.54rem", color:"#9fb2d2", textAlign:"left", justifyContent:"flex-start" }}
- >
- {card.icon} {card.summary}
- </button>
- <button
- className="btn"
- onClick={() => dismissAdjustment(card.id)}
- style={{ border:"none", background:"none", padding:0, fontSize:"0.6rem", color:"#64748b" }}
- aria-label="Dismiss coach adjustment notification"
- >
- x
- </button>
- </div>
- {card.reason && (
- <div style={{ fontSize:"0.48rem", color:"#7f92aa", lineHeight:1.5 }}>
- Why: {card.reason}
- </div>
- )}
- </div>
- ))}
- </div>
- </div>
- )}
-
- {/* Coach context */}
- {false && contextLines.length > 0 && (
- <div style={{ marginBottom:"0.65rem", padding:"0.55rem 0.7rem", background:"#0d1117", borderRadius:8, display:"grid", gap:"0.25rem" }}>
- {contextLines.map((line, i) => (
- <div key={i} style={{ fontSize:"0.54rem", color: i === 0 ? C.amber : i === 1 ? C.green : C.blue }}>{line}</div>
- ))}
- </div>
- )}
-
- {/* Tomorrow preview */}
- <div style={{ display:"none" }}>
- Tomorrow: {tomorrowWorkout?.label || "Rest"}{tomorrowWorkout?.run ? ` - ${tomorrowWorkout.run.d}` : ""}
- </div>
-
- {activeCoachAdjustment && (
- <div onClick={()=>setActiveCoachAdjustment(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"flex-end", zIndex:52 }}>
- <div onClick={e=>e.stopPropagation()} className="card card-strong" style={{ width:"100%", borderRadius:"14px 14px 0 0", padding:"0.95rem 0.95rem 1.05rem", maxHeight:"78vh", overflowY:"auto" }}>
-<div className="sect-title" style={{ color:C.blue, marginBottom:"0.28rem" }}>Coach note</div>
- <div style={{ fontSize:"0.58rem", color:"#e2e8f0", marginBottom:"0.38rem" }}>{activeCoachAdjustment.icon} {activeCoachAdjustment.summary}</div>
- <div style={{ fontSize:"0.56rem", color:"#cbd5e1", lineHeight:1.7 }}>
- {coachAdjustmentLoading ? "Loading coach reasoning..." : (coachAdjustmentDetail || "This adjustment keeps training load targeted for today.")}
- </div>
- <button className="btn" onClick={()=>setActiveCoachAdjustment(null)} style={{ marginTop:"0.65rem", fontSize:"0.52rem" }}>Close</button>
- </div>
- </div>
- )}
-
- {/* Environment editor modal */}
- {showEnvEditor && (
- <div onClick={()=>setShowEnvEditor(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"flex-end", zIndex:50 }}>
- <div onClick={e=>e.stopPropagation()} className="card card-strong" style={{ width:"100%", borderRadius:"14px 14px 0 0", padding:"0.9rem 0.9rem 1rem", maxHeight:"82vh", overflowY:"auto" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>Active planning context</div>
- <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginBottom:"0.45rem" }}>Adjust the live environment and equipment assumptions the planner should use.</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginBottom:"0.5rem" }}>
- Current sources: environment {environmentSourceLabel.toLowerCase()} - equipment {equipmentSourceLabel.toLowerCase()} - duration {durationSourceLabel.toLowerCase()}
- </div>
- <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Environment</div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem", marginBottom:"0.55rem" }}>
- {["Unknown","Home","Gym","Outdoor","Both","Varies","Travel"].map((value) => (
- <button key={value} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, mode:value }))} style={{ fontSize:"0.54rem", color:envDraft.mode===value?C.green:"#94a3b8", borderColor:envDraft.mode===value?C.green+"40":"#334155" }}>{value}</button>
- ))}
- </div>
- <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Equipment</div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem", marginBottom:"0.4rem" }}>
- {[["unknown","Unknown"],["none","None"],["dumbbells","Dumbbells"],["basic_gym","Basic gym"],["full_gym","Full gym"],["mixed","Mixed"]].map(([v,l]) => (
- <button key={v} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, equipment:v }))} style={{ fontSize:"0.54rem", color:envDraft.equipment===v?C.green:"#94a3b8", borderColor:envDraft.equipment===v?C.green+"40":"#334155" }}>{l}</button>
- ))}
- </div>
- <textarea
- value={envDraft.equipmentItems || ""}
- onChange={(e)=>setEnvDraft(prev=>({ ...prev, equipmentItems:e.target.value }))}
- placeholder="Equipment details, comma separated. Example: barbell, rack, adjustable bench"
- rows={2}
- style={{ minHeight:62, marginBottom:"0.55rem", fontSize:"0.54rem", lineHeight:1.5 }}
- />
- <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Time available</div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.3rem", marginBottom:"0.55rem" }}>
- {[["unknown","Unknown"],["20","20 min"],["30","30 min"],["45","45 min"],["60+","60+ min"]].map(([v,l]) => (
- <button key={v} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, time:v }))} style={{ fontSize:"0.54rem", color:envDraft.time===v?C.blue:"#94a3b8", borderColor:envDraft.time===v?C.blue+"40":"#334155" }}>{l}</button>
- ))}
- </div>
- <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Apply scope</div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem", marginBottom:"0.65rem" }}>
- {[["today","Just today"],["week","This week"],["base","Default"]].map(([v,l]) => (
- <button key={v} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, scope:v }))} style={{ fontSize:"0.54rem", color:envDraft.scope===v?C.amber:"#94a3b8", borderColor:envDraft.scope===v?C.amber+"40":"#334155" }}>{l}</button>
- ))}
- </div>
- <button className="btn btn-primary" onClick={async ()=>{ await setEnvironmentMode(envDraft); setShowEnvEditor(false); }} style={{ width:"100%", marginBottom:"0.35rem" }}>Apply changes</button>
- <button className="btn" onClick={async ()=>{ await setEnvironmentMode({ mode:"Unknown", equipment:"unknown", equipmentItems:[], time:"unknown", scope:"base" }); setShowEnvEditor(false); }} style={{ width:"100%", color:"#9fb4d3", borderColor:"#324961" }}>
- Clear assumptions and keep planning neutral
- </button>
- </div>
- </div>
- )}
- </div>
- );
 }
 
-function TodaySessionStackPreview({ summary = null, accentColor = "#00c2ff" }) {
- if (!summary) return null;
- const sessionPlan = summary.sessionPlan || {
- available: Boolean(summary.exercisePreview?.available),
- rows: (summary.exercisePreview?.rows || []).map((row) => ({
- title: row.exercise,
- detail: row.structure,
- note: row.movementNote,
- })),
- sections: summary.exercisePreview?.available ? [{
- key: "session_plan",
- title: summary.sessionType || "Session plan",
- rows: (summary.exercisePreview?.rows || []).map((row) => ({
- title: row.exercise,
- detail: row.structure,
- note: row.movementNote,
- })),
- }] : [],
- note: summary.exercisePreview?.note || "",
- };
- const sections = (sessionPlan.sections || []).length
- ? sessionPlan.sections
- : [{
- key: "session_overview",
- title: summary.sessionType || "Session",
- rows: [{
- title: summary.sessionLabel || "Today's session",
- detail: summary.structure || summary.purpose || "",
- note: summary.movementNote || "",
- }],
- }];
 
-  return (
-    <div
-      data-testid="planned-session-plan"
- style={{
- border:`1px solid ${accentColor}22`,
- borderRadius:12,
- background:"rgba(9,15,24,0.52)",
- padding:"0.62rem 0.66rem",
- display:"grid",
- gap:"0.4rem",
- }}
-    >
-      <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>SESSION PLAN</div>
-<div style={{ display:"grid", gap:"0.35rem" }}>
-{sections.map((section, sectionIndex) => {
- const rows = Array.isArray(section?.rows) ? section.rows : [];
- const previewLimit = 2;
- const previewRows = rows.slice(0, previewLimit);
- const hiddenCount = Math.max(0, rows.length - previewRows.length);
- return (
- <div key={`${section?.key || "section"}_${sectionIndex}`} style={{ display:"grid", gap:"0.2rem" }}>
- <div style={{ fontSize:"0.48rem", color:accentColor, lineHeight:1.4 }}>
- {sanitizeDisplayText(section?.title || "Session block")}
- </div>
- <div style={{ display:"grid", gap:"0.14rem" }}>
- {previewRows.map((row, index) => (
- <div key={`${row?.title || "row"}_${index}`} style={{ display:"grid", gap:"0.03rem" }}>
- <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.4 }}>
- {sanitizeDisplayText(row?.title || "Planned block")}{row?.detail ? ` - ${sanitizeDisplayText(row.detail)}` : ""}
- </div>
- {!!row?.note && (
- <div style={{ fontSize:"0.46rem", color:"#8fa5c8", lineHeight:1.4 }}>
- {sanitizeDisplayText(row.note)}
- </div>
- )}
- </div>
- ))}
- {hiddenCount > 0 && (
- <div style={{ fontSize:"0.46rem", color:"#8fa5c8", lineHeight:1.4 }}>
- +{hiddenCount} more in full session details
- </div>
- )}
- </div>
- </div>
- );
- })}
- </div>
- {!!sessionPlan.note && (
- <div style={{ fontSize:"0.46rem", color:"#64748b", lineHeight:1.4 }}>
- {sanitizeDisplayText(sessionPlan.note)}
- </div>
- )}
- </div>
- );
-}
 
-function WorkoutBlock({ title, color, items, icon, routine = [], defaultOpen = false }) {
- const [expanded, setExpanded] = useState(defaultOpen);
- return (
- <div style={{ background:"#0f172a", borderRadius:10, padding:"1rem", border:`1px solid ${color}15` }}>
- <div style={{ fontSize:"0.78rem", color, marginBottom:"0.6rem", fontWeight:500, display:"flex", alignItems:"center", gap:"0.38rem" }}>
- <InlineGlyph name={icon || "easy_run"} color={color} size={14} />
- <span>{title}</span>
- </div>
- <div style={{ display:"flex", gap:"1.25rem", flexWrap:"wrap" }}>
- {(items ?? []).map(item => (
- <div key={item.label}>
- <div style={{ fontSize:"0.7rem", color:"#475569", marginBottom:"0.15rem" }}>{item.label}</div>
- <div className="mono" style={{ fontSize:"0.95rem", color, fontWeight:500 }}>{item.val}</div>
- </div>
- ))}
- </div>
- {routine.length > 0 && (
- <div style={{ marginTop:"0.65rem", borderTop:"1px solid rgba(148,163,184,0.18)", paddingTop:"0.5rem" }}>
- <button className="btn" onClick={()=>setExpanded(v => !v)} style={{ fontSize:"0.52rem", color, borderColor:`${color}35`, padding:"0.28rem 0.5rem" }}>
- {expanded ? "Hide prescribed routine" : "Show full prescribed routine"}
- </button>
- {expanded && (
- <div style={{ marginTop:"0.5rem", display:"grid", gap:"0.35rem" }}>
- {(routine ?? []).map((step, idx) => (
- <div key={`${step.ex}-${idx}`} style={{ background:"#0b1220", border:"1px solid rgba(148,163,184,0.2)", borderRadius:9, padding:"0.5rem 0.55rem" }}>
- <div style={{ fontSize:"0.58rem", color:"#f1f5f9", marginBottom:"0.2rem" }}>{idx + 1}. {step.ex}</div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(4,minmax(0,1fr))", gap:"0.35rem", marginBottom:"0.2rem" }}>
- <div><div style={{ fontSize:"0.45rem", color:"#64748b" }}>SETS</div><div className="mono" style={{ fontSize:"0.53rem", color:"#cbd5e1" }}>{step.sets}</div></div>
- <div><div style={{ fontSize:"0.45rem", color:"#64748b" }}>REPS/TIME</div><div className="mono" style={{ fontSize:"0.53rem", color:"#cbd5e1" }}>{step.reps}</div></div>
- <div><div style={{ fontSize:"0.45rem", color:"#64748b" }}>REST</div><div className="mono" style={{ fontSize:"0.53rem", color:"#cbd5e1" }}>{step.rest}</div></div>
- <div><div style={{ fontSize:"0.45rem", color:"#64748b" }}>CUE</div><div style={{ fontSize:"0.53rem", color:"#cbd5e1" }}>{step.cue}</div></div>
- </div>
- </div>
- ))}
- </div>
- )}
- </div>
- )}
- </div>
- );
-}
 
-// PLAN TAB
-class ProgramTabErrorBoundary extends React.Component {
- constructor(props) {
- super(props);
- this.state = { hasError: false, nonce: 0 };
- }
- static getDerivedStateFromError() {
- return { hasError: true };
- }
- componentDidCatch(error) {
- try { console.error("[program-tab] render crash", error); } catch {}
- }
- retry = () => this.setState((s) => ({ hasError: false, nonce: s.nonce + 1 }));
- render() {
- if (this.state.hasError) {
- return <div className="card card-soft" onClick={this.retry} style={{ cursor:"pointer", fontSize:"0.58rem", color:"#cbd5e1" }}>Plan unavailable. Tap to retry.</div>;
- }
- return <div key={this.state.nonce}>{this.props.children}</div>;
- }
-}
 
-function PlannedSessionDetailCard({ session = null, accentColor = "#00c2ff", sessionPlanTestId = "planned-session-plan" }) {
- if (!session?.summary) return null;
- const summary = session.summary;
- const sessionPlan = summary.sessionPlan || {
- available: Boolean(summary.exercisePreview?.available),
- sections: summary.exercisePreview?.available ? [{
- key: "session_plan",
- title: "Session plan",
- rows: (summary.exercisePreview?.rows || []).map((row) => ({
- title: row.exercise,
- detail: row.structure,
- note: row.movementNote,
- })),
- }] : [],
- note: summary.exercisePreview?.note || "",
- };
- return (
- <div style={{ border:`1px solid ${accentColor}30`, borderRadius:12, background:"#0b1220", padding:"0.75rem 0.8rem", display:"grid", gap:"0.42rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem", flexWrap:"wrap" }}>
- <div>
- <div style={{ fontSize:"0.66rem", color:"#f8fafc", fontWeight:600, lineHeight:1.35 }}>{sanitizeDisplayText(summary.sessionLabel || session.title || "Planned session")}</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>{sanitizeDisplayText(session.day || "")} - {summary.sessionType}</div>
- </div>
- <div style={{ fontSize:"0.46rem", color:accentColor, background:`${accentColor}14`, border:`1px solid ${accentColor}24`, padding:"0.14rem 0.4rem", borderRadius:999, letterSpacing:"0.08em" }}>
- {summary.expectedDuration}
- </div>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:"0.45rem" }}>
- <div>
- <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.16rem" }}>PURPOSE</div>
- <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>{summary.purpose}</div>
- </div>
- <div>
- <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.16rem" }}>ROUGH STRUCTURE</div>
- <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>{summary.structure}</div>
- </div>
- </div>
- {!!summary.movementNote && (
- <div style={{ fontSize:"0.5rem", color:"#cbd5e1", lineHeight:1.55 }}>
- Movement note: {summary.movementNote}
- </div>
- )}
- {!!summary.why && (
- <div style={{ fontSize:"0.51rem", color:"#8fa5c8", lineHeight:1.55 }}>
- Why this day exists: {summary.why}
- </div>
- )}
- <MovementExplanationInline
- label={summary.sessionLabel || session.title || ""}
- note={summary.movementNote || ""}
- accentColor={accentColor}
- />
- {(sessionPlan.available || sessionPlan.note) && (
- <div data-testid={sessionPlanTestId || undefined} style={{ border:`1px solid ${accentColor}22`, borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.32rem" }}>
- <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em" }}>SESSION PLAN</div>
- {sessionPlan.available ? (
- <div style={{ display:"grid", gap:"0.4rem" }}>
- {(sessionPlan.sections || []).map((section, sectionIndex) => (
- <div key={`${section?.key || "section"}_${sectionIndex}`} style={{ display:"grid", gap:"0.24rem" }}>
- {((sessionPlan.sections || []).length > 1 || section?.title) && (
- <div style={{ fontSize:"0.46rem", color:accentColor, letterSpacing:"0.08em" }}>
- {sanitizeDisplayText(section?.title || "Session block")}
- </div>
- )}
- <div style={{ display:"grid", gap:"0.22rem" }}>
- {(section?.rows || []).map((row, index) => (
- <div key={`${row?.title || "row"}_${index}`} style={{ display:"grid", gap:"0.06rem" }}>
- <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>
- {sanitizeDisplayText(row?.title || "Planned block")}{row?.detail ? ` - ${sanitizeDisplayText(row.detail)}` : ""}
- </div>
- {!!row?.note && (
- <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{sanitizeDisplayText(row.note)}</div>
- )}
- </div>
- ))}
- </div>
- </div>
- ))}
- </div>
- ) : (
- <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.5 }}>{sessionPlan.note}</div>
- )}
- {!!sessionPlan.available && !!sessionPlan.note && (
- <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>{sessionPlan.note}</div>
- )}
- </div>
- )}
- </div>
- );
-}
-
-const toProgramSessionDomToken = (value = "") => String(value || "")
- .trim()
- .toLowerCase()
- .replace(/[^a-z0-9]+/g, "-")
- .replace(/^-+|-+$/g, "")
- .slice(0, 80) || "session";
-
-function ProgramSessionInlineRow({
- session = null,
- isSelected = false,
- onToggle = () => {},
- onKeyDown = null,
- accentColor = "#00c2ff",
- testIdPrefix = "program-session",
- buttonId = "",
- buttonRef = null,
- detailIdOverride = "",
- renderInlineDetail = true,
- buttonStyle = {},
- wrapperStyle = {},
- detailWrapperStyle = {},
- children = null,
-}) {
- if (!session) return null;
- const sessionToken = toProgramSessionDomToken(session.key || `${session.day}_${session.title}`);
- const detailId = detailIdOverride || `${testIdPrefix}-detail-${sessionToken}`;
-
- return (
- <div
- data-testid={`${testIdPrefix}-item-${sessionToken}`}
- data-session-selected={isSelected ? "true" : "false"}
- style={{ display:"grid", gap:isSelected ? "0.42rem" : "0", ...wrapperStyle }}
- >
- <button
- id={buttonId || undefined}
- ref={buttonRef}
- type="button"
- className="btn"
- data-testid={`${testIdPrefix}-button-${sessionToken}`}
- aria-expanded={isSelected}
- aria-controls={detailId}
- onClick={onToggle}
- onKeyDown={onKeyDown}
- style={{
- transition:"border-color 140ms ease, background 140ms ease, box-shadow 140ms ease",
- boxShadow:isSelected ? `0 0 0 1px ${accentColor}18 inset` : "none",
- ...buttonStyle,
- }}
- >
- {typeof children === "function"
- ? children({ session, isSelected, accentColor })
- : children}
- </button>
- {isSelected && renderInlineDetail && (
- <div
- id={detailId}
- data-testid={`${testIdPrefix}-detail-${sessionToken}`}
- style={{ display:"grid", gap:"0.35rem", ...detailWrapperStyle }}
- >
- <PlannedSessionDetailCard session={session} accentColor={accentColor} />
- </div>
- )}
- </div>
- );
-}
-
-const useResponsiveMediaQuery = (query = "", fallback = false) => {
- const [matches, setMatches] = useState(() => {
- if (typeof window === "undefined" || typeof window.matchMedia !== "function") return fallback;
- return window.matchMedia(query).matches;
- });
-
- useEffect(() => {
- if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
- const mediaQuery = window.matchMedia(query);
- const sync = () => setMatches(Boolean(mediaQuery.matches));
- sync();
- if (typeof mediaQuery.addEventListener === "function") {
- mediaQuery.addEventListener("change", sync);
- return () => mediaQuery.removeEventListener("change", sync);
- }
- mediaQuery.addListener(sync);
- return () => mediaQuery.removeListener(sync);
- }, [query]);
-
- return matches;
-};
-
-function ProgramSessionDetailCluster({
- sessions = [],
- selectedSessionKey = "",
- selectedSessionSurface = "",
- surfaceKey = "",
- onToggle = () => {},
- accentColor = "#00c2ff",
- testIdPrefix = "program-session",
- listLabel = "Week session list",
- panelLabel = "Selected day detail",
- emptyDetailTitle = "Select a day",
- emptyDetailBody = "Choose a day to inspect the full prescribed session without losing your place in the week.",
- buttonStyle = {},
- rowWrapperStyle = {},
- detailWrapperStyle = {},
- detailPanelStyle = {},
- renderRowContent = null,
-}) {
- const splitPaneEnabled = useResponsiveMediaQuery("(min-width: 980px)");
- const buttonRefs = useRef([]);
- const detailPanelId = `${testIdPrefix}-detail-panel`;
- const selectedSession = selectedSessionSurface === surfaceKey
- ? (sessions || []).find((session) => session?.key === selectedSessionKey) || null
- : null;
- const selectedToken = toProgramSessionDomToken(selectedSession?.key || `${surfaceKey || "week"}_selection`);
- const selectedButtonId = selectedSession ? `${testIdPrefix}-button-${selectedToken}` : "";
-
- useEffect(() => {
- buttonRefs.current = buttonRefs.current.slice(0, (sessions || []).length);
- }, [sessions]);
-
- const focusButtonAtIndex = (index = 0) => {
- const target = buttonRefs.current[index];
- if (target && typeof target.focus === "function") target.focus();
- };
-
- const buildRowKeyHandler = (index = 0) => (event) => {
- const total = (sessions || []).length;
- if (!total) return;
- if (event.key === "ArrowDown" || event.key === "ArrowRight") {
- event.preventDefault();
- focusButtonAtIndex((index + 1) % total);
- return;
- }
- if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
- event.preventDefault();
- focusButtonAtIndex((index - 1 + total) % total);
- return;
- }
- if (event.key === "Home") {
- event.preventDefault();
- focusButtonAtIndex(0);
- return;
- }
- if (event.key === "End") {
- event.preventDefault();
- focusButtonAtIndex(total - 1);
- return;
- }
- if (event.key === "Escape" && selectedSessionSurface === surfaceKey && selectedSessionKey) {
- event.preventDefault();
- onToggle(selectedSessionKey, surfaceKey);
- }
- };
-
- return (
- <div
- data-testid={`${testIdPrefix}-cluster`}
- style={{ display:"grid", gap:"0.5rem" }}
- >
- <div
- style={{
- display:"grid",
- gridTemplateColumns: splitPaneEnabled ? "minmax(0,0.92fr) minmax(320px,0.88fr)" : "1fr",
- gap:"0.6rem",
- alignItems:"start",
- }}
- >
- <div role="list" aria-label={listLabel} style={{ display:"grid", gap:"0.4rem" }}>
- {(sessions || []).map((session, index) => {
- if (!session) return null;
- const isSelected = selectedSessionKey === session.key && selectedSessionSurface === surfaceKey;
- const sessionToken = toProgramSessionDomToken(session.key || `${session.day}_${session.title}`);
- return (
- <ProgramSessionInlineRow
- key={session.key || `${surfaceKey}_${sessionToken}`}
- session={session}
- isSelected={isSelected}
- onToggle={() => onToggle(session.key, surfaceKey)}
- onKeyDown={buildRowKeyHandler(index)}
- accentColor={accentColor}
- testIdPrefix={testIdPrefix}
- buttonId={`${testIdPrefix}-button-${sessionToken}`}
- buttonRef={(node) => { buttonRefs.current[index] = node; }}
- detailIdOverride={splitPaneEnabled ? detailPanelId : ""}
- renderInlineDetail={!splitPaneEnabled}
- buttonStyle={buttonStyle}
- wrapperStyle={rowWrapperStyle}
- detailWrapperStyle={detailWrapperStyle}
- >
- {typeof renderRowContent === "function"
- ? renderRowContent({ session, isSelected, accentColor })
- : null}
- </ProgramSessionInlineRow>
- );
- })}
- </div>
- {splitPaneEnabled && (
- <div
- id={detailPanelId}
- data-testid={`${testIdPrefix}-detail-panel`}
- role="region"
- aria-live="polite"
- aria-labelledby={selectedButtonId || undefined}
- style={{
- border:`1px solid ${accentColor}26`,
- borderRadius:12,
- background:"#0b1220",
- padding:"0.65rem 0.7rem",
- display:"grid",
- gap:"0.45rem",
- alignSelf:"start",
- ...detailPanelStyle,
- }}
- >
- <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>
- {panelLabel.toUpperCase()}
- </div>
- {selectedSession ? (
- <PlannedSessionDetailCard session={selectedSession} accentColor={accentColor} />
- ) : (
- <div style={{ border:`1px dashed ${accentColor}24`, borderRadius:10, background:"#0f172a", padding:"0.75rem 0.8rem", display:"grid", gap:"0.22rem" }}>
- <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.4 }}>{emptyDetailTitle}</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{emptyDetailBody}</div>
- </div>
- )}
- </div>
- )}
- </div>
- </div>
- );
-}
-
-function ProgramSummaryTile({
- eyebrow = "",
- title = "",
- titleTestId = "",
- body = "",
- titleColor = "#f8fafc",
- bodyColor = "#dbe7f6",
- children = null,
- style = {},
-}) {
- return (
- <div
- style={{
- border:"1px solid #22324a",
- borderRadius:14,
- background:"#0f172a",
- padding:"0.65rem 0.7rem",
- display:"grid",
- gap:"0.28rem",
- ...style,
- }}
- >
- {eyebrow ? <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>{eyebrow}</div> : null}
- {title ? (
- <div data-testid={titleTestId || undefined} style={{ fontSize:"0.66rem", color:titleColor, lineHeight:1.35, fontWeight:600 }}>
- {title}
- </div>
- ) : null}
- {body ? <div style={{ fontSize:"0.52rem", color:bodyColor, lineHeight:1.55 }}>{body}</div> : null}
- {children}
- </div>
- );
-}
-
-function ProgramMiniPill({
- children = null,
- color = "#8fa5c8",
- background = "#15263f",
- borderColor = "#243752",
- dataTestId = "",
-}) {
- if (!children) return null;
- return (
- <span
- data-testid={dataTestId || undefined}
- style={{
- fontSize:"0.45rem",
- color,
- background,
- border:`1px solid ${borderColor}`,
- borderRadius:999,
- padding:"0.12rem 0.34rem",
- lineHeight:1.35,
- }}
- >
- {children}
- </span>
- );
-}
-
-function MovementExplanationInline({ label = "", note = "", accentColor = "#00c2ff" }) {
- const explanation = getMovementExplanation(label);
- const shortNote = sanitizeDisplayText(note || explanation?.whatItIs || "");
- const howToDoIt = sanitizeDisplayText(explanation?.howToDoIt || "");
- const repCountsAs = sanitizeDisplayText(explanation?.repCountsAs || "");
- const substitutions = (explanation?.commonSubstitutions || []).map((entry) => sanitizeDisplayText(entry)).filter(Boolean).join(", ");
- const setupNotes = sanitizeDisplayText(explanation?.setupNotes || "");
- const cautionNotes = sanitizeDisplayText(explanation?.cautionNotes || "");
- const hasExpandedContent = Boolean(howToDoIt || repCountsAs || substitutions || setupNotes || cautionNotes);
-
- if (!shortNote) return null;
-
- return (
- <div style={{ border:`1px solid ${accentColor}24`, borderRadius:10, background:`${accentColor}0d`, padding:"0.48rem 0.55rem", display:"grid", gap:"0.26rem" }}>
- <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>WHAT THIS MEANS</div>
- <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.55 }}>{shortNote}</div>
- {hasExpandedContent && (
- <details>
- <summary style={{ cursor:"pointer", fontSize:"0.48rem", color:accentColor }}>More detail</summary>
- <div style={{ display:"grid", gap:"0.18rem", marginTop:"0.28rem", fontSize:"0.49rem", color:"#cbd5e1", lineHeight:1.55 }}>
- {!!howToDoIt && <div>How: {howToDoIt}</div>}
- {!!repCountsAs && <div>Rep: {repCountsAs}</div>}
- {!!substitutions && <div>Subs: {substitutions}</div>}
- {!!setupNotes && <div>Setup: {setupNotes}</div>}
- {!!cautionNotes && <div>Caution: {cautionNotes}</div>}
- </div>
- </details>
- )}
- </div>
- );
-}
-
-function GoalAnchorQuickEntryPanel({
- goalProgressTracking = null,
- surface = "program",
- bodyweights = [],
- manualProgressInputs = {},
- saveBodyweights = async () => null,
- saveManualProgressInputs = async () => null,
- accentColor = "#00c2ff",
-}) {
- const todayKey = toDateKey(new Date());
- const anchors = useMemo(
- () => buildGoalAnchorQuickEntryModel({ goalProgressTracking }).filter((anchor) => (anchor?.surfaces || []).includes(surface)),
- [goalProgressTracking, surface]
- );
- const anchorTypes = new Set(anchors.map((anchor) => anchor.type));
- const latestBodyweight = bodyweights?.length ? bodyweights[bodyweights.length - 1] : null;
- const latestWaist = getLatestDatedEntry(manualProgressInputs?.measurements?.waist_circumference || []);
- const latestRunBenchmark = getLatestDatedEntry(manualProgressInputs?.benchmarks?.run_results || []);
- const latestLiftBenchmark = getLatestDatedEntry(manualProgressInputs?.benchmarks?.lift_results || []);
- const latestSwimBenchmark = getLatestDatedEntry(manualProgressInputs?.metrics?.swim_benchmark || []);
- const latestSwimAccessReality = getLatestDatedEntry(manualProgressInputs?.metrics?.[BASELINE_METRIC_KEYS.swimAccessReality] || []);
- const [bodyweightDraft, setBodyweightDraft] = useState({ date: todayKey, value: "" });
- const [waistDraft, setWaistDraft] = useState({ date: todayKey, value: "" });
- const [runDraft, setRunDraft] = useState({ date: todayKey, distance: "", duration: "", pace: "" });
- const [liftDraft, setLiftDraft] = useState({ date: todayKey, exercise: "", weight: "", reps: "", sets: "" });
- const [swimDraft, setSwimDraft] = useState({ date: todayKey, distance: "", distanceUnit: "yd", duration: "" });
- const [swimRealityDraft, setSwimRealityDraft] = useState({ date: todayKey, value: "" });
- const [saveMsg, setSaveMsg] = useState("");
- const missingTrackedItems = (goalProgressTracking?.goalCards || []).flatMap((card) => (card?.trackedItems || []).filter((item) => item?.status === GOAL_PROGRESS_STATUSES.needsData));
-
- if (!anchors.length) return null;
-
- const setAck = (text = "") => {
- setSaveMsg(text);
- setTimeout(() => setSaveMsg(""), 2200);
- };
-
- const handleBodyweightSave = async () => {
- const value = Number(bodyweightDraft.value || 0);
- if (!bodyweightDraft.date || !Number.isFinite(value) || value <= 0) return;
- const nextEntry = { date: bodyweightDraft.date, w: Math.round(value * 10) / 10 };
- const nextBodyweights = [...(bodyweights || []).filter((row) => row?.date !== bodyweightDraft.date), nextEntry]
- .sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
- await saveBodyweights(nextBodyweights);
- setBodyweightDraft((current) => ({ ...current, value: "" }));
- setAck("Bodyweight anchor saved.");
- };
-
- const handleWaistSave = async () => {
- const value = Number(waistDraft.value || 0);
- if (!waistDraft.date || !Number.isFinite(value) || value <= 0) return;
- await saveManualProgressInputs((currentInputs) => upsertGoalAnchorQuickEntry({
- manualProgressInputs: currentInputs,
- type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.waist,
- entry: { date: waistDraft.date, value },
- }));
- setWaistDraft((current) => ({ ...current, value: "" }));
- setAck("Waist anchor saved.");
- };
-
- const handleRunBenchmarkSave = async () => {
- if (!runDraft.date || !(Number(runDraft.distance || 0) > 0) || !(String(runDraft.duration || "").trim() || String(runDraft.pace || "").trim())) return;
- await saveManualProgressInputs((currentInputs) => upsertGoalAnchorQuickEntry({
- manualProgressInputs: currentInputs,
- type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.runBenchmark,
- entry: {
- date: runDraft.date,
- distance: runDraft.distance,
- duration: runDraft.duration,
- pace: runDraft.pace,
- },
- }));
- setRunDraft((current) => ({ ...current, distance: "", duration: "", pace: "" }));
- setAck("Run anchor saved.");
- };
-
- const handleLiftBenchmarkSave = async () => {
- if (!liftDraft.date || !liftDraft.exercise.trim() || !(Number(liftDraft.weight || 0) > 0) || !(Number(liftDraft.reps || 0) > 0) || !(Number(liftDraft.sets || 0) > 0)) return;
- await saveManualProgressInputs((currentInputs) => upsertGoalAnchorQuickEntry({
- manualProgressInputs: currentInputs,
- type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.liftBenchmark,
- entry: liftDraft,
- }));
- setLiftDraft((current) => ({ ...current, exercise: "", weight: "", reps: "", sets: "" }));
- setAck("Lift anchor saved.");
- };
-
- const handleSwimBenchmarkSave = async () => {
- if (!swimDraft.date || (!String(swimDraft.distance || "").trim() && !String(swimDraft.duration || "").trim())) return;
- await saveManualProgressInputs((currentInputs) => upsertGoalAnchorQuickEntry({
- manualProgressInputs: currentInputs,
- type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimBenchmark,
- entry: swimDraft,
- }));
- setSwimDraft((current) => ({ ...current, distance: "", duration: "" }));
- setAck("Swim anchor saved.");
- };
-
- const handleSwimRealitySave = async () => {
- if (!swimRealityDraft.date || !String(swimRealityDraft.value || "").trim()) return;
- await saveManualProgressInputs((currentInputs) => upsertGoalAnchorQuickEntry({
- manualProgressInputs: currentInputs,
- type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimAccessReality,
- entry: swimRealityDraft,
- }));
- setSwimRealityDraft((current) => ({ ...current, value: "" }));
- setAck("Swim access saved.");
- };
-
- return (
- <div style={{ border:`1px solid ${accentColor}26`, borderRadius:12, background:"#0f172a", padding:"0.7rem 0.75rem", display:"grid", gap:"0.55rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.5rem", flexWrap:"wrap" }}>
- <div>
- <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.16rem" }}>QUICK ANCHORS</div>
- <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5 }}>
- {missingTrackedItems.length
- ? "Fix missing benchmark anchors here without leaving Plan."
- : "Add or refresh goal anchors here without redoing intake."}
- </div>
- </div>
- {saveMsg && (
- <div style={{ fontSize:"0.47rem", color:accentColor, background:`${accentColor}12`, border:`1px solid ${accentColor}24`, borderRadius:999, padding:"0.14rem 0.4rem", whiteSpace:"nowrap" }}>
- {saveMsg}
- </div>
- )}
- </div>
-
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))", gap:"0.5rem" }}>
- {anchorTypes.has(GOAL_ANCHOR_QUICK_ENTRY_TYPES.bodyweight) && (
- <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0b1322", padding:"0.55rem", display:"grid", gap:"0.28rem" }}>
- <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>Current bodyweight</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
- {latestBodyweight?.w ? `Latest ${Number(latestBodyweight.w).toFixed(1)} lb on ${latestBodyweight.date}` : "No current bodyweight anchor yet."}
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
- <input type="date" value={bodyweightDraft.date} onChange={(e)=>setBodyweightDraft((current) => ({ ...current, date: e.target.value }))} />
- <input type="number" step="0.1" value={bodyweightDraft.value} onChange={(e)=>setBodyweightDraft((current) => ({ ...current, value: e.target.value }))} placeholder="Weight" />
- </div>
- <button type="button" className="btn" onClick={handleBodyweightSave} style={{ width:"fit-content", fontSize:"0.48rem" }}>Save bodyweight</button>
- </div>
- )}
-
- {anchorTypes.has(GOAL_ANCHOR_QUICK_ENTRY_TYPES.waist) && (
- <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0b1322", padding:"0.55rem", display:"grid", gap:"0.28rem" }}>
- <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>Waist</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
- {latestWaist?.value ? `Latest ${Number(latestWaist.value).toFixed(1)} in on ${latestWaist.date}` : "No waist anchor yet."}
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
- <input type="date" value={waistDraft.date} onChange={(e)=>setWaistDraft((current) => ({ ...current, date: e.target.value }))} />
- <input type="number" step="0.1" value={waistDraft.value} onChange={(e)=>setWaistDraft((current) => ({ ...current, value: e.target.value }))} placeholder="Waist" />
- </div>
- <button type="button" className="btn" onClick={handleWaistSave} style={{ width:"fit-content", fontSize:"0.48rem" }}>Save waist</button>
- </div>
- )}
-
- {anchorTypes.has(GOAL_ANCHOR_QUICK_ENTRY_TYPES.runBenchmark) && (
- <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0b1322", padding:"0.55rem", display:"grid", gap:"0.28rem" }}>
- <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>Recent run result</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
- {latestRunBenchmark?.date
- ? joinDisplayParts([
- latestRunBenchmark.distanceMiles ? `Latest ${latestRunBenchmark.distanceMiles} mi` : "Latest manual run anchor",
- latestRunBenchmark.durationMinutes ? `${latestRunBenchmark.durationMinutes} min` : "",
- latestRunBenchmark.paceText || "",
- latestRunBenchmark.date,
- ])
- : "No manual run anchor yet."}
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
- <input type="date" value={runDraft.date} onChange={(e)=>setRunDraft((current) => ({ ...current, date: e.target.value }))} />
- <input type="number" step="0.1" value={runDraft.distance} onChange={(e)=>setRunDraft((current) => ({ ...current, distance: e.target.value }))} placeholder="Miles" />
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
- <input value={runDraft.duration} onChange={(e)=>setRunDraft((current) => ({ ...current, duration: e.target.value }))} placeholder="Time" />
- <input value={runDraft.pace} onChange={(e)=>setRunDraft((current) => ({ ...current, pace: e.target.value }))} placeholder="Pace" />
- </div>
- <button type="button" className="btn" onClick={handleRunBenchmarkSave} style={{ width:"fit-content", fontSize:"0.48rem" }}>Save run anchor</button>
- </div>
- )}
-
- {anchorTypes.has(GOAL_ANCHOR_QUICK_ENTRY_TYPES.liftBenchmark) && (
- <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0b1322", padding:"0.55rem", display:"grid", gap:"0.28rem" }}>
- <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>Lift benchmark</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
- {latestLiftBenchmark?.exercise
- ? joinDisplayParts([
- latestLiftBenchmark.exercise,
- latestLiftBenchmark.weight ? `${latestLiftBenchmark.weight} lb` : "",
- latestLiftBenchmark.reps ? `x ${latestLiftBenchmark.reps}` : "",
- latestLiftBenchmark.sets ? `for ${latestLiftBenchmark.sets} sets` : "",
- latestLiftBenchmark.date,
- ])
- : "No manual lift anchor yet."}
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
- <input type="date" value={liftDraft.date} onChange={(e)=>setLiftDraft((current) => ({ ...current, date: e.target.value }))} />
- <input value={liftDraft.exercise} onChange={(e)=>setLiftDraft((current) => ({ ...current, exercise: e.target.value }))} placeholder="Exercise" />
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.3rem" }}>
- <input type="number" step="2.5" value={liftDraft.weight} onChange={(e)=>setLiftDraft((current) => ({ ...current, weight: e.target.value }))} placeholder="Weight" />
- <input type="number" value={liftDraft.reps} onChange={(e)=>setLiftDraft((current) => ({ ...current, reps: e.target.value }))} placeholder="Reps" />
- <input type="number" value={liftDraft.sets} onChange={(e)=>setLiftDraft((current) => ({ ...current, sets: e.target.value }))} placeholder="Sets" />
- </div>
- <button type="button" className="btn" onClick={handleLiftBenchmarkSave} style={{ width:"fit-content", fontSize:"0.48rem" }}>Save lift anchor</button>
- </div>
- )}
-
- {anchorTypes.has(GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimBenchmark) && (
- <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0b1322", padding:"0.55rem", display:"grid", gap:"0.28rem" }}>
- <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>Recent swim result</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
- {latestSwimBenchmark?.date
- ? joinDisplayParts([
- latestSwimBenchmark.distance ? `${latestSwimBenchmark.distance} ${latestSwimBenchmark.distanceUnit || "yd"}` : "",
- latestSwimBenchmark.duration || "",
- latestSwimBenchmark.date,
- ])
- : "No manual swim anchor yet."}
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
- <input type="date" value={swimDraft.date} onChange={(e)=>setSwimDraft((current) => ({ ...current, date: e.target.value }))} />
- <input value={swimDraft.distance} onChange={(e)=>setSwimDraft((current) => ({ ...current, distance: e.target.value }))} placeholder="Distance" />
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"90px 1fr", gap:"0.3rem" }}>
- <select value={swimDraft.distanceUnit} onChange={(e)=>setSwimDraft((current) => ({ ...current, distanceUnit: e.target.value }))} style={{ fontSize:"0.52rem" }}>
- <option value="yd">yd</option>
- <option value="m">m</option>
- </select>
- <input value={swimDraft.duration} onChange={(e)=>setSwimDraft((current) => ({ ...current, duration: e.target.value }))} placeholder="Time" />
- </div>
- <button type="button" className="btn" onClick={handleSwimBenchmarkSave} style={{ width:"fit-content", fontSize:"0.48rem" }}>Save swim anchor</button>
- </div>
- )}
-
- {anchorTypes.has(GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimAccessReality) && (
- <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0b1322", padding:"0.55rem", display:"grid", gap:"0.28rem" }}>
- <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>Swim access reality</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
- {latestSwimAccessReality?.label || latestSwimAccessReality?.value?.replaceAll("_", " ") || "Not confirmed yet."}
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
- <input type="date" value={swimRealityDraft.date} onChange={(e)=>setSwimRealityDraft((current) => ({ ...current, date: e.target.value }))} />
- <select value={swimRealityDraft.value} onChange={(e)=>setSwimRealityDraft((current) => ({ ...current, value: e.target.value }))} style={{ fontSize:"0.52rem" }}>
- <option value="">Choose one</option>
- <option value={SWIM_ACCESS_REALITY_VALUES.pool}>Pool</option>
- <option value={SWIM_ACCESS_REALITY_VALUES.openWater}>Open water</option>
- <option value={SWIM_ACCESS_REALITY_VALUES.both}>Both</option>
- </select>
- </div>
- <button type="button" className="btn" onClick={handleSwimRealitySave} style={{ width:"fit-content", fontSize:"0.48rem" }}>Save swim setup</button>
- </div>
- )}
- </div>
- </div>
- );
-}
-
-function PlanTab({ planDay = null, surfaceModel = null, currentPlanWeek = null, currentWeek, logs, bodyweights, dailyCheckins = {}, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, syncSurfaceModel = null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveGoalReview = async () => null, saveBodyweights = async () => null, saveManualProgressInputs = async () => null, saveProgramSelection = async () => null, todayWorkout: legacyTodayWorkout, onManagePlan = () => {} }) {
- const PROGRAM_ROADMAP_WEEKS = 15;
- const PROGRAM_NEAR_TERM_DETAIL_WEEKS = 6;
- const PROGRAM_FUTURE_WEEK_PREVIEW_SESSIONS = 3;
- const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
- const goals = athleteProfile?.goals || [];
- const goalBuckets = athleteProfile?.goalBuckets || {};
- const activeTimeBoundGoal = athleteProfile?.activeTimeBoundGoal || null;
- const goalState = athleteProfile?.goalState || {};
- const manualProgressInputs = personalization?.manualProgressInputs || {};
- const programsState = useMemo(
- () => normalizeProgramsSelectionState(personalization?.programs || createDefaultProgramSelectionState()),
- [personalization?.programs]
- );
- const programDefinitions = useMemo(() => listProgramDefinitions(), []);
- const styleDefinitions = useMemo(() => listStyleDefinitions(), []);
- const planDayWeek = planDay?.week || null;
- const [openWeek, setOpenWeek] = useState(currentWeek);
- const [showAllFutureWeeks, setShowAllFutureWeeks] = useState(false);
- const weeklyDraft = weeklyCheckins?.[String(currentWeek)] || { energy: 3, stress: 3, confidence: 3 };
- const [miniWeekly, setMiniWeekly] = useState(weeklyDraft);
- const [scheduleDraft, setScheduleDraft] = useState({ startDate: "", endDate: "", mode: "Travel" });
- const [phaseExpanded, setPhaseExpanded] = useState(false);
- const [strengthTrackerOpen, setStrengthTrackerOpen] = useState(false);
- const [openLiftKey, setOpenLiftKey] = useState("");
- const [goalChangeMode, setGoalChangeMode] = useState(GOAL_CHANGE_MODES.refineCurrentGoal);
- const [goalChangeIntent, setGoalChangeIntent] = useState("");
- const [goalChangePreview, setGoalChangePreview] = useState(null);
- const [goalChangeError, setGoalChangeError] = useState("");
- const [goalChangeNotice, setGoalChangeNotice] = useState("");
- const [goalChangePreviewing, setGoalChangePreviewing] = useState(false);
- const [goalChangeApplying, setGoalChangeApplying] = useState(false);
- const [goalReviewNotice, setGoalReviewNotice] = useState("");
- const [goalReviewSaving, setGoalReviewSaving] = useState(false);
- const [selectedProgramSessionKey, setSelectedProgramSessionKey] = useState("");
- const [selectedProgramSessionSurface, setSelectedProgramSessionSurface] = useState("");
- const [catalogMode, setCatalogMode] = useState("programs");
- const [selectedCatalogProgramId, setSelectedCatalogProgramId] = useState("");
- const [selectedCatalogStyleId, setSelectedCatalogStyleId] = useState("");
- const [selectedProgramFidelityMode, setSelectedProgramFidelityMode] = useState(PROGRAM_FIDELITY_MODES.adaptToMe);
- const [programSelectionNotice, setProgramSelectionNotice] = useState("");
- const [programSelectionError, setProgramSelectionError] = useState("");
- const [programRepairOpen, setProgramRepairOpen] = useState(false);
- const [programRepairNotice, setProgramRepairNotice] = useState("");
- const [goalRepairHint, setGoalRepairHint] = useState("");
- const programRepairSectionRef = useRef(null);
- const goalChangeSectionRef = useRef(null);
- const currentWeekSectionRef = useRef(null);
- const roadmapSectionRef = useRef(null);
- const scheduleEntries = personalization?.environmentConfig?.schedule || [];
- const weeklyProgress = Math.max(0, Math.min(100, Math.round((((Number(miniWeekly.energy) || 0) + (Number(miniWeekly.confidence) || 0) + (6 - (Number(miniWeekly.stress) || 0))) / 15) * 100)));
- const weeklyGoalHit = (Number(miniWeekly.energy) || 0) >= 4 && (Number(miniWeekly.confidence) || 0) >= 4 && (Number(miniWeekly.stress) || 0) <= 3;
- useEffect(() => { setMiniWeekly(weeklyDraft); }, [currentWeek, weeklyCheckins?.[String(currentWeek)]?.ts]);
- useEffect(() => {
- if (!selectedCatalogProgramId && programDefinitions?.[0]?.id) setSelectedCatalogProgramId(programDefinitions[0].id);
- }, [programDefinitions, selectedCatalogProgramId]);
- useEffect(() => {
- if (!selectedCatalogStyleId && styleDefinitions?.[0]?.id) setSelectedCatalogStyleId(styleDefinitions[0].id);
- }, [styleDefinitions, selectedCatalogStyleId]);
- const arbitration = arbitrateGoals({ goals, momentum, personalization });
- const signals = computeAdaptiveSignals({ logs, bodyweights, personalization });
- const displayHorizon = useMemo(() => resolveProgramDisplayHorizon({
- rollingHorizon,
- currentWeek,
- currentPlanWeek: currentPlanWeek || planDayWeek?.planWeek || null,
- weekTemplates: WEEKS,
- goals,
- planComposer,
- momentum,
- learningLayer,
- weeklyCheckins,
- failureMode,
- environmentSelection,
- previewLength: PROGRAM_ROADMAP_WEEKS,
- }), [rollingHorizon, currentWeek, currentPlanWeek, planDayWeek, goals, planComposer, momentum, learningLayer, weeklyCheckins, failureMode, environmentSelection]);
- const visibleProgramHorizonLabel = buildVisiblePlanningHorizonLabel(PROGRAM_ROADMAP_WEEKS);
- const currentWeekModel = currentPlanWeek || planDayWeek?.planWeek || (displayHorizon || []).find((h) => h?.absoluteWeek === currentWeek)?.planWeek || null;
- const committedWeekHistory = useMemo(
- () => listCommittedPlanWeekRecords(planWeekRecords)
- .map((entry) => buildPersistedPlanWeekReview({ planWeekRecord: entry, logs, weeklyCheckins, currentWeek }))
- .filter(Boolean)
- .filter((entry) => Number(entry?.absoluteWeek || 0) <= Number(currentWeek || 0)),
- [planWeekRecords, logs, weeklyCheckins, currentWeek]
- );
- const currentCommittedWeekRecord = getPersistedPlanWeekRecord({ planWeekRecords, absoluteWeek: currentWeek });
- const currentCommittedWeekReview = committedWeekHistory.find((entry) => entry?.isCurrentWeek) || buildPersistedPlanWeekReview({
- planWeekRecord: currentCommittedWeekRecord,
- logs,
- weeklyCheckins,
- currentWeek,
- });
- const runningGoalActive = Boolean(
- activeTimeBoundGoal?.category === "running" ||
- (goals || []).some((goal) => goal?.active && goal?.category === "running")
- );
- const availableProgramWeeks = useMemo(
- () => (displayHorizon || []).map((h) => h?.absoluteWeek).filter((week) => Number.isFinite(week)),
- [displayHorizon]
- );
- useEffect(() => {
- if (!availableProgramWeeks.length) {
- setOpenWeek(null);
- return;
- }
- setOpenWeek((prev) => (availableProgramWeeks.includes(prev) ? prev : availableProgramWeeks[0]));
- }, [availableProgramWeeks]);
- const adjustedWeekMap = {};
- if (runningGoalActive) {
- (displayHorizon || []).forEach((h) => {
- const hasCanonicalSessions = Object.values(h?.planWeek?.sessionsByDay || {}).some(Boolean);
- if (hasCanonicalSessions) return;
- const w = h?.template;
- if (h?.slot >= 1 && w?.mon && w?.thu && w?.fri && w?.sat) {
- const baseAdaptive = buildAdaptiveWeek(w, signals, personalization, memoryInsights);
- adjustedWeekMap[h.absoluteWeek] = baseAdaptive;
- }
- });
- }
- const dayLabels = { 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 0: "Sun" };
- const dayOrder = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
- const liveTodaySession = (() => {
- if (!todayWorkout) return null;
- const dayLabel = dayLabels[new Date().getDay()] || "Sun";
- const detail = surfaceModel?.display?.structure || todayWorkout?.run?.d || todayWorkout?.strengthDuration || todayWorkout?.success || todayWorkout?.fallback || "Adjusted session";
- const icon = todayWorkout?.run ? (RUN_TYPE_ICON[todayWorkout?.run?.t] || RUN_TYPE_ICON[todayWorkout?.type] || "easy_run") : null;
- const summary = surfaceModel?.display || buildDayPrescriptionDisplay({
- training: todayWorkout,
- week: planDay?.week || {},
- provenance: planDay?.provenance || null,
- prescribedExercises: buildStrengthPrescriptionEntriesForLogging(todayWorkout),
- });
- return {
- key: `week_${currentWeek}_${dayLabel}_live`,
- day: dayLabel,
- title: summary.sessionLabel || canonicalProgramLabel || todayWorkout?.label || String(todayWorkout?.type || "Session").replaceAll("-", " "),
- detail,
- icon,
- live: true,
- training: todayWorkout,
- summary,
- };
- })();
- const overlayLiveTodaySession = (sessions = [], absoluteWeek) => {
- if (!liveTodaySession || absoluteWeek !== currentWeek) return sessions;
- const next = [...sessions];
- const existingIndex = next.findIndex((session) => session.day === liveTodaySession.day);
- if (existingIndex >= 0) next[existingIndex] = { ...next[existingIndex], ...liveTodaySession };
- else if (todayWorkout?.type !== "rest") next.push(liveTodaySession);
- return next.sort((a, b) => (dayOrder[a?.day] || 99) - (dayOrder[b?.day] || 99));
- };
- const mapSessionsByDayToProgramWeekSessions = (sessionsByDay = {}) => ([1, 2, 3, 4, 5, 6, 0]
- .map((dayKey) => {
- const session = sessionsByDay?.[dayKey];
- if (!session || session.type === "rest") return null;
- const summary = buildDayPrescriptionDisplay({
- training: session,
- week: {
- weeklyIntent: sessionsByDay?.weeklyIntent || {},
- },
- prescribedExercises: buildStrengthPrescriptionEntriesForLogging(session),
- });
- return {
- key: `week_${absoluteWeek}_${dayKey}`,
- day: dayLabels[dayKey],
- title: summary.sessionLabel || session?.label || String(session?.type || "Session").replaceAll("-", " "),
- detail: session?.run?.d || session?.strengthDose || session?.strengthDuration || session?.success || session?.nutri || "Planned session",
- icon: session?.run ? (RUN_TYPE_ICON[session?.run?.t] || RUN_TYPE_ICON[session?.type] || "easy_run") : null,
- training: session,
- summary,
- };
- })
- .filter(Boolean));
-const getProgramWeekSessions = (absoluteWeek, weekRow = null) => {
- const planWeekForRow = weekRow?.planWeek || (absoluteWeek === currentWeek ? currentWeekModel : null);
- const planWeekSessions = ([1, 2, 3, 4, 5, 6, 0]
- .map((dayKey) => {
- const session = planWeekForRow?.sessionsByDay?.[dayKey];
- if (!session || session.type === "rest") return null;
- const summary = buildDayPrescriptionDisplay({
- training: session,
- week: {
- weeklyIntent: planWeekForRow?.weeklyIntent || null,
- summary: planWeekForRow?.summary || "",
- successDefinition: planWeekForRow?.successDefinition || "",
- programBlock: planWeekForRow?.programBlock || null,
- },
- prescribedExercises: buildStrengthPrescriptionEntriesForLogging(session),
- });
- return {
- key: `week_${absoluteWeek}_${dayKey}`,
- day: dayLabels[dayKey],
- title: summary.sessionLabel || session?.label || String(session?.type || "Session").replaceAll("-", " "),
- detail: session?.run?.d || session?.strengthDose || session?.strengthDuration || session?.success || session?.nutri || "Planned session",
- icon: session?.run ? (RUN_TYPE_ICON[session?.run?.t] || RUN_TYPE_ICON[session?.type] || "easy_run") : null,
- training: session,
- weekContext: planWeekForRow,
- summary,
- };
- })
- .filter(Boolean));
- if (planWeekSessions.length > 0) {
- return overlayLiveTodaySession(planWeekSessions, absoluteWeek);
- }
- if (runningGoalActive) {
- const adaptive = adjustedWeekMap[absoluteWeek] || { adjusted: weekRow?.template || {}, changed: [] };
- const adjusted = adaptive?.adjusted || {};
- return overlayLiveTodaySession([
- (() => { const training = { type: "easy-run", label: adjusted?.mon?.t || "Easy", run: adjusted?.mon }; const summary = buildDayPrescriptionDisplay({ training, week: { summary: weekRow?.focus || "" }, includeWhy: false }); return { key: `week_${absoluteWeek}_1`, day: "Mon", title: summary.sessionLabel || adjusted?.mon?.t || "Easy", detail: adjusted?.mon?.d || "30 min", icon: RUN_TYPE_ICON[adjusted?.mon?.t] || "easy_run", training, summary }; })(),
- (() => { const training = { type: "hard-run", label: adjusted?.thu?.t || "Steady", run: adjusted?.thu }; const summary = buildDayPrescriptionDisplay({ training, week: { summary: weekRow?.focus || "" }, includeWhy: false }); return { key: `week_${absoluteWeek}_4`, day: "Thu", title: summary.sessionLabel || adjusted?.thu?.t || "Steady", detail: adjusted?.thu?.d || "30 min", icon: RUN_TYPE_ICON[adjusted?.thu?.t] || "easy_run", training, summary }; })(),
- (() => { const training = { type: "easy-run", label: adjusted?.fri?.t || "Easy", run: adjusted?.fri }; const summary = buildDayPrescriptionDisplay({ training, week: { summary: weekRow?.focus || "" }, includeWhy: false }); return { key: `week_${absoluteWeek}_5`, day: "Fri", title: summary.sessionLabel || adjusted?.fri?.t || "Easy", detail: adjusted?.fri?.d || "30 min", icon: RUN_TYPE_ICON[adjusted?.fri?.t] || "easy_run", training, summary }; })(),
- (() => { const training = { type: "long-run", label: adjusted?.sat?.t || "Long", run: adjusted?.sat }; const summary = buildDayPrescriptionDisplay({ training, week: { summary: weekRow?.focus || "" }, includeWhy: false }); return { key: `week_${absoluteWeek}_6`, day: "Sat", title: summary.sessionLabel || adjusted?.sat?.t || "Long", detail: adjusted?.sat?.d || "40 min", icon: RUN_TYPE_ICON[adjusted?.sat?.t] || "long_run", training, summary }; })(),
- ], absoluteWeek);
- }
- const dayTemplates = planComposer?.dayTemplates || {};
- return overlayLiveTodaySession(mapSessionsByDayToProgramWeekSessions(dayTemplates), absoluteWeek);
-};
-const phaseNarrative = buildNamedPhaseArc({ rollingHorizon: displayHorizon, goals });
-const activeGoalsList = sortGoalsForPriorityDisplay(goals);
-const primaryPlanningGoal = getPrimaryPlanningGoal(goals);
-const primaryCategory = resolveGoalPlanningCategory(primaryPlanningGoal) || "running";
-const phaseLabels = PHASE_ARC_LABELS[primaryCategory] || PHASE_ARC_LABELS.running;
- const currentTemplate = currentWeekModel?.template || (displayHorizon || []).find(h => h.absoluteWeek === currentWeek)?.template || {};
- const currentProgramBlock = planDayWeek?.programBlock || currentWeekModel?.programBlock || planComposer?.programBlock || null;
- const currentPhase = planDayWeek?.phase || currentWeekModel?.phase || currentTemplate.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
- const currentWeeklyIntent = planDayWeek?.weeklyIntent || currentWeekModel?.weeklyIntent || (currentWeekModel ? {
- focus: currentWeekModel.focus,
- aggressionLevel: currentWeekModel.aggressionLevel,
- recoveryBias: currentWeekModel.recoveryBias,
- volumePct: currentWeekModel?.weeklyIntent?.volumePct,
- nutritionEmphasis: currentWeekModel.nutritionEmphasis,
- } : null);
- const currentPhaseMeta = phaseLabels[currentPhase] || { name: currentPhase, objective: "Execute core plan priorities." };
- const nextPhaseBlock = phaseNarrative.find(b => b.startWeek > currentWeek);
- const dayOfWeek = new Date().getDay();
- const daysLeftInWeek = dayOfWeek === 0 ? 0 : 7 - dayOfWeek;
- const daysToShift = nextPhaseBlock ? Math.max(1, ((nextPhaseBlock.startWeek - currentWeek - 1) * 7) + daysLeftInWeek) : null;
- const phaseShortMeaning = currentProgramBlock?.dominantEmphasis?.label || currentWeeklyIntent?.focus || (primaryCategory === "body_comp"
- ? "Deficit week"
- : primaryCategory === "strength"
- ? "Strength progression"
- : "Endurance progression");
- const phaseBanner = joinDisplayParts([
- sanitizeDisplayText(currentProgramBlock?.label || String(currentPhaseMeta?.name || currentPhase).replace(" Phase", "")),
- sanitizeDisplayText(phaseShortMeaning),
- daysToShift ? `transitions in ${daysToShift} days.` : "current block active.",
- ]);
- const strengthProgress = deriveStrengthProgressTracker({ logs, goals, strengthLayer });
- const strengthGoalTracking = personalization?.strengthProgression?.tracking || {};
- const displayedStrengthProgress = useMemo(() => {
- const base = Array.isArray(strengthProgress) ? strengthProgress : [];
- const seen = new Set(base.map((lift) => lift.key));
- const extras = Object.entries(strengthGoalTracking || {})
- .filter(([key, tracked]) => tracked?.goalWeight && !seen.has(key))
- .map(([key, tracked]) => ({
- key,
- label: tracked?.exercise || key,
- current: tracked?.currentWorkingWeight || null,
- goal: tracked?.goalWeight || null,
- projected: tracked?.projectedDateToGoal || "TBD",
- sessions: [],
- }));
- return [...base, ...extras];
- }, [strengthProgress, strengthGoalTracking]);
- const goalProgressTracking = useMemo(() => buildGoalProgressTrackingFromGoals({
- goals,
- logs,
- bodyweights,
- dailyCheckins,
- weeklyCheckins,
- manualProgressInputs,
- now: new Date(),
- }), [goals, logs, bodyweights, dailyCheckins, weeklyCheckins, manualProgressInputs]);
- const goalProgressCards = goalProgressTracking?.goalCards || [];
- const latestGoalChangeEvent = personalization?.goalChangeHistory?.[0] || null;
- const latestGoalReviewEvent = personalization?.goalReviewHistory?.[0] || null;
- const goalReview = useMemo(() => buildGoalReview({
- goals,
- goalProgressTracking,
- currentProgramBlock,
- goalChangeHistory: personalization?.goalChangeHistory || [],
- goalReviewHistory: personalization?.goalReviewHistory || [],
- now: new Date(),
- }), [goals, goalProgressTracking, currentProgramBlock, personalization?.goalChangeHistory, personalization?.goalReviewHistory]);
- const activeBasisSnapshot = useMemo(
- () => buildActiveBasisSnapshot({ programsState }),
- [programsState]
- );
- const activeProgramDefinition = activeBasisSnapshot?.activeProgramDefinition || null;
- const activeStyleDefinition = activeBasisSnapshot?.activeStyleDefinition || null;
- const selectedProgramDefinition = useMemo(
- () => getProgramDefinitionById(selectedCatalogProgramId || "") || programDefinitions?.[0] || null,
- [selectedCatalogProgramId, programDefinitions]
- );
- const selectedStyleDefinition = useMemo(
- () => getStyleDefinitionById(selectedCatalogStyleId || "") || styleDefinitions?.[0] || null,
- [selectedCatalogStyleId, styleDefinitions]
- );
- const catalogViewModel = useMemo(
- () => buildProgramCatalogViewModel({
- activeProgramInstance: programsState?.activeProgramInstance || null,
- activeStyleSelection: programsState?.activeStyleSelection || null,
- }),
- [programsState?.activeProgramInstance, programsState?.activeStyleSelection]
- );
- const selectedProgramCompatibility = useMemo(
- () => assessProgramCompatibility({
- programDefinition: selectedProgramDefinition,
- athleteProfile,
- personalization,
- goals,
- fidelityMode: selectedProgramFidelityMode,
- }),
- [selectedProgramDefinition, athleteProfile, personalization, goals, selectedProgramFidelityMode]
- );
- const selectedStyleCompatibility = useMemo(
- () => assessStyleCompatibility({
- styleDefinition: selectedStyleDefinition,
- programDefinition: activeProgramDefinition,
- athleteProfile,
- goals,
- activeProgramInstance: programsState?.activeProgramInstance || null,
- }),
- [selectedStyleDefinition, activeProgramDefinition, athleteProfile, goals, programsState?.activeProgramInstance]
- );
- const livePlanBasisExplanation = useMemo(
- () => planComposer?.planningBasis?.planBasisExplanation || buildPlanBasisExplanation({
- athleteProfile,
- activeProgramInstance: programsState?.activeProgramInstance || null,
- activeStyleSelection: programsState?.activeStyleSelection || null,
- programDefinition: activeProgramDefinition,
- styleDefinition: activeStyleDefinition,
- compatibilityAssessment: programsState?.lastCompatibilityAssessment || null,
- }),
- [athleteProfile, programsState?.activeProgramInstance, programsState?.activeStyleSelection, programsState?.lastCompatibilityAssessment, activeProgramDefinition, activeStyleDefinition, planComposer]
- );
- const liveProgramAdherence = planComposer?.planningBasis?.adherence || null;
- const selectedProgramCardExplanation = useMemo(
- () => buildProgramCardExplanation({ programDefinition: selectedProgramDefinition }),
- [selectedProgramDefinition]
- );
- const selectedStyleCardExplanation = useMemo(
- () => buildStyleCardExplanation({ styleDefinition: selectedStyleDefinition }),
- [selectedStyleDefinition]
- );
- const selectedProgramActivationCopy = useMemo(
- () => buildActivationConfirmationCopy({
- programDefinition: selectedProgramDefinition,
- fidelityMode: selectedProgramFidelityMode,
- compatibilityAssessment: selectedProgramCompatibility,
- }),
- [selectedProgramDefinition, selectedProgramFidelityMode, selectedProgramCompatibility]
- );
- const selectedStyleActivationCopy = useMemo(
- () => buildActivationConfirmationCopy({
- styleDefinition: selectedStyleDefinition,
- compatibilityAssessment: selectedStyleCompatibility,
- }),
- [selectedStyleDefinition, selectedStyleCompatibility]
- );
- const selectedProgramWarningCopy = useMemo(
- () => buildCompatibilityWarningCopy({ compatibilityAssessment: selectedProgramCompatibility }),
- [selectedProgramCompatibility]
- );
- const selectedStyleWarningCopy = useMemo(
- () => buildCompatibilityWarningCopy({ compatibilityAssessment: selectedStyleCompatibility }),
- [selectedStyleCompatibility]
- );
- const selectedStyleOverlayPreview = useMemo(
- () => buildStyleOverlayPreview({
- styleDefinition: selectedStyleDefinition,
- influenceLevel: STYLE_INFLUENCE_LEVELS.standard,
- programDefinition: activeProgramDefinition,
- }),
- [selectedStyleDefinition, activeProgramDefinition]
- );
- const getGoalProgressTone = (status = "") => {
- if (status === GOAL_PROGRESS_STATUSES.onTrack) return { color: C.green, bg: `${C.green}14`, border: `${C.green}36` };
- if (status === GOAL_PROGRESS_STATUSES.reviewBased) return { color: C.blue, bg: `${C.blue}14`, border: `${C.blue}32` };
- if (status === GOAL_PROGRESS_STATUSES.needsData) return { color: C.amber, bg: `${C.amber}14`, border: `${C.amber}34` };
- return { color: "#cbd5e1", bg: "#172131", border: "#2b3d55" };
- };
- const getGoalReviewVerdictTone = (verdict = "") => {
- if (verdict === "yes" || verdict === "no") return { color: C.green, bg: `${C.green}14`, border: `${C.green}36` };
- if (verdict === "reprioritize") return { color: C.amber, bg: `${C.amber}14`, border: `${C.amber}36` };
- if (verdict === "review" || verdict === "mixed") return { color: C.blue, bg: `${C.blue}14`, border: `${C.blue}32` };
- return { color: "#cbd5e1", bg: "#172131", border: "#2b3d55" };
- };
- const weeklyCoachBrief = buildWeeklyPlanningCoachBrief({
- goals,
- momentum,
- learningLayer,
- failureMode,
- salvageLayer,
- weeklyCheckin: miniWeekly,
- environmentSelection,
- patterns,
- });
- const hasWeeklyCheckinInput = Boolean(weeklyCheckins?.[String(currentWeek)]?.ts);
- const showingLiveTodayInProgram = Boolean(todayWorkout?.label && availableProgramWeeks.includes(currentWeek));
- const programProvenance = buildProvenanceText({
- inputs: [
- "your active goals",
- "recent completion trend",
- environmentSelection?.mode ? `your ${String(environmentSelection.mode || "training").toLowerCase()} environment` : "your training environment",
- hasWeeklyCheckinInput ? "this week's check-in" : null,
- currentWeeklyIntent?.focus ? "this week's explicit intent" : null,
- showingLiveTodayInProgram ? "today's live adjustment" : null,
- ],
- limitation: hasWeeklyCheckinInput ? "" : "Weekly check-in input is limited.",
- });
- const programTrust = buildTrustSummary({
- explicitUserInput: hasWeeklyCheckinInput,
- loggedActuals: Boolean(Object.keys(logs || {}).length),
- deviceData: Boolean((deviceSyncAudit?.utilization || []).some((line) => !/none|unavailable/i.test(String(line || "")))),
- inferredHeuristics: true,
- limitation: hasWeeklyCheckinInput ? "" : "Weekly check-in input is limited.",
- stale: Boolean(deviceSyncAudit?.readiness <= 0 && deviceSyncAudit?.garminRecentCount === 0 && deviceSyncAudit?.appleRecentCount === 0),
- });
- const programTrustTone = buildReviewBadgeTone(
- programTrust.level === "grounded" ? "match" : programTrust.level === "partial" ? "changed" : "recovery"
- , C);
- const programWeekBasisLine = buildProgramWeekExplanation({
- basisExplanation: livePlanBasisExplanation,
- currentBlockLabel: currentProgramBlock?.label || currentPhaseMeta?.name || "",
- });
- const plannedSessionsThisWeek = getProgramWeekSessions(currentWeek, (displayHorizon || []).find((h) => h?.absoluteWeek === currentWeek) || null).length;
- const currentWeekStart = new Date();
- currentWeekStart.setHours(0, 0, 0, 0);
- const currentWeekDay = currentWeekStart.getDay();
- const mondayShift = currentWeekDay === 0 ? -6 : 1 - currentWeekDay;
- currentWeekStart.setDate(currentWeekStart.getDate() + mondayShift);
- const weekBounds = (offset = 0) => {
- const start = new Date(currentWeekStart);
- start.setDate(start.getDate() + (offset * 7));
- const end = new Date(start);
- end.setDate(start.getDate() + 6);
- try {
- return { start: start.toISOString().split("T")[0], end: end.toISOString().split("T")[0] };
- } catch {
- return { start: "", end: "" };
- }
- };
- const completionStatuses = new Set(["completed_as_planned", "completed_modified", "partial_completed"]);
- const weekEntries = (offset = 0) => {
- const { start, end } = weekBounds(offset);
- return Object.entries(logs || {}).filter(([date]) => date >= start && date <= end);
- };
- const completedCountForEntries = (entries = []) => entries.filter(([, l]) => {
- const status = l?.checkin?.status;
- return completionStatuses.has(status) || Number(l?.miles || 0) > 0 || String(l?.type || "").length > 0;
- }).length;
- const calibrationState = deriveCalibrationState({ logs, dailyCheckins });
- const isCalibration = Boolean(momentum?.isCalibration || calibrationState.isCalibration);
- const sessionsCompletedThisWeek = completedCountForEntries(weekEntries(0));
- const feelAvgThisWeek = (() => {
- const vals = (weekEntries(0) ?? []).map(([, l]) => Number(l?.feel)).filter((n) => Number.isFinite(n) && n > 0);
- return vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length) : 3;
- })();
- const completionRateLast3weeks = (() => {
- const rates = ([-1, -2, -3] ?? []).map((offset) => {
- const entries = weekEntries(offset);
- if (!entries.length) return 0;
- const completed = completedCountForEntries(entries);
- const planned = Math.max(1, plannedSessionsThisWeek);
- return Math.min(1, completed / planned);
- });
- return rates.reduce((a, b) => a + b, 0) / rates.length;
- })();
- const completionRateLast4weeks = (() => {
- const rates = ([-1, -2, -3, -4] ?? []).map((offset) => {
- const entries = weekEntries(offset);
- if (!entries.length) return 0;
- const completed = completedCountForEntries(entries);
- const planned = Math.max(1, plannedSessionsThisWeek);
- return Math.min(1, completed / planned);
- });
- return rates.reduce((a, b) => a + b, 0) / rates.length;
- })();
- const completionRateThisWeek = Math.min(1, sessionsCompletedThisWeek / Math.max(1, plannedSessionsThisWeek));
- const nextWeekType = (() => {
-if (isCalibration) return "getting-started week";
- const lowEnergy = Number(miniWeekly?.energy || 3) <= 2;
- const highStress = Number(miniWeekly?.stress || 3) >= 4;
- const lowConfidence = Number(miniWeekly?.confidence || 3) <= 2;
- const chaotic = failureMode?.mode === "chaotic" || salvageLayer?.active;
- const slipping = ["drifting", "falling off"].includes(momentum?.momentumState) || momentum?.inconsistencyRisk === "high";
- const lockedIn = momentum?.momentumState === "building momentum" && !slipping && !chaotic;
- if (chaotic || lowEnergy || highStress) return "reduced-load week";
- if (slipping || lowConfidence) return "rebuild week";
- if (lockedIn) return "progression week";
- return "consistency week";
- })();
-const weeklyConsistencyAnchor = isCalibration
-? `Starter week: log the first ${calibrationState.minHistoryCount} sessions and the plan will start matching your real rhythm.`
-: buildWeeklyConsistencyAnchor({
-sessionsCompleted: sessionsCompletedThisWeek,
-sessionsPlanned: plannedSessionsThisWeek,
-feelAvg: feelAvgThisWeek,
- completionRateLast3weeks,
- nextWeekType,
- });
- const badWeekTriage = !isCalibration && completionRateThisWeek < 0.6
- ? buildBadWeekTriageResponse({
- completionRateThisWeek,
- completionRateLast4weeks,
- feelAvg: feelAvgThisWeek,
- checkInStress: miniWeekly?.stress,
- nextWeekPlan: nextWeekType,
- })
- : "";
- const currentWeekRow = (displayHorizon || []).find((h) => h?.absoluteWeek === currentWeek) || null;
- const currentWeekSessions = getProgramWeekSessions(currentWeek, currentWeekRow);
- const currentDayOfWeek = new Date().getDay();
- const currentWeekGridCells = useMemo(() => buildProgramWeekGridCells({
- weekRow: currentWeekRow,
- currentWeek,
- currentDayOfWeek,
- liveTodayTraining: todayWorkout || null,
- fallbackSessionsByDay: planComposer?.dayTemplates || {},
- }), [currentWeekRow, currentWeek, currentDayOfWeek, todayWorkout, planComposer?.dayTemplates]);
-const roadmapWeekRows = useMemo(() => buildProgramRoadmapRows({
-  displayHorizon: (displayHorizon || []).slice(0, PROGRAM_ROADMAP_WEEKS),
-  currentWeek,
-}), [displayHorizon, currentWeek]);
-const futureWeekRows = (displayHorizon || []).filter((h) => Number(h?.absoluteWeek || 0) > currentWeek);
-const detailedFutureWeekRows = showAllFutureWeeks
-? futureWeekRows
-: futureWeekRows.slice(0, PROGRAM_NEAR_TERM_DETAIL_WEEKS);
-const hiddenFutureWeekCount = Math.max(0, futureWeekRows.length - detailedFutureWeekRows.length);
- const activeGoalPriorityRows = buildGoalPriorityRows(goals);
- const metricsBaselinesModel = useMemo(() => buildMetricsBaselinesModel({
- athleteProfile,
- personalization,
- bodyweights,
- logs,
- }), [athleteProfile, personalization, bodyweights, logs]);
- const supportTierModel = useMemo(() => (
- planComposer?.supportTier
- || buildSupportTierModel({
- goals,
- domainAdapterId: planComposer?.domainAdapter?.id || "",
- goalCapabilityStack: planComposer?.goalCapabilityStack || null,
- })
- ), [planComposer, goals]);
- const environmentBaselineCard = metricsBaselinesModel?.cards?.find((card) => card?.id === "environment") || null;
- const hasInlineRepairNeeds = Boolean(
- (metricsBaselinesModel?.missingCards?.length || 0) > 0
- || environmentBaselineCard?.source === TRAINING_CONTEXT_SOURCES.staleCarryover
- );
- const currentWeekLabel = currentWeekRow?.weekLabel || currentWeekModel?.label || `Week ${currentWeek}`;
- const blockSummaryLine = currentProgramBlock?.summary || currentWeekModel?.summary || planComposer?.programBlock?.summary || arbitration.allocationNarrative;
- const committedWeekHistoryPreview = committedWeekHistory.slice(0, 6);
- const priorCommittedWeekHistoryPreview = committedWeekHistory.filter((entry) => !entry?.isCurrentWeek).slice(0, 6);
- const hierarchyIntentBits = [
- currentWeeklyIntent?.aggressionLevel ? String(currentWeeklyIntent.aggressionLevel).replaceAll("_", " ") : null,
- currentWeeklyIntent?.recoveryBias ? `recovery ${String(currentWeeklyIntent.recoveryBias).replaceAll("_", " ")}` : null,
- currentWeeklyIntent?.volumePct ? `volume ${currentWeeklyIntent.volumePct}%` : null,
- currentProgramBlock?.nutritionPosture?.mode ? `nutrition ${String(currentProgramBlock.nutritionPosture.mode).replaceAll("_", " ")}` : null,
- currentWeeklyIntent?.nutritionEmphasis || null,
- ].filter(Boolean);
- const compressWeekCopy = (text = "", maxLen = 165) => {
- const normalized = String(text || "").replace(/\s+/g, " ").trim();
- if (!normalized) return "";
- if (normalized.length <= maxLen) return normalized;
- return `${normalized.slice(0, Math.max(0, maxLen - 1)).trim()}...`;
- };
- const currentWeekPurposeLine = compressWeekCopy(currentWeeklyIntent?.focus || currentWeekLabel, 140);
- const currentWeekMattersLine = compressWeekCopy(weeklyCoachBrief || blockSummaryLine || "Current week plan", 165);
- const currentWeekChangesLine = compressWeekCopy(
- surfaceModel?.preferenceAndAdaptationLine
- || surfaceModel?.changeSummaryLine
- || surfaceModel?.canonicalReasonLine
- || currentWeekModel?.changeSummary?.surfaceLine
- || currentWeekModel?.changeSummary?.headline
- || badWeekTriage
- || (Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0
- ? currentWeekModel.constraints.slice(0, 2).join(" - ")
- : hierarchyIntentBits.join(" - ")),
- 165
- ) || "This week is following the normal build.";
- const canonicalProgramLabel = sanitizeDisplayText(
- surfaceModel?.display?.sessionLabel
- || todayWorkout?.label
-|| "Today's plan"
- );
- const normalizedProgramChangeLine = sanitizeDisplayText(currentWeekChangesLine).toLowerCase();
- const normalizedProgramCanonicalReason = sanitizeDisplayText(surfaceModel?.canonicalReasonLine).toLowerCase();
- const normalizedProgramProvenanceLine = sanitizeDisplayText(surfaceModel?.provenanceLine).toLowerCase();
- const canonicalProgramReason = sanitizeDisplayText(
- (surfaceModel?.canonicalReasonLine && normalizedProgramCanonicalReason !== normalizedProgramChangeLine
- ? surfaceModel.canonicalReasonLine
- : !surfaceModel?.canonicalReasonLine && surfaceModel?.provenanceLine && normalizedProgramProvenanceLine !== normalizedProgramChangeLine
- ? surfaceModel.provenanceLine
- : "")
- );
- const currentWeekWinLine = compressWeekCopy(weeklyConsistencyAnchor, 165);
- const currentWeekMetaLine = [
- `${sessionsCompletedThisWeek}/${Math.max(1, plannedSessionsThisWeek)} sessions done`,
- nextWeekType,
- currentWeekModel?.adjusted ? "week adapted" : "",
- metricsBaselinesModel?.missingCards?.length ? `${metricsBaselinesModel.missingCards.length} input${metricsBaselinesModel.missingCards.length === 1 ? "" : "s"} to add` : "",
- ].filter(Boolean).join(" - ");
- const currentWeekContextLine = currentCommittedWeekReview
- ? `Saved week review for ${currentCommittedWeekReview.label}. The ${visibleProgramHorizonLabel} stay visible so you can see where the plan is headed.`
- : `This week moves into Saved week reviews when it closes. The ${visibleProgramHorizonLabel} stay visible so you can track the build ahead.`;
- const currentWeekReviewStory = currentCommittedWeekReview?.story || null;
- const currentWeekReviewActualLine = compressWeekCopy(
- currentWeekReviewStory?.actualSummary
- || `${sessionsCompletedThisWeek}/${Math.max(1, plannedSessionsThisWeek)} sessions are logged so far this week.`,
- 165
- );
- const currentWeekReviewNextLine = compressWeekCopy(
- currentWeekReviewStory?.nextEffect
- || currentWeekChangesLine
- || "The remaining days should stay calm and consistent.",
- 165
- );
- const currentRoadmapRow = roadmapWeekRows.find((row) => row.isCurrentWeek) || roadmapWeekRows[0] || null;
- const nextRoadmapRow = roadmapWeekRows.find((row) => row.isNextWeek) || roadmapWeekRows.find((row) => Number(row?.absoluteWeek || 0) > Number(currentWeek || 0)) || null;
- const currentDayCell = currentWeekGridCells.find((cell) => cell.isToday) || currentWeekGridCells.find((cell) => !cell.isRest) || currentWeekGridCells[0] || null;
- const upcomingCutbackRow = roadmapWeekRows.find((row) => Number(row?.absoluteWeek || 0) > Number(currentWeek || 0) && row.cutback) || null;
- const peakVisibleLongRunRow = roadmapWeekRows.reduce((best, row) => (
- Number(row?.longRunValue || 0) > Number(best?.longRunValue || 0) ? row : best
- ), null);
- const roadmapLongRunUnits = Array.from(new Set(roadmapWeekRows.map((row) => row?.longRunUnit).filter(Boolean)));
- const roadmapLongRunScaleMax = roadmapLongRunUnits.length === 1
- ? roadmapWeekRows.reduce((max, row) => Math.max(max, Number(row?.longRunValue || 0)), 0)
- : 0;
-const activePhaseBlock = phaseNarrative.find((block) => currentWeek >= block.startWeek && currentWeek <= block.endWeek) || phaseNarrative[0] || null;
-const currentPositionLine = currentDayCell
-? joinDisplayParts([
-currentDayCell.dayLabel,
-sanitizeDisplayText(currentDayCell.title),
-sanitizeDisplayText(currentDayCell.detail),
-])
-: canonicalProgramLabel;
-const programDayCommandModel = buildTodayCommandCenterModel({
-training: todayWorkout,
-summary: surfaceModel?.display || null,
-changeSummary: currentWeekChangesLine,
-explanation: surfaceModel?.explanationModel || null,
-nextStep: currentWeekPurposeLine,
-hasLogged: false,
-});
-const programDayContextLine = programDayCommandModel?.dayKind === "rest"
-? "Today is the recovery slot in this week, not a missing workout."
-: programDayCommandModel?.dayKind === "hybrid"
-? `${currentPositionLine}. This is the combined run and lift touchpoint inside the week.`
-: `${currentPositionLine}. This is today's place inside the current chapter.`;
-const sharedProgramCurrentDaySummary = buildSharedSessionSummaryModel({
-surfaceModel,
-commandCenterModel: programDayCommandModel,
-sessionContextLine: programDayContextLine,
-currentWeekFocus: currentWeekPurposeLine,
-});
-const preferredGoalProgressKeysByCategory = {
-running: ["long_run_duration", "goal_pace_anchor", "weekly_run_frequency", "quality_session_completion", "baseline_benchmark"],
-strength: ["projected_goal_progress", "performance_record", "top_set_load", "weekly_training_frequency"],
-body_comp: ["bodyweight_trend", "waist_circumference", "checkin_consistency"],
-general_fitness: ["baseline_improvement", "checkin_consistency", "readiness_anchor", "baseline_benchmark"],
-};
-const buildGoalProgressHighlight = (card = null, category = primaryCategory, maxLen = 88) => {
-if (!card) return null;
-const trackedItems = Array.isArray(card?.trackedItems) ? card.trackedItems : [];
-const preferredKeys = preferredGoalProgressKeysByCategory[category] || preferredGoalProgressKeysByCategory.general_fitness;
-const preferredItem = preferredKeys
-.map((key) => trackedItems.find((item) => item?.key === key))
-.find(Boolean)
-|| trackedItems.find((item) => item?.currentDisplay || item?.trendDisplay)
-|| trackedItems[0]
-|| null;
-return {
-goalId: card?.goalId || card?.summary || "goal_progress",
-label: sanitizeDisplayText(card?.summary || "Goal"),
-detail: compressWeekCopy(
-sanitizeDisplayText(preferredItem?.currentDisplay || card?.nextReviewFocus || card?.statusSummary || ""),
-maxLen
-),
-trend: compressWeekCopy(sanitizeDisplayText(preferredItem?.trendDisplay || ""), 78),
-status: card?.status || "",
-planningCategory: card?.planningCategory || category || "general_fitness",
-};
-};
-const primaryGoalProgressCard = goalProgressCards.find((card) => (
-Number(card?.planningPriority || 99) === Number(primaryPlanningGoal?.priority || 99)
-))
-|| goalProgressCards.find((card) => card?.planningCategory === primaryCategory)
-|| goalProgressCards[0]
-|| null;
-const secondaryGoalProgressCards = goalProgressCards.filter((card) => card !== primaryGoalProgressCard).slice(0, 2);
-const primaryGoalProgressHighlight = buildGoalProgressHighlight(primaryGoalProgressCard, primaryCategory, 96);
-const secondaryGoalProgressHighlights = secondaryGoalProgressCards
-.map((card) => buildGoalProgressHighlight(card, card?.planningCategory || "general_fitness", 80))
-.filter(Boolean);
-const roadmapGoalHighlights = [primaryGoalProgressHighlight, ...secondaryGoalProgressHighlights].filter(Boolean);
-const buildRoadmapSessionMixLine = (row = null, { includeFocus = false } = {}) => {
-const parts = [];
-if (Number(row?.strengthCount || 0) > 0) parts.push(row.strengthLabel);
-if (Number(row?.runCount || 0) > 0) parts.push(row.runLabel);
-else if (Number(row?.qualityCount || 0) > 0) parts.push(row.qualityLabel);
-const mixLine = joinDisplayParts(parts);
-if (mixLine) return sanitizeDisplayText(mixLine);
-return includeFocus ? compressWeekCopy(sanitizeDisplayText(row?.focus || ""), 82) : "";
-};
-const buildRoadmapSupportLine = (row = null, category = primaryCategory) => {
-if (!row) return "";
-if (category === "running") {
-return Number(row?.strengthCount || 0) > 0 ? sanitizeDisplayText(row.strengthLabel) : "";
-}
-if (category === "strength") {
-if (row?.longRunLabel && row.longRunLabel !== "No long run") return `Run support ${sanitizeDisplayText(row.longRunLabel)}`;
-if (Number(row?.runCount || 0) > 0) return sanitizeDisplayText(row.runLabel);
-if (Number(row?.qualityCount || 0) > 0) return sanitizeDisplayText(row.qualityLabel);
-return "";
-}
-if (category === "body_comp") {
-return buildRoadmapSessionMixLine(row, { includeFocus: false });
-}
-return buildRoadmapSessionMixLine(row, { includeFocus: false });
-};
-const buildRoadmapMetricPills = (row = null, category = primaryCategory, fallbackFocus = "") => {
-const rawPills = category === "running"
-? [
-row?.longRunLabel && row.longRunLabel !== "No long run" ? `Long run ${row.longRunLabel}` : "",
-Number(row?.qualityCount || 0) > 0 ? row.qualityLabel : "",
-Number(row?.strengthCount || 0) > 0 ? row.strengthLabel : "",
-]
-: category === "strength"
-? [
-Number(row?.strengthCount || 0) > 0 ? row.strengthLabel : "Strength work visible",
-buildRoadmapSupportLine(row, category),
-Number(row?.qualityCount || 0) > 0 ? row.qualityLabel : "",
-]
-: category === "body_comp"
-? [
-buildRoadmapSessionMixLine(row, { includeFocus: false }),
-compressWeekCopy(sanitizeDisplayText(row?.focus || fallbackFocus || ""), 68),
-]
-: [
-buildRoadmapSessionMixLine(row, { includeFocus: false }),
-compressWeekCopy(sanitizeDisplayText(row?.focus || fallbackFocus || ""), 68),
-Number(row?.strengthCount || 0) > 0 ? row.strengthLabel : "",
-];
-return rawPills
-.map((pill) => sanitizeDisplayText(pill))
-.filter((pill, index, all) => pill && pill !== "No strength day" && pill !== "No run day" && all.indexOf(pill) === index)
-.slice(0, 3);
-};
-const buildRoadmapPrimaryCard = (row = null, category = primaryCategory, fallbackValue = "") => {
-if (category === "running") {
-return {
-label: "LONG RUN",
-value: sanitizeDisplayText(
-row?.longRunLabel && row.longRunLabel !== "No long run"
-? row.longRunLabel
-: fallbackValue || "TBD"
-),
-delta: row?.longRunDeltaLabel || "Hold",
-detail: "",
-};
-}
-if (category === "strength") {
-return {
-label: "STRENGTH BUILD",
-value: Number(row?.strengthCount || 0) > 0 ? sanitizeDisplayText(row.strengthLabel) : "Strength work visible",
-delta: "",
-detail: buildRoadmapSupportLine(row, category),
-};
-}
-if (category === "body_comp") {
-return {
-label: "TRAINING RHYTHM",
-value: buildRoadmapSessionMixLine(row, { includeFocus: false }) || sanitizeDisplayText(fallbackValue || "Training rhythm visible"),
-delta: "",
-detail: compressWeekCopy(sanitizeDisplayText(row?.focus || fallbackValue || ""), 82),
-};
-}
-return {
-label: "PRIMARY BUILD",
-value: buildRoadmapSessionMixLine(row, { includeFocus: false }) || sanitizeDisplayText(fallbackValue || "Primary build visible"),
-delta: "",
-detail: compressWeekCopy(sanitizeDisplayText(row?.focus || fallbackValue || ""), 82),
-};
-};
-const currentRoadmapMetricPills = buildRoadmapMetricPills(currentRoadmapRow, primaryCategory, currentWeekPurposeLine);
-const currentRoadmapPrimaryCard = buildRoadmapPrimaryCard(currentRoadmapRow, primaryCategory, currentWeekPurposeLine);
-const currentWeekStateLabel = currentRoadmapRow?.cutback
-? "Cutback week"
-: currentWeekModel?.adjusted
-? "Updated week"
-: "Build week";
-const roadmapIntroLine = primaryCategory === "running"
-? "Long run, key work, strength, cutbacks, and phase shifts."
-: primaryCategory === "strength"
-? "Strength build, support work, cutbacks, and phase shifts."
-: primaryCategory === "body_comp"
-? "Training rhythm, support work, and phase shifts."
-: "Primary build, support work, cutbacks, and phase shifts.";
-const buildDirectionLine = (() => {
-if (primaryCategory === "running" && currentRoadmapRow?.longRunLabel && currentRoadmapRow.longRunLabel !== "No long run") {
-if (nextRoadmapRow?.longRunLabel && nextRoadmapRow.longRunLabel !== "No long run") {
-if (currentRoadmapRow.cutback && nextRoadmapRow.longRunDeltaLabel && /^\+/.test(nextRoadmapRow.longRunDeltaLabel)) {
-return `Cutback week now, then back up to ${nextRoadmapRow.longRunLabel} next week.`;
-}
-if (nextRoadmapRow.cutback) return `Long run eases to ${nextRoadmapRow.longRunLabel} next week so the block can absorb the work.`;
-if (nextRoadmapRow.longRunDeltaLabel && /^\+/.test(nextRoadmapRow.longRunDeltaLabel)) {
-return `Long run builds from ${currentRoadmapRow.longRunLabel} this week to ${nextRoadmapRow.longRunLabel} next week.`;
-}
-return `Long run is ${currentRoadmapRow.longRunLabel} this week and ${nextRoadmapRow.longRunLabel} next week.`;
-}
-return `Long run sits at ${currentRoadmapRow.longRunLabel} this week.`;
-}
-if (primaryCategory === "strength") {
-const currentStrengthLine = currentRoadmapPrimaryCard.value || "Strength work visible";
-const nextStrengthLine = nextRoadmapRow ? buildRoadmapPrimaryCard(nextRoadmapRow, primaryCategory, "").value : "";
-const supportLine = buildRoadmapSupportLine(currentRoadmapRow, primaryCategory);
-if (nextStrengthLine && nextStrengthLine !== currentStrengthLine) {
-return `Current focus: ${currentStrengthLine}. Next week moves to ${nextStrengthLine.toLowerCase()}.${supportLine ? ` ${supportLine} keeps the secondary lane moving.` : ""}`;
-}
-if (supportLine) return `Current focus: ${currentStrengthLine}. ${supportLine} keeps the secondary lane moving.`;
-return primaryGoalProgressHighlight?.detail
-? `Current focus: ${currentStrengthLine}. ${primaryGoalProgressHighlight.detail}`
-: `Current focus: ${currentStrengthLine}.`;
-}
-if (primaryCategory === "body_comp") {
-const currentMixLine = buildRoadmapSessionMixLine(currentRoadmapRow, { includeFocus: false }) || currentWeekPurposeLine;
-const nextMixLine = buildRoadmapSessionMixLine(nextRoadmapRow, { includeFocus: false });
-if (nextMixLine && nextMixLine !== currentMixLine) {
-return `Current focus: ${currentMixLine}. Next week shifts to ${nextMixLine.toLowerCase()}.`;
-}
-return currentRoadmapRow?.focus
-? `Current focus: ${currentMixLine}. ${compressWeekCopy(sanitizeDisplayText(currentRoadmapRow.focus), 110)}`
-: `Current focus: ${currentMixLine}.`;
-}
-const currentMixLine = buildRoadmapSessionMixLine(currentRoadmapRow, { includeFocus: true }) || currentWeekPurposeLine;
-const nextMixLine = buildRoadmapSessionMixLine(nextRoadmapRow, { includeFocus: false });
-if (nextMixLine && nextMixLine !== currentMixLine) {
-return `Current focus: ${currentMixLine}. Next week shifts to ${nextMixLine.toLowerCase()}.`;
-}
-return `Current focus: ${currentMixLine}.`;
-})();
-const phaseShiftLine = nextPhaseBlock
-? `${sanitizeDisplayText(nextPhaseBlock.name)} starts in about ${daysToShift} days.`
-: `${sanitizeDisplayText(activePhaseBlock?.name || currentPhaseMeta?.name || currentPhase)} carries through the visible roadmap.`;
-const trajectoryHeaderModel = buildProgramTrajectoryHeaderModel({
-roadmapRows: roadmapWeekRows,
-phaseNarrative,
-currentWeek,
-primaryCategory,
-currentWeekLabel,
-currentWeekFocus: currentWeekPurposeLine,
-});
- const programTrustLabel = programTrust.level === "grounded"
- ? "Strong plan signal"
- : programTrust.level === "partial"
- ? "Good plan signal"
- : "Add a little more input";
-const trustFitLine = livePlanBasisExplanation?.basisSummary || "Built around your goals, routine, and recent training.";
-const trustSupportLine = metricsBaselinesModel?.missingCards?.length
-? `Add ${metricsBaselinesModel.missingCards.length} more input${metricsBaselinesModel.missingCards.length === 1 ? "" : "s"} to sharpen pace and load guidance.`
-: supportTierModel?.honestyLine || "";
-const roadmapSummaryLine = primaryCategory === "running" && peakVisibleLongRunRow?.longRunLabel && peakVisibleLongRunRow.longRunLabel !== "No long run"
-? `Peak visible long run: ${peakVisibleLongRunRow.longRunLabel} in week ${peakVisibleLongRunRow.absoluteWeek}.`
-: primaryCategory === "strength"
-? "Strength work and support work stay visible across all 15 weeks."
-: primaryCategory === "body_comp"
-? "Training rhythm and support work stay visible across all 15 weeks."
-: "Primary build and support work stay visible across all 15 weeks.";
-const roadmapSecondaryLine = upcomingCutbackRow
-? `Next cutback: week ${upcomingCutbackRow.absoluteWeek}.`
-: phaseShiftLine;
-const futurePlanLeadLine = primaryCategory === "running"
-? "The next chapters keep the run build visible"
-: primaryCategory === "strength"
-? "The next chapters keep the strength build visible"
-: primaryCategory === "body_comp"
-? "The next chapters keep the weekly rhythm visible"
-: "The next chapters keep the primary build visible";
-const futurePlanSummaryLine = hiddenFutureWeekCount > 0
-? `${futurePlanLeadLine} for the next ${PROGRAM_NEAR_TERM_DETAIL_WEEKS} weeks.`
-: `${futurePlanLeadLine} across the visible horizon.`;
-const compactRoadmapSummaryLine = compressWeekCopy(roadmapSummaryLine, 68);
-const compactRoadmapIntroLine = compressWeekCopy(roadmapIntroLine, 58);
-const compactPhaseShiftLine = compressWeekCopy(phaseShiftLine, 74);
-const compactCurrentWeekChangesLine = compressWeekCopy(currentWeekChangesLine, 92);
-const compactFuturePlanSummaryLine = compressWeekCopy(futurePlanSummaryLine, 68);
-const compactTrustFitLine = compressWeekCopy(trustFitLine, 76);
-const compactTrustSupportLine = compressWeekCopy(trustSupportLine, 84);
-const compactWeekReviewPlannedLine = compressWeekCopy(currentWeekPurposeLine, 88);
-const compactWeekReviewActualLine = compressWeekCopy(currentWeekReviewActualLine, 88);
-const compactWeekReviewNextLine = compressWeekCopy(currentWeekReviewNextLine, 88);
- const humanizeGoalReviewPrompt = (key = "") => {
- if (key === "are_we_progressing") return "Is this still moving in the right direction?";
- if (key === "is_goal_still_right") return "Is this still the right goal?";
- if (key === "are_metrics_still_useful") return "Are we tracking the right things?";
- return "Does anything need to change?";
- };
- const humanizeGoalReviewVerdict = (verdict = "") => {
- if (verdict === "aligned") return "on track";
- if (verdict === "mixed") return "mixed";
- if (verdict === "refine") return "needs tightening";
- if (verdict === "reprioritize") return "needs a priority shift";
- if (verdict === "review") return "worth reviewing";
- return String(verdict || "review").replaceAll("_", " ");
- };
- const goalReviewRecommendationLine = [
- goalReview?.recommendation?.label || "Keep current goal",
- goalReview?.recommendation?.reason || "",
- ].filter(Boolean).join(". ");
- const goalReviewSummaryLine = goalReview?.summary || "Use this check-in to confirm the goal, the signals you're tracking, and anything that still needs tightening.";
- const scrollToProgramRepair = () => {
- if (typeof window === "undefined") return;
- window.requestAnimationFrame(() => {
- programRepairSectionRef.current?.scrollIntoView({ behavior:"smooth", block:"start" });
- });
- };
- const scrollToGoalChange = () => {
- if (typeof window === "undefined") return;
- window.requestAnimationFrame(() => {
- goalChangeSectionRef.current?.scrollIntoView({ behavior:"smooth", block:"start" });
- });
- };
- const openProgramRepairPanel = () => {
- setProgramRepairOpen(true);
- scrollToProgramRepair();
- };
- const seedGoalRepair = (goalCard = null, mode = GOAL_CHANGE_MODES.refineCurrentGoal) => {
- const matchedGoal = (activeGoalsList || []).find((goal) => {
- const candidateIds = [
- String(goal?.id || "").trim(),
- String(goal?.goalRecordId || "").trim(),
- String(goal?.resolvedGoal?.id || "").trim(),
- ].filter(Boolean);
- return candidateIds.includes(String(goalCard?.goalId || "").trim())
- || String(goal?.name || "").trim() === String(goalCard?.summary || "").trim();
- }) || null;
- setGoalChangeMode(mode);
- setGoalChangeIntent(String(matchedGoal?.name || goalCard?.summary || goalChangeIntent || "").trim());
- setGoalChangePreview(null);
- setGoalChangeError("");
- setGoalChangeNotice("");
- setGoalRepairHint(goalCard?.unresolvedGaps?.[0]
- ? `Fixing now: ${goalCard.unresolvedGaps[0]}`
- : "Tighten the goal wording, timing, or target here, then preview the impact before saving.");
- scrollToGoalChange();
- };
- const handleGoalChangePreview = async () => {
- const cleanGoalText = sanitizeIntakeText(goalChangeIntent || "");
- if (!cleanGoalText) {
- setGoalChangeError("Add the new goal in plain English first.");
- setGoalChangePreview(null);
- return;
- }
- setGoalChangePreviewing(true);
- setGoalChangeError("");
- setGoalChangeNotice("");
- try {
- const preview = await previewGoalChange({
- rawGoalText: cleanGoalText,
- changeMode: goalChangeMode,
- });
- if (!preview?.orderedResolvedGoals?.length) {
- setGoalChangeError("I couldn't turn that into a resolved goal preview yet.");
- setGoalChangePreview(null);
- } else {
- setGoalChangePreview(preview);
- }
- } catch (error) {
- setGoalChangeError(error?.message || "Goal preview failed.");
- setGoalChangePreview(null);
- } finally {
- setGoalChangePreviewing(false);
- }
- };
- const handleGoalChangeApply = async () => {
- if (!goalChangePreview?.orderedResolvedGoals?.length) {
- setGoalChangeError("Preview the goal change before you confirm it.");
- return;
- }
- setGoalChangeApplying(true);
- setGoalChangeError("");
- setGoalChangeNotice("");
- try {
- const result = await applyGoalChange({
- rawGoalText: goalChangeIntent,
- changeMode: goalChangeMode,
- previewBundle: goalChangePreview,
- });
- if (!result?.ok) {
- setGoalChangeError(result?.error || "Goal change could not be applied.");
- return;
- }
- setGoalChangeNotice(`${goalChangePreview?.modeMeta?.label || "Goal change"} applied. History is preserved and planning now follows the confirmed structure.`);
- setGoalChangeIntent("");
- setGoalChangePreview(null);
- setGoalRepairHint("");
- setGoalReviewNotice("");
- } catch (error) {
- setGoalChangeError(error?.message || "Goal change could not be applied.");
- } finally {
- setGoalChangeApplying(false);
- }
- };
- const seedGoalChangeFromReview = (mode = GOAL_CHANGE_MODES.refineCurrentGoal) => {
- setGoalChangeMode(mode);
- setGoalChangePreview(null);
- setGoalChangeError("");
- setGoalChangeNotice("");
- setGoalRepairHint(mode === GOAL_CHANGE_MODES.reprioritizeGoalStack
- ? "Check the priority order here, then preview how the plan would rebalance."
- : "Tighten the current goal here, then preview how the next weeks would change.");
- setGoalReviewNotice(mode === GOAL_CHANGE_MODES.reprioritizeGoalStack
- ? "Re-prioritize mode is ready below. Update the goal wording only if the stack itself should change."
- : "Refine mode is ready below. Tighten the goal wording or proxies, then preview it.");
- scrollToGoalChange();
- };
- const handleMarkGoalReview = async (action = GOAL_REVIEW_RECOMMENDATIONS.keepCurrentGoal) => {
- setGoalReviewSaving(true);
- try {
- await saveGoalReview({ goalReview, action });
- setGoalReviewNotice(action === GOAL_REVIEW_RECOMMENDATIONS.keepCurrentGoal
- ? "Goal review saved. The current goal stays active."
- : action === GOAL_REVIEW_RECOMMENDATIONS.reprioritizeGoalStack
- ? "Goal review saved. Re-prioritize mode is ready below if you want to confirm the change."
- : "Goal review saved. Refine mode is ready below if you want to tighten the goal.");
- if (action === GOAL_REVIEW_RECOMMENDATIONS.refineCurrentGoal) {
- seedGoalChangeFromReview(GOAL_CHANGE_MODES.refineCurrentGoal);
- }
- if (action === GOAL_REVIEW_RECOMMENDATIONS.reprioritizeGoalStack) {
- seedGoalChangeFromReview(GOAL_CHANGE_MODES.reprioritizeGoalStack);
- }
- } finally {
- setGoalReviewSaving(false);
- }
- };
-
- const commitProgramsState = async (nextProgramsState, notice = "") => {
- setProgramSelectionError("");
- setProgramSelectionNotice(notice);
- await saveProgramSelection(nextProgramsState);
- };
-
- const handleActivateProgram = async (fidelityMode = PROGRAM_FIDELITY_MODES.adaptToMe) => {
- if (!selectedProgramDefinition?.id) return;
- const compatibilityAssessment = assessProgramCompatibility({
- programDefinition: selectedProgramDefinition,
- athleteProfile,
- personalization,
- goals,
- fidelityMode,
- });
- if (compatibilityAssessment?.outcome === COMPATIBILITY_OUTCOMES.incompatible) {
- setProgramSelectionNotice("");
- setProgramSelectionError(compatibilityAssessment?.blockedConstraints?.[0] || compatibilityAssessment?.reasons?.[0] || "This program is not a clean fit right now.");
- return;
- }
- const nowIso = new Date().toISOString();
- const nextProgramInstance = createProgramInstance({
- programDefinition: selectedProgramDefinition,
- userId: "local",
- fidelityMode,
- compatibilityAssessment,
- athleteProfile,
- activationDate: nowIso,
- });
- const nextStyleSelection = fidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle
- ? null
- : programsState?.activeStyleSelection || null;
- const nextExplanation = buildPlanBasisExplanation({
- athleteProfile,
- activeProgramInstance: nextProgramInstance,
- activeStyleSelection: nextStyleSelection,
- programDefinition: selectedProgramDefinition,
- styleDefinition: fidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle ? null : activeStyleDefinition,
- compatibilityAssessment,
- });
- const nextHistoryEntry = buildProgramSelectionHistoryEntry({
- action: programsState?.activeProgramInstance ? "replaced_program" : "activated_program",
- programDefinition: selectedProgramDefinition,
- fidelityMode,
- reason: compatibilityAssessment?.reasons?.[0] || buildCompatibilityHeadline(compatibilityAssessment),
- createdAt: nowIso,
- });
- await commitProgramsState({
- ...programsState,
- activeProgramInstance: nextProgramInstance,
- activeStyleSelection: nextStyleSelection,
- lastCompatibilityAssessment: compatibilityAssessment,
- planBasisExplanation: nextExplanation,
- selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
- }, `${selectedProgramDefinition.displayName} is now active in ${String(fidelityMode || "").replaceAll("_", " ")} mode.`);
- };
-
- const handleActivateStyle = async () => {
- if (!selectedStyleDefinition?.id) return;
- const compatibilityAssessment = assessStyleCompatibility({
- styleDefinition: selectedStyleDefinition,
- programDefinition: activeProgramDefinition,
- athleteProfile,
- goals,
- activeProgramInstance: programsState?.activeProgramInstance || null,
- });
- if (compatibilityAssessment?.outcome === COMPATIBILITY_OUTCOMES.incompatible) {
- setProgramSelectionNotice("");
- setProgramSelectionError(compatibilityAssessment?.blockedConstraints?.[0] || compatibilityAssessment?.reasons?.[0] || "This style does not fit the current program layer.");
- return;
- }
- const nowIso = new Date().toISOString();
- const nextStyleSelection = createStyleSelection({
- styleDefinition: selectedStyleDefinition,
- userId: "local",
- compatibleWithCurrentPlan: compatibilityAssessment?.outcome !== COMPATIBILITY_OUTCOMES.incompatible,
- influenceLevel: STYLE_INFLUENCE_LEVELS.standard,
- activationDate: nowIso,
- });
- const nextExplanation = buildPlanBasisExplanation({
- athleteProfile,
- activeProgramInstance: programsState?.activeProgramInstance || null,
- activeStyleSelection: nextStyleSelection,
- programDefinition: activeProgramDefinition,
- styleDefinition: selectedStyleDefinition,
- compatibilityAssessment,
- });
- const nextHistoryEntry = buildProgramSelectionHistoryEntry({
- action: programsState?.activeStyleSelection ? "replaced_style" : "activated_style",
- styleDefinition: selectedStyleDefinition,
- reason: compatibilityAssessment?.reasons?.[0] || buildCompatibilityHeadline(compatibilityAssessment),
- createdAt: nowIso,
- });
- await commitProgramsState({
- ...programsState,
- activeStyleSelection: nextStyleSelection,
- lastCompatibilityAssessment: compatibilityAssessment,
- planBasisExplanation: nextExplanation,
- selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
- }, `${selectedStyleDefinition.displayName} is now the active style layer.`);
- };
-
- const handleClearProgramLayer = async () => {
- if (!programsState?.activeProgramInstance && !programsState?.activeStyleSelection) return;
- const nowIso = new Date().toISOString();
- const nextHistoryEntry = buildProgramSelectionHistoryEntry({
- action: "cleared_basis",
- programDefinition: activeProgramDefinition,
- styleDefinition: activeStyleDefinition,
- fidelityMode: programsState?.activeProgramInstance?.fidelityMode || "",
-    reason: "Returned to FORMA's built-for-you plan.",
- createdAt: nowIso,
- });
-const nextState = {
- ...programsState,
- activeProgramInstance: null,
- activeStyleSelection: null,
- lastCompatibilityAssessment: null,
- planBasisExplanation: buildPlanBasisExplanation({
- athleteProfile,
- activeProgramInstance: null,
- activeStyleSelection: null,
- programDefinition: null,
- styleDefinition: null,
- compatibilityAssessment: null,
- }),
- selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
- };
-await commitProgramsState(nextState, "Program and style removed. FORMA is back to building your plan around your goals and routine.");
- };
-
- const handleSaveProgramTrainingContext = async ({
- mode = "Unknown",
- equipment = "unknown",
- equipmentItems = [],
- time = "unknown",
- } = {}) => {
- await setEnvironmentMode({
- mode,
- equipment,
- equipmentItems,
- time,
- scope:"base",
- });
- setProgramRepairOpen(true);
- setProgramRepairNotice("Saved. Future planning now uses your current setup.");
- };
-
- const toggleProgramSession = (sessionKey = "", surfaceKey = "") => {
- if (selectedProgramSessionKey === sessionKey && selectedProgramSessionSurface === surfaceKey) {
- setSelectedProgramSessionKey("");
- setSelectedProgramSessionSurface("");
- return;
- }
- setSelectedProgramSessionKey(sessionKey);
- setSelectedProgramSessionSurface(surfaceKey);
- };
- const scrollToCurrentWeekSection = () => {
- currentWeekSectionRef.current?.scrollIntoView({ behavior:"smooth", block:"start" });
- };
- const scrollToRoadmapSection = () => {
- roadmapSectionRef.current?.scrollIntoView({ behavior:"smooth", block:"start" });
- };
- const renderCurrentWeekSessionRow = ({ session, isSelected }) => (
- <>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
- <div style={{ display:"flex", gap:"0.28rem", alignItems:"center", minWidth:0 }}>
- {session.icon && <InlineGlyph name={session.icon} color={C.green} size={12} />}
- <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>{session.day} - {sanitizeDisplayText(session.title)}</div>
- </div>
- <div style={{ display:"flex", gap:"0.24rem", alignItems:"center", flexWrap:"wrap" }}>
- {session.live && <span style={{ fontSize:"0.44rem", color:C.green, background:`${C.green}14`, padding:"0.12rem 0.32rem", borderRadius:999 }}>Today view</span>}
- <span style={{ fontSize:"0.43rem", color:isSelected ? C.green : "#8fa5c8", background:isSelected ? `${C.green}16` : "#15263f", padding:"0.12rem 0.34rem", borderRadius:999 }}>
- {isSelected ? "Hide" : "View"}
- </span>
- </div>
- </div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{sanitizeDisplayText(session.detail || "Planned session")}</div>
- </>
- );
- const renderProjectedWeekSessionRow = ({ session, isSelected, accentColor }) => (
- <>
- <div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.4, display:"flex", alignItems:"center", justifyContent:"space-between", gap:"0.25rem", flexWrap:"wrap" }}>
- <span style={{ display:"inline-flex", alignItems:"center", gap:"0.25rem" }}>
- {session.icon && <InlineGlyph name={session.icon} color={accentColor} size={12} />}
- <span>{session.day} - {sanitizeDisplayText(session.title)}</span>
- </span>
- <span style={{ fontSize:"0.43rem", color:isSelected ? accentColor : "#8fa5c8", background:isSelected ? `${accentColor}16` : "#15263f", padding:"0.12rem 0.34rem", borderRadius:999 }}>
- {isSelected ? "Hide" : "View"}
- </span>
- </div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.4 }}>{sanitizeDisplayText(session.detail || "Planned session")}</div>
- </>
- );
-
-return (
-<div className="fi" data-testid="program-tab" style={{ display:"grid", gap:"0.75rem" }}>
-{syncSurfaceModel?.showFullCard && (
-<SyncStateCallout
-model={syncSurfaceModel}
- dataTestId="program-sync-status"
- compact
-style={{ background:"rgba(11, 20, 32, 0.76)" }}
-/>
-)}
-<SurfaceHero accentColor={C.blue}>
-<SurfaceHeroHeader>
-<SurfaceHeroCopy>
-<SurfaceHeading
-eyebrow="Plan"
-title={currentWeekLabel}
-supporting={currentWeekPurposeLine}
-eyebrowColor={C.blue}
-titleSize="hero"
-/>
- {!!surfaceModel?.explanationSourceLabel && (
- <div data-testid="program-change-source" style={{ fontSize:"0.44rem", color:"var(--consumer-text-muted)", marginTop:"0.04rem", letterSpacing:"0.08em", textTransform:"uppercase" }}>
- {surfaceModel.explanationSourceLabel}
- </div>
- )}
-<div data-testid="program-change-summary" style={{ fontSize:"0.48rem", color:"var(--consumer-text-soft)", marginTop:"0.08rem", lineHeight:1.5 }}>
-<span data-testid="program-canonical-reason">{currentWeekChangesLine}</span>
-</div>
-</SurfaceHeroCopy>
-<SurfaceMetaRow style={{ justifyContent:"flex-end" }}>
-{Boolean(syncSurfaceModel?.showCompactChip && syncSurfaceModel?.tone !== "healthy") && (
-<div style={{ minWidth:210 }}>
-<CompactSyncStatus
-model={syncSurfaceModel}
-dataTestId="program-sync-status"
- style={{
- background:"rgba(11, 20, 32, 0.42)",
- opacity:0.92,
- }}
-/>
-</div>
-)}
- <SurfacePill style={{ color:programTrustTone.color, background:programTrustTone.bg, borderColor:"transparent" }}>{programTrustLabel}</SurfacePill>
- <SurfacePill style={{ color:currentWeekModel?.adjusted ? C.green : "#8fa5c8", background:currentWeekModel?.adjusted ? `${C.green}14` : "#1e293b", borderColor:currentWeekModel?.adjusted ? `${C.green}24` : "transparent" }}>
- {currentWeekModel?.adjusted ? "Updated this week" : "On track"}
-</SurfacePill>
-</SurfaceMetaRow>
-</SurfaceHeroHeader>
-<SurfaceQuietPanel data-testid="program-trajectory-header" style={{ marginTop:"0.6rem" }}>
-<SurfaceHeading
-eyebrow="Trajectory"
-title={trajectoryHeaderModel.heading}
-supporting={trajectoryHeaderModel.trajectoryLine}
-eyebrowColor={C.blue}
-titleTestId="program-trajectory-title"
-/>
-<div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:"0.42rem" }}>
-<div style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.58rem 0.62rem", display:"grid", gap:"0.18rem" }}>
-<div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>CURRENT CHAPTER</div>
-<div style={{ fontSize:"0.58rem", color:"#f8fafc", lineHeight:1.4, fontWeight:600 }}>{trajectoryHeaderModel.chapterLabel}</div>
-<div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{trajectoryHeaderModel.chapterWindow}</div>
-</div>
-<div style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.58rem 0.62rem", display:"grid", gap:"0.18rem" }}>
-<div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>NEXT MILESTONE</div>
-<div style={{ fontSize:"0.56rem", color:"#f8fafc", lineHeight:1.45 }}>{trajectoryHeaderModel.nextMilestoneLine}</div>
-</div>
-<div style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.58rem 0.62rem", display:"grid", gap:"0.18rem" }}>
-<div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>PLAN ARC</div>
-<div style={{ fontSize:"0.56rem", color:"#f8fafc", lineHeight:1.45 }}>{trajectoryHeaderModel.arcLine}</div>
-</div>
-</div>
-<SurfaceMetaRow>
-<SurfacePill style={{ color:C.green, background:`${C.green}14`, borderColor:`${C.green}24` }}>
-{sessionsCompletedThisWeek}/{Math.max(1, plannedSessionsThisWeek)} logged
-</SurfacePill>
-<SurfacePill style={{ color:currentRoadmapRow?.cutback ? C.amber : C.blue, background:currentRoadmapRow?.cutback ? `${C.amber}12` : `${C.blue}12`, borderColor:currentRoadmapRow?.cutback ? `${C.amber}24` : `${C.blue}24` }}>
-{currentWeekStateLabel}
-</SurfacePill>
-{currentRoadmapMetricPills.map((pill, index) => (
-<SurfacePill
-key={`program_building_now_${index}_${pill}`}
-style={{
-color:index === 0 ? C.blue : "#8fa5c8",
-background:index === 0 ? `${C.blue}12` : "#15263f",
-borderColor:index === 0 ? `${C.blue}24` : "#243752",
-}}
->
-{pill}
-</SurfacePill>
-))}
-</SurfaceMetaRow>
-</SurfaceQuietPanel>
-<SurfaceActions style={{ marginTop:"0.55rem" }}>
-<button data-testid="program-primary-cta" className="btn btn-primary" onClick={scrollToCurrentWeekSection} style={{ fontSize:"0.52rem" }}>
-Review this week
-</button>
-<button data-testid="program-secondary-cta" className="btn" onClick={scrollToRoadmapSection} style={{ fontSize:"0.52rem", color:"var(--consumer-text)", borderColor:"var(--consumer-border-strong)" }}>
-See next chapters
-</button>
-{hasInlineRepairNeeds && (
-<button data-testid="program-fix-metrics" className="btn" onClick={openProgramRepairPanel} style={{ fontSize:"0.52rem", color:C.amber, borderColor:`${C.amber}35` }}>
-Fix plan inputs here
-</button>
-)}
-{goalProgressCards.some((card) => (card?.unresolvedGaps || []).length > 0) && (
-<button data-testid="program-fix-goal-clarity" className="btn" onClick={() => seedGoalRepair(goalProgressCards.find((card) => (card?.unresolvedGaps || []).length > 0) || null)} style={{ fontSize:"0.52rem", color:C.blue, borderColor:`${C.blue}35` }}>
-Tighten goal details
-</button>
-)}
-</SurfaceActions>
-</SurfaceHero>
-
-{(hasInlineRepairNeeds || programRepairOpen || programRepairNotice) && (
-<details
- ref={programRepairSectionRef}
- data-testid="program-inline-repair"
- open={programRepairOpen}
- onToggle={(event)=>setProgramRepairOpen(event.currentTarget.open)}
- className="card card-subtle"
- style={{ borderColor:C.amber+"28", order:2 }}
->
-<summary style={{ cursor:"pointer", listStyle:"none" }}>
-<div style={{ display:"flex", justifyContent:"space-between", gap:"0.55rem", alignItems:"flex-start", flexWrap:"wrap" }}>
-<div style={{ display:"grid", gap:"0.14rem", minWidth:0 }}>
-<div className="sect-title" style={{ color:C.amber, marginBottom:0 }}>FIX HERE</div>
-<div style={{ fontSize:"0.58rem", color:"#f8fafc", lineHeight:1.45 }}>Fix small plan gaps without leaving Plan.</div>
-<div style={{ fontSize:"0.49rem", color:"#94a3b8", lineHeight:1.5 }}>
-Every save updates future weeks only.
-</div>
-</div>
-<div style={{ display:"flex", gap:"0.24rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
-<ProgramMiniPill color={C.amber} background={`${C.amber}12`} borderColor={`${C.amber}24`}>
-{metricsBaselinesModel?.missingCards?.length || 0} gap{metricsBaselinesModel?.missingCards?.length === 1 ? "" : "s"}
-</ProgramMiniPill>
-{environmentBaselineCard?.source === TRAINING_CONTEXT_SOURCES.staleCarryover ? (
-<ProgramMiniPill color={C.blue} background={`${C.blue}12`} borderColor={`${C.blue}24`}>
-Setup carried over
-</ProgramMiniPill>
-) : null}
-</div>
-</div>
-</summary>
-<div style={{ marginTop:"0.65rem" }}>
-{programRepairNotice ? (
-<div style={{ fontSize:"0.5rem", color:C.green, lineHeight:1.5, marginBottom:"0.45rem" }}>
-{programRepairNotice}
-</div>
-) : null}
-<MetricsBaselinesSection
- athleteProfile={athleteProfile}
- personalization={personalization}
- logs={logs}
- bodyweights={bodyweights}
- saveManualProgressInputs={saveManualProgressInputs}
- onSaveTrainingContext={handleSaveProgramTrainingContext}
- onSaved={(message) => {
- setProgramRepairOpen(true);
- setProgramRepairNotice(message);
- }}
-/>
-</div>
-</details>
-)}
-
-<div ref={roadmapSectionRef} className="card card-subtle" data-testid="program-roadmap" style={{ order:5 }}>
-<div style={{ display:"flex", justifyContent:"space-between", gap:"0.55rem", alignItems:"flex-start", flexWrap:"wrap", marginBottom:"0.65rem" }}>
-<div style={{ display:"grid", gap:"0.16rem", minWidth:0 }}>
-<div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>15-WEEK ARC</div>
-<div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5 }}>{compactRoadmapIntroLine}</div>
-</div>
-<div style={{ display:"flex", gap:"0.24rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
-<ProgramMiniPill color={C.blue} background={`${C.blue}12`} borderColor={`${C.blue}24`}>
-{compactRoadmapSummaryLine}
-</ProgramMiniPill>
-<ProgramMiniPill color={upcomingCutbackRow ? C.amber : "#8fa5c8"} background={upcomingCutbackRow ? `${C.amber}12` : "#15263f"} borderColor={upcomingCutbackRow ? `${C.amber}24` : "#243752"}>
-{roadmapSecondaryLine}
-</ProgramMiniPill>
-</div>
-</div>
-<div data-testid="program-phase-strip" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:"0.42rem", marginBottom:"0.6rem" }}>
-{(phaseNarrative || []).map((block, idx) => {
-const isCurrentBlock = currentWeek >= block.startWeek && currentWeek <= block.endWeek;
-const isNextBlock = Boolean(nextPhaseBlock && nextPhaseBlock.startWeek === block.startWeek);
-return (
-<div
-key={`${block.phase}_${idx}`}
-style={{
-border:`1px solid ${isCurrentBlock ? `${C.green}48` : isNextBlock ? `${C.blue}38` : "#22324a"}`,
-borderRadius:13,
-background:isCurrentBlock ? "#111b14" : isNextBlock ? "#122034" : "#0f172a",
-boxShadow:isCurrentBlock ? `0 0 0 1px ${C.green}16 inset` : "none",
-padding:"0.55rem 0.6rem",
-display:"grid",
-gap:"0.22rem",
-}}
->
-<div style={{ display:"flex", justifyContent:"space-between", gap:"0.25rem", alignItems:"center", flexWrap:"wrap" }}>
-<div className="mono" style={{ fontSize:"0.46rem", color:"#8fa5c8" }}>{`W${block.startWeek}-W${block.endWeek}`}</div>
-<div style={{ display:"flex", gap:"0.2rem", flexWrap:"wrap" }}>
-{isCurrentBlock ? <ProgramMiniPill color={C.green} background={`${C.green}14`} borderColor={`${C.green}24`}>Current phase</ProgramMiniPill> : null}
-{isNextBlock ? <ProgramMiniPill color={C.blue} background={`${C.blue}12`} borderColor={`${C.blue}24`}>Next phase</ProgramMiniPill> : null}
-</div>
-</div>
-<div style={{ fontSize:"0.58rem", color:"#f8fafc", lineHeight:1.4, fontWeight:600 }}>{sanitizeDisplayText(block.name)}</div>
-</div>
-);
-})}
-</div>
-<div
-data-testid="program-roadmap-grid"
-style={{
-display:"grid",
-gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",
-gap:"0.48rem",
-}}
->
-{roadmapWeekRows.map((row) => {
-const phaseMeta = phaseLabels?.[row.phaseKey] || { name: row.phaseLabel, objective: row.focus };
-const tone = row.isCurrentWeek ? C.green : row.isNextWeek ? C.blue : row.cutback ? C.amber : "#8fa5c8";
-const longRunBarWidth = roadmapLongRunScaleMax > 0 && roadmapLongRunUnits.length === 1 && row.longRunUnit === roadmapLongRunUnits[0]
-? Math.max(12, Math.round((Number(row.longRunValue || 0) / roadmapLongRunScaleMax) * 100))
-: 0;
-const roadmapPrimaryCard = buildRoadmapPrimaryCard(row, primaryCategory, row.focus);
-const roadmapMixLine = buildRoadmapSessionMixLine(row, { includeFocus: false });
-const roadmapSupportLine = buildRoadmapSupportLine(row, primaryCategory);
-const roadmapFocusLine = compressWeekCopy(sanitizeDisplayText(row.focus || "Week focus"), 84);
-const roadmapFooterLine = joinDisplayParts([
-primaryCategory === "running" ? (row.qualityCount > 0 ? row.qualityLabel : "") : roadmapMixLine,
-primaryCategory === "running" ? (row.strengthCount > 0 ? row.strengthLabel : "") : roadmapSupportLine,
-]);
-return (
-<div
-key={`roadmap_${row.absoluteWeek}`}
-data-testid={`program-roadmap-week-${row.absoluteWeek}`}
-data-current-week={row.isCurrentWeek ? "true" : "false"}
-style={{
- border:`1px solid ${row.isCurrentWeek ? `${C.green}55` : row.isNextWeek ? `${C.blue}35` : row.cutback ? `${C.amber}35` : "#22324a"}`,
- borderRadius:14,
- background:row.isCurrentWeek ? "#111b14" : row.isNextWeek ? "#101a2d" : "#0f172a",
- boxShadow:row.isCurrentWeek ? `0 0 0 1px ${C.green}18 inset` : "none",
- padding:"0.62rem 0.68rem",
- display:"grid",
- gap:"0.34rem",
-}}
->
-<div style={{ display:"flex", justifyContent:"space-between", gap:"0.3rem", alignItems:"flex-start", flexWrap:"wrap" }}>
-<div style={{ display:"grid", gap:"0.12rem" }}>
-<div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>WEEK {row.absoluteWeek}</div>
-<div style={{ fontSize:"0.6rem", color:"#f8fafc", lineHeight:1.3, fontWeight:600 }}>{sanitizeDisplayText(row.weekLabel || `Week ${row.absoluteWeek}`)}</div>
-</div>
-<div style={{ display:"flex", gap:"0.22rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
-{row.isCurrentWeek && <span style={{ fontSize:"0.42rem", color:C.green, background:`${C.green}14`, padding:"0.14rem 0.34rem", borderRadius:999, letterSpacing:"0.08em" }}>CURRENT</span>}
-{row.isNextWeek && <span style={{ fontSize:"0.42rem", color:C.blue, background:`${C.blue}12`, padding:"0.14rem 0.34rem", borderRadius:999, letterSpacing:"0.08em" }}>NEXT UP</span>}
-{row.cutback && <span style={{ fontSize:"0.42rem", color:C.amber, background:`${C.amber}12`, padding:"0.14rem 0.34rem", borderRadius:999, letterSpacing:"0.08em" }}>CUTBACK</span>}
-{row.isPhaseStart && !row.isCurrentWeek && <span style={{ fontSize:"0.42rem", color:"#dbe7f6", background:"#15263f", padding:"0.14rem 0.34rem", borderRadius:999, letterSpacing:"0.08em" }}>PHASE SHIFT</span>}
-</div>
-</div>
-<div style={{ display:"flex", gap:"0.24rem", flexWrap:"wrap" }}>
-<ProgramMiniPill color={tone} background={`${tone}12`} borderColor={`${tone}24`}>
-{sanitizeDisplayText(phaseMeta?.name || row.phaseLabel)}
-</ProgramMiniPill>
-{row.isCurrentWeek && currentDayCell ? (
-<ProgramMiniPill color={C.green} background={`${C.green}14`} borderColor={`${C.green}24`}>
-Today: {currentDayCell.dayLabel}
-</ProgramMiniPill>
-) : null}
-</div>
-<div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0b1322", padding:"0.5rem 0.55rem", display:"grid", gap:"0.22rem" }}>
-<div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
-<span style={{ fontSize:"0.45rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>{roadmapPrimaryCard.label}</span>
-{roadmapPrimaryCard.delta ? <span style={{ fontSize:"0.48rem", color:tone }}>{roadmapPrimaryCard.delta}</span> : null}
-</div>
-<div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.38 }}>{roadmapPrimaryCard.value}</div>
-{primaryCategory === "running" && longRunBarWidth > 0 && (
-<div style={{ width:"100%", height:6, borderRadius:999, background:"#172131", overflow:"hidden" }}>
-<div style={{ width:`${longRunBarWidth}%`, height:"100%", borderRadius:999, background:row.cutback ? C.amber : row.isCurrentWeek ? C.green : C.blue }} />
-</div>
-)}
-</div>
-<div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.5 }}>{roadmapFocusLine}</div>
-{!!roadmapFooterLine && (
-<div style={{ fontSize:"0.46rem", color:"#8fa5c8", lineHeight:1.45 }}>{roadmapFooterLine}</div>
-)}
-</div>
-);
-})}
-</div>
-</div>
-
-<div ref={currentWeekSectionRef} className="card card-subtle" data-testid="program-this-week" style={{ order:3 }}>
-<div style={{ display:"grid", gap:"0.14rem", marginBottom:"0.55rem" }}>
-<div className="sect-title" style={{ color:C.green, marginBottom:0 }}>THIS WEEK</div>
-<div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>{currentWeekMattersLine}</div>
-</div>
-<SurfaceCard data-testid="program-current-day-context" variant="subtle" accentColor={programDayCommandModel?.dayKind === "rest" ? C.blue : programDayCommandModel?.dayKind === "hybrid" ? C.amber : C.green} style={{ marginBottom:"0.6rem" }}>
-<SessionSummaryBlock
-model={sharedProgramCurrentDaySummary}
-accentColor={programDayCommandModel?.dayKind === "rest" ? C.blue : programDayCommandModel?.dayKind === "hybrid" ? C.amber : C.green}
-eyebrow="Current day"
-titleTestId="program-canonical-session-label"
-contextTestId="program-current-day-context-line"
-showContext
-/>
-</SurfaceCard>
-<div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:"0.38rem", marginBottom:"0.6rem" }}>
-<div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.16rem" }}>
-<div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>WEEKLY EMPHASIS</div>
-<div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.45 }}>{currentWeekPurposeLine}</div>
-</div>
-<div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.16rem" }}>
-<div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>{currentRoadmapPrimaryCard.label}</div>
-<div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.45 }}>{currentRoadmapPrimaryCard.value}</div>
-<div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{buildDirectionLine}</div>
-</div>
-<div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.16rem" }}>
-<div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>NEXT SHIFT</div>
-<div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.45 }}>{nextPhaseBlock ? sanitizeDisplayText(nextPhaseBlock.name) : sanitizeDisplayText(activePhaseBlock?.name || currentPhaseMeta?.name || currentPhase)}</div>
-<div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{phaseShiftLine}</div>
-</div>
-</div>
-<div
-data-testid="program-current-week-grid"
-style={{
-display:"grid",
- gridTemplateColumns:"repeat(auto-fit,minmax(108px,1fr))",
- gap:"0.42rem",
- marginBottom:"0.65rem",
- }}
- >
- {currentWeekGridCells.map((cell) => (
- <div
- key={`program_week_grid_${cell.dayKey}`}
- data-testid={`program-current-week-day-${String(cell.dayLabel || cell.dayKey).toLowerCase()}`}
- data-current-day={cell.isToday ? "true" : "false"}
- style={{
- border:`1px solid ${cell.isToday ? `${C.green}55` : "#22324a"}`,
- borderRadius:12,
- background:cell.isToday ? "#122018" : "#0f172a",
- boxShadow:cell.isToday ? `0 0 0 1px ${C.green}18 inset` : "none",
- padding:"0.5rem 0.55rem",
- display:"grid",
- gap:"0.16rem",
- }}
- >
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.25rem", alignItems:"center", flexWrap:"wrap" }}>
- <div style={{ fontSize:"0.47rem", color:cell.isToday ? C.green : "#64748b", letterSpacing:"0.08em" }}>{cell.dayLabel}</div>
- {cell.isToday && <span style={{ fontSize:"0.4rem", color:C.green, background:`${C.green}14`, padding:"0.12rem 0.3rem", borderRadius:999, letterSpacing:"0.08em" }}>TODAY</span>}
- </div>
- <div style={{ fontSize:"0.55rem", color:"#e2e8f0", lineHeight:1.4 }}>{sanitizeDisplayText(cell.title)}</div>
- <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{sanitizeDisplayText(cell.detail)}</div>
- </div>
- ))}
- </div>
- <ProgramSessionDetailCluster
- sessions={currentWeekSessions ?? []}
- selectedSessionKey={selectedProgramSessionKey}
- selectedSessionSurface={selectedProgramSessionSurface}
- surfaceKey="program_this_week"
- onToggle={toggleProgramSession}
-accentColor={C.green}
-testIdPrefix="program-this-week-session"
-listLabel="Current week session list"
-panelLabel="Current week detail"
-emptyDetailTitle="Choose a day in this week"
-emptyDetailBody="Pick a day to see the full session without leaving this week."
-buttonStyle={{
-border:"1px solid #22324a",
-borderRadius:12,
- background:"#0f172a",
- padding:"0.6rem 0.65rem",
- textAlign:"left",
- display:"grid",
- gap:"0.12rem",
- }}
- detailPanelStyle={{
- background:"#0f172a",
- position:"sticky",
- top:"0.65rem",
- }}
- renderRowContent={renderCurrentWeekSessionRow}
- />
- {false && (
- <div style={{ display:"grid", gap:"0.41rem" }}>
- {(currentWeekSessions ?? []).map((session) => {
- const isSelected = selectedProgramSessionKey === session.key && selectedProgramSessionSurface === "program_this_week";
- return (
- <ProgramSessionInlineRow
- key={session.key || `current_${session.day}_${session.title}`}
- session={session}
- isSelected={isSelected}
- onToggle={() => toggleProgramSession(session.key, "program_this_week")}
- accentColor={C.green}
- testIdPrefix="program-this-week-session"
- buttonStyle={{
- border:`1px solid ${isSelected ? `${C.green}55` : "#22324a"}`,
- borderRadius:12,
- background:isSelected ? "#122018" : "#0f172a",
- padding:"0.6rem 0.65rem",
- textAlign:"left",
- display:"grid",
- gap:"0.12rem",
- }}
- >
- <>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
- <div style={{ display:"flex", gap:"0.28rem", alignItems:"center", minWidth:0 }}>
- {session.icon && <InlineGlyph name={session.icon} color={C.green} size={12} />}
- <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>{session.day} - {sanitizeDisplayText(session.title)}</div>
- </div>
- <div style={{ display:"flex", gap:"0.24rem", alignItems:"center", flexWrap:"wrap" }}>
- {session.live && <span style={{ fontSize:"0.44rem", color:C.green, background:`${C.green}14`, padding:"0.12rem 0.32rem", borderRadius:999 }}>Today view</span>}
- <span style={{ fontSize:"0.43rem", color:isSelected ? C.green : "#8fa5c8", background:isSelected ? `${C.green}16` : "#15263f", padding:"0.12rem 0.34rem", borderRadius:999 }}>
- {isSelected ? "Hide" : "View"}
- </span>
- </div>
- </div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{sanitizeDisplayText(session.detail || "Planned session")}</div>
- </>
- </ProgramSessionInlineRow>
- );
- })}
- </div>
- )}
- </div>
-
-<div className="card card-subtle" data-testid="program-future-weeks" style={{ order:4 }}>
-<div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"flex-start", flexWrap:"wrap", marginBottom:"0.55rem" }}>
-<div style={{ display:"grid", gap:"0.14rem", minWidth:0 }}>
-<div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>{hiddenFutureWeekCount > 0 ? `NEXT CHAPTERS: ${PROGRAM_NEAR_TERM_DETAIL_WEEKS} WEEKS` : "NEXT CHAPTERS"}</div>
-<div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>{compactFuturePlanSummaryLine}</div>
-</div>
-{futureWeekRows.length > PROGRAM_NEAR_TERM_DETAIL_WEEKS && (
-<button
-className="btn"
-data-testid="program-future-weeks-toggle-all"
-onClick={() => setShowAllFutureWeeks((current) => !current)}
-style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#2b3d55" }}
->
-{showAllFutureWeeks ? "Show fewer weeks" : `Show all ${futureWeekRows.length} weeks`}
-</button>
-)}
-</div>
-<div style={{ display:"grid", gap:"0.45rem" }}>
-{detailedFutureWeekRows.map((weekRow) => {
-const weekSessions = getProgramWeekSessions(weekRow.absoluteWeek, weekRow);
-const roadmapRow = roadmapWeekRows.find((entry) => entry.absoluteWeek === weekRow.absoluteWeek) || null;
-const isExpanded = openWeek === weekRow.absoluteWeek;
-const focusLine = roadmapRow?.focus || weekRow?.planWeek?.weeklyIntent?.focus || weekRow?.focus || "Week focus";
-const previewSessions = weekSessions.slice(0, PROGRAM_FUTURE_WEEK_PREVIEW_SESSIONS);
-const futureWeekPrimaryCard = buildRoadmapPrimaryCard(roadmapRow || { focus: focusLine }, primaryCategory, focusLine);
-const futureWeekSupportLine = buildRoadmapSupportLine(roadmapRow || null, primaryCategory)
-|| buildRoadmapSessionMixLine(roadmapRow || null, { includeFocus: false });
-return (
-<div
- key={weekRow.absoluteWeek}
- data-testid={`program-future-week-card-${weekRow.absoluteWeek}`}
-style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.62rem 0.68rem", display:"grid", gap:"0.34rem" }}
->
-<div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"flex-start", flexWrap:"wrap" }}>
-<div>
-<div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>{sanitizeDisplayText(weekRow.weekLabel || `Week ${weekRow.absoluteWeek}`)}</div>
-<div style={{ display:"flex", gap:"0.22rem", flexWrap:"wrap", marginTop:"0.14rem" }}>
-<ProgramMiniPill color={C.blue} background={`${C.blue}12`} borderColor={`${C.blue}24`}>
-{sanitizeDisplayText((phaseLabels?.[roadmapRow?.phaseKey] || { name: roadmapRow?.phaseLabel || weekRow?.phase || "Plan" }).name)}
-</ProgramMiniPill>
-{roadmapRow?.isPhaseStart ? <ProgramMiniPill color="#dbe7f6" background="#15263f" borderColor="#243752">Phase shift</ProgramMiniPill> : null}
-{roadmapRow?.cutback ? <ProgramMiniPill color={C.amber} background={`${C.amber}12`} borderColor={`${C.amber}24`}>Cutback</ProgramMiniPill> : null}
-</div>
-</div>
-<button
-className="btn"
-data-testid={`program-future-week-toggle-${weekRow.absoluteWeek}`}
-onClick={()=>setOpenWeek(openWeek === weekRow.absoluteWeek ? null : weekRow.absoluteWeek)}
-style={{ fontSize:"0.48rem" }}
->
-{isExpanded ? "Hide details" : "Week details"}
-</button>
-</div>
-<div style={{ display:"grid", gap:"0.14rem" }}>
-<div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>{futureWeekPrimaryCard.label}</div>
-<div style={{ fontSize:"0.57rem", color:"#f8fafc", lineHeight:1.4 }}>{futureWeekPrimaryCard.value}</div>
-<div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{compressWeekCopy(focusLine, 86)}</div>
-</div>
-<div
-data-testid={`program-future-week-preview-${weekRow.absoluteWeek}`}
-style={{ display:"flex", gap:"0.24rem", flexWrap:"wrap" }}
->
-{previewSessions.map((session) => (
-<ProgramMiniPill key={`future_preview_${weekRow.absoluteWeek}_${session.key || `${session.day}_${session.title}`}`}>
-{session.day} {sanitizeDisplayText(session.title)}
-</ProgramMiniPill>
-))}
-{weekSessions.length > PROGRAM_FUTURE_WEEK_PREVIEW_SESSIONS ? (
-<ProgramMiniPill color="#dbe7f6" background="#15263f" borderColor="#243752">
-+{weekSessions.length - PROGRAM_FUTURE_WEEK_PREVIEW_SESSIONS} more
-</ProgramMiniPill>
-) : null}
-</div>
-{!!futureWeekSupportLine && (
-<div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{futureWeekSupportLine}</div>
-)}
-{isExpanded && (
-<>
-<div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
-Week emphasis: {compressWeekCopy(focusLine, 92)}
-</div>
-<ProgramSessionDetailCluster
-sessions={weekSessions}
- selectedSessionKey={selectedProgramSessionKey}
- selectedSessionSurface={selectedProgramSessionSurface}
- surfaceKey={`program_future_week_${weekRow.absoluteWeek}`}
- onToggle={toggleProgramSession}
-accentColor={C.blue}
-testIdPrefix="program-future-week-session"
-listLabel={`${sanitizeDisplayText(weekRow.weekLabel || `Week ${weekRow.absoluteWeek}`)} session list`}
-panelLabel={`${sanitizeDisplayText(weekRow.weekLabel || `Week ${weekRow.absoluteWeek}`)} detail`}
-emptyDetailTitle="Choose an upcoming day"
-emptyDetailBody="Pick a day to see that week's plan without losing the rest of the week."
-buttonStyle={{
-border:"1px solid #22324a",
-borderRadius:10,
-background:"#111827",
- padding:"0.5rem 0.55rem",
- textAlign:"left",
- display:"grid",
- gap:"0.1rem",
- }}
- detailPanelStyle={{
- background:"#111827",
- position:"sticky",
- top:"0.65rem",
- }}
- renderRowContent={renderProjectedWeekSessionRow}
- />
- {false && (
- <div style={{ display:"grid", gap:"0.35rem" }}>
- {weekSessions.map((session) => {
- const isSelected = selectedProgramSessionKey === session.key && selectedProgramSessionSurface === `program_future_week_${weekRow.absoluteWeek}`;
- return (
- <ProgramSessionInlineRow
- key={session.key || `${weekRow.absoluteWeek}_${session.day}_${session.title}`}
- session={session}
- isSelected={isSelected}
- onToggle={() => toggleProgramSession(session.key, `program_future_week_${weekRow.absoluteWeek}`)}
- accentColor={C.blue}
- testIdPrefix="program-future-week-session"
- buttonStyle={{
- border:`1px solid ${isSelected ? `${C.blue}55` : "#22324a"}`,
- borderRadius:10,
- background:isSelected ? "#132032" : "#111827",
- padding:"0.5rem 0.55rem",
- textAlign:"left",
- display:"grid",
- gap:"0.1rem",
- }}
- >
- <>
- <div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.4 }}>{session.day} - {sanitizeDisplayText(session.title)}</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.4 }}>{sanitizeDisplayText(session.detail || "Planned session")}</div>
- </>
- </ProgramSessionInlineRow>
- );
- })}
- </div>
- )}
- </>
- )}
- </div>
- );
- })}
-{detailedFutureWeekRows.length === 0 && (
-<div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
-Upcoming weeks will appear here as soon as the visible plan extends beyond this week.
-</div>
-)}
-</div>
-</div>
-
- {false && (
- <details className="card">
- <summary style={{ cursor:"pointer", fontSize:"0.56rem", color:"#dbe7f6" }}>Saved week history</summary>
- <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
- {committedWeekHistoryPreview.length === 0 ? (
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
- No saved week history yet.
- </div>
- ) : (
- committedWeekHistoryPreview.map((entry) => (
- <div key={entry.weekKey} style={{ border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem" }}>
- <div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.45 }}>{entry.label}</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.45 }}>
- {[
- entry?.plannedSessionCount ? `${entry.plannedSessionCount} planned` : null,
- entry?.loggedSessionCount ? `${entry.loggedSessionCount} logged` : null,
- entry?.weeklyCheckin?.ts ? "weekly check-in saved" : null,
- ].filter(Boolean).join(" - ") || "History saved"}
- </div>
- </div>
- ))
- )}
- </div>
- </details>
- )}
- </div>
- );
- if (false) return (
- <div className="fi">
- <div style={{ display:"grid", gap:"0.85rem" }}>
- <section className="card card-strong card-hero" style={{ borderColor:C.blue+"30" }}>
- <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.35rem" }}>PLAN HIERARCHY</div>
- <div style={{ display:"grid", gap:"0.8rem" }}>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.6rem" }}>
- <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.75rem 0.8rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.25rem" }}>ACTIVE GOALS</div>
- <div style={{ display:"grid", gap:"0.22rem" }}>
- {activeGoalsList.length > 0 ? activeGoalsList.map((goal) => (
- <div key={goal.id || goal.name} style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>{goal.name}</div>
- )) : (
- <div style={{ fontSize:"0.56rem", color:"#94a3b8" }}>No active goals configured.</div>
- )}
- </div>
- </div>
- <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.75rem 0.8rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.25rem" }}>CURRENT BLOCK</div>
- <div style={{ fontSize:"0.72rem", color:C.blue, fontWeight:600, lineHeight:1.2 }}>{currentProgramBlock?.label || currentPhaseMeta.name}</div>
- <div style={{ fontSize:"0.55rem", color:"#cbd5e1", marginTop:"0.18rem", lineHeight:1.55 }}>{currentProgramBlock?.dominantEmphasis?.objective || currentPhaseMeta.objective}</div>
- {currentProgramBlock?.secondaryEmphasis?.label && (
- <div style={{ fontSize:"0.52rem", color:"#93c5fd", marginTop:"0.16rem", lineHeight:1.5 }}>
- Secondary: {currentProgramBlock.secondaryEmphasis.label}
- </div>
- )}
- {currentProgramBlock?.recoveryPosture?.summary && (
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>
- Recovery posture: {currentProgramBlock.recoveryPosture.summary}
- </div>
- )}
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.24rem" }}>{daysToShift ? `Transition expected in about ${daysToShift} days.` : "Current block remains active in the visible horizon."}</div>
- </div>
- <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.75rem 0.8rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.25rem" }}>CURRENT WEEKLY INTENT</div>
- <div style={{ fontSize:"0.64rem", color:"#e2e8f0", lineHeight:1.45 }}>{currentWeeklyIntent?.focus || currentWeekLabel}</div>
- {!!hierarchyIntentBits.length && <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>{hierarchyIntentBits.join(" - ")}</div>}
- {currentWeekModel?.adjusted && <div style={{ fontSize:"0.5rem", color:C.green, marginTop:"0.22rem" }}>Current week has active plan adjustments.</div>}
- </div>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1.15fr 0.85fr", gap:"0.7rem" }}>
- <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.75rem 0.8rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>PLAN SUMMARY</div>
- <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.65 }}>{blockSummaryLine}</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55, marginTop:"0.28rem" }}>{programProvenance}</div>
- </div>
- <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.75rem 0.8rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>GOAL ALLOCATION</div>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>Prioritized: {currentProgramBlock?.goalAllocation?.prioritized || planComposer?.blockIntent?.prioritized || arbitration.goalAllocation.primary}</div>
- <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>Maintained: {(currentProgramBlock?.goalAllocation?.maintained || planComposer?.blockIntent?.maintained || arbitration.goalAllocation.maintained || []).join(" - ") || "None"}</div>
- <div style={{ fontSize:"0.54rem", color:C.amber, marginTop:"0.16rem", lineHeight:1.5 }}>Minimized: {currentProgramBlock?.goalAllocation?.minimized || planComposer?.blockIntent?.minimized || arbitration.goalAllocation.minimized || "None"}</div>
- {!!((currentProgramBlock?.goalAllocation?.heldBack || planComposer?.blockIntent?.heldBack || []).length) && (
- <div style={{ fontSize:"0.52rem", color:"#fbbf24", marginTop:"0.16rem", lineHeight:1.5 }}>
- Held back: {(currentProgramBlock?.goalAllocation?.heldBack || planComposer?.blockIntent?.heldBack || []).join(" - ")}
- </div>
- )}
- {!!(currentProgramBlock?.goalAllocation?.why || planComposer?.blockIntent?.why) && (
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>
- {currentProgramBlock?.goalAllocation?.why || planComposer?.blockIntent?.why}
- </div>
- )}
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.22rem", lineHeight:1.5 }}>Tradeoff: {currentProgramBlock?.tradeoffs?.[0] || arbitration.coachTradeoffLine || arbitration.conflicts?.[0] || strengthLayer.tradeoff}</div>
- </div>
- </div>
- <button className="btn" onClick={()=>setPhaseExpanded(v=>!v)} style={{ width:"100%", justifyContent:"space-between", fontSize:"0.55rem", color:"#dbe7f6", borderColor:"#2b3f5e", background:"rgba(9,16,30,0.45)" }}>
- <span>{phaseBanner}</span>
- <span>{phaseExpanded ? "Hide" : "View block arc"}</span>
- </button>
- {phaseExpanded && (
- <div style={{ display:"grid", gap:"0.28rem", border:"1px solid #243752", borderRadius:12, padding:"0.7rem 0.8rem", background:"rgba(8,14,26,0.75)" }}>
- {((phaseNarrative ?? []).slice(0, 5)).map((block, idx) => (
- <div key={`${block.phase}-${idx}`} style={{ display:"grid", gridTemplateColumns:"90px 1fr", gap:"0.45rem", alignItems:"start" }}>
- <div className="mono" style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>{`W${block.startWeek}-W${block.endWeek}`}</div>
- <div>
- <div style={{ fontSize:"0.58rem", color:"#e2e8f0" }}>{block.name}</div>
- <div style={{ fontSize:"0.52rem", color:"#94a3b8", marginTop:"0.08rem" }}>{block.objective}</div>
- </div>
- </div>
- ))}
- </div>
- )}
- </div>
- </section>
-
- <section className="card card-subtle" style={{ borderColor:"#2c3f63", background:"linear-gradient(180deg, rgba(12,18,32,0.96) 0%, rgba(9,14,24,0.96) 100%)" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.75rem", flexWrap:"wrap", marginBottom:"0.8rem" }}>
- <div style={{ minWidth:0 }}>
- <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>PLAN LAYERS</div>
-<div style={{ fontSize:"0.66rem", color:"#f8fafc", fontWeight:600, lineHeight:1.35 }}>Choose a named plan, add a training feel, or stay with FORMA's built-for-you plan.</div>
- <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.6, maxWidth:760 }}>
- Pick a plan or style if you want more structure. Your goals, schedule, equipment, and recovery still keep the final say.
- </div>
- </div>
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", alignItems:"center" }}>
- <div style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.16rem 0.48rem", borderRadius:999, letterSpacing:"0.08em" }}>
- {PROGRAM_SOURCE_BASIS_LABELS[activeProgramDefinition?.sourceBasis || activeStyleDefinition?.sourceBasis || "evidence_informed_default"] || "Built for your goals"}
- </div>
- <div style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.16rem 0.48rem", borderRadius:999, letterSpacing:"0.08em" }}>
- {SOURCE_CONFIDENCE_LABELS[livePlanBasisExplanation?.sourceConfidence || "high"] || "Well supported"}
- </div>
- <button className="btn" onClick={handleClearProgramLayer} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
- Remove plan layer
- </button>
- </div>
- </div>
-
- <div style={{ display:"grid", gridTemplateColumns:"1.05fr 0.95fr", gap:"0.7rem", marginBottom:"0.75rem" }}>
- <div style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.8rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>PLAN OVERVIEW</div>
- <div style={{ fontSize:"0.68rem", color:"#f8fafc", fontWeight:600, lineHeight:1.3 }}>
-{livePlanBasisExplanation?.basisSummary || "Your plan is built around your goals and routine."}
- </div>
- <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.62 }}>
- {livePlanBasisExplanation?.personalizationSummary || "No separate program or style layer is active."}
- </div>
- {!!programWeekBasisLine && (
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.26rem", lineHeight:1.55 }}>{programWeekBasisLine}</div>
- )}
- {!!liveProgramAdherence?.summary && (
- <div style={{ fontSize:"0.5rem", color:liveProgramAdherence?.state === "off_program" ? C.amber : "#8fa5c8", marginTop:"0.22rem", lineHeight:1.55 }}>
- Current fit: {liveProgramAdherence.summary}
- </div>
- )}
- {(livePlanBasisExplanation?.caveats || []).slice(0, 2).map((line, index) => (
- <div key={`basis_caveat_${index}`} style={{ fontSize:"0.5rem", color:C.amber, marginTop:"0.22rem", lineHeight:1.5 }}>{line}</div>
- ))}
- </div>
-
- <div style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.8rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>WHAT'S ACTIVE</div>
- <div style={{ display:"grid", gap:"0.46rem" }}>
- <div style={{ border:"1px solid #1f2d43", borderRadius:12, background:"#0b1322", padding:"0.62rem" }}>
- <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.14rem" }}>PROGRAM</div>
- <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>
- {activeProgramDefinition?.displayName || "No named program selected"}
- </div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
- {activeProgramDefinition
- ? `${livePlanBasisExplanation?.effectiveFidelityMode === PROGRAM_FIDELITY_MODES.runAsWritten || livePlanBasisExplanation?.effectiveFidelityMode === "strict"
- ? "Follow closely"
- : livePlanBasisExplanation?.effectiveFidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle || livePlanBasisExplanation?.effectiveFidelityMode === "style_only"
- ? "Use for feel"
- : "Fit it to you"} • ${PROGRAM_SOURCE_BASIS_LABELS[activeProgramDefinition?.sourceBasis] || "Built for your goals"}`
-: "FORMA is building your plan from your goals, schedule, and equipment."}
- </div>
- {!!liveProgramAdherence?.state && activeProgramDefinition && (
- <div style={{ fontSize:"0.48rem", color:liveProgramAdherence?.state === "off_program" ? C.amber : "#94a3b8", marginTop:"0.12rem", lineHeight:1.45 }}>
- {liveProgramAdherence.state === "aligned"
- ? "Your recent training still matches this plan well."
- : liveProgramAdherence.state === "drifting"
- ? "Your recent training is starting to drift from the written plan."
- : liveProgramAdherence.state === "off_program"
- ? "Your recent training has moved away from the written plan, so FORMA is simplifying the next steps."
- : "FORMA will sharpen this after a few more logs."}
- </div>
- )}
- </div>
- <div style={{ border:"1px solid #1f2d43", borderRadius:12, background:"#0b1322", padding:"0.62rem" }}>
- <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.14rem" }}>STYLE</div>
- <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>
- {activeStyleDefinition?.displayName || "No extra style layer selected"}
- </div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
- {activeStyleDefinition
- ? `${activeStyleDefinition.styleBiases?.weeklyFeel || activeStyleDefinition.summary}`
- : "Choose a style only if you want the plan to tilt a certain way without changing the goal hierarchy."}
- </div>
- </div>
- </div>
- </div>
- </div>
-
- {(programSelectionNotice || programSelectionError) && (
- <div style={{ fontSize:"0.52rem", color:programSelectionError ? C.amber : C.green, lineHeight:1.5, marginBottom:"0.65rem" }}>
- {programSelectionError || programSelectionNotice}
- </div>
- )}
-
- <div style={{ display:"flex", gap:"0.4rem", marginBottom:"0.75rem", flexWrap:"wrap" }}>
- {[
- { key: "programs", label: "Browse programs" },
- { key: "styles", label: "Browse styles" },
- ].map((tabOption) => {
- const selected = catalogMode === tabOption.key;
- return (
- <button
- key={tabOption.key}
- className="btn"
- onClick={() => setCatalogMode(tabOption.key)}
- style={{
- color:selected ? "#f8fafc" : "#cbd5e1",
- borderColor:selected ? `${C.blue}55` : "#2b3d55",
- background:selected ? "rgba(59,130,246,0.16)" : "#0f172a",
- fontSize:"0.52rem",
- }}
- >
- {tabOption.label}
- </button>
- );
- })}
- </div>
-
- <div style={{ display:"grid", gridTemplateColumns:"1.02fr 0.98fr", gap:"0.75rem", alignItems:"start" }}>
- <div style={{ display:"grid", gap:"0.65rem" }}>
- {(catalogMode === "programs" ? catalogViewModel.programSections : catalogViewModel.styleSections).map((section) => (
- <div key={section.key} style={{ display:"grid", gap:"0.45rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.12em" }}>{section.title}</div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.5rem" }}>
- {section.items.map((item) => {
- const selected = catalogMode === "programs"
- ? item.id === (selectedProgramDefinition?.id || "")
- : item.id === (selectedStyleDefinition?.id || "");
- return (
- <button
- key={item.id}
- className="btn"
- onClick={() => {
- setProgramSelectionNotice("");
- setProgramSelectionError("");
- if (catalogMode === "programs") setSelectedCatalogProgramId(item.id);
- else setSelectedCatalogStyleId(item.id);
- }}
- style={{
- textAlign:"left",
- minHeight:150,
- padding:"0.72rem 0.75rem",
- borderRadius:14,
- borderColor:selected ? `${C.blue}55` : item.isActive ? `${C.green}40` : "#24344b",
- background:selected ? "rgba(37, 99, 235, 0.14)" : item.isActive ? "rgba(34,197,94,0.08)" : "#0f172a",
- display:"grid",
- gap:"0.24rem",
- }}
- >
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.35rem" }}>
- <div style={{ fontSize:"0.62rem", color:"#f8fafc", fontWeight:600, lineHeight:1.3 }}>{item.displayName}</div>
- {item.isActive && (
- <div style={{ fontSize:"0.42rem", color:C.green, background:"rgba(34,197,94,0.12)", border:`1px solid ${C.green}3d`, padding:"0.14rem 0.35rem", borderRadius:999, letterSpacing:"0.08em" }}>
- ACTIVE
- </div>
- )}
- </div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{item.categoryLabel}</div>
- <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>{item.summary}</div>
- <div style={{ fontSize:"0.48rem", color:"#93c5fd", lineHeight:1.45 }}>
- {item.commitmentLine || item.emphasisLine || item.sourceBasisLabel}
- </div>
- <div style={{ fontSize:"0.46rem", color:"#64748b", lineHeight:1.45 }}>
- {item.sourceBasisLabel} • {item.sourceConfidenceLabel}
- </div>
- </button>
- );
- })}
- </div>
- </div>
- ))}
- </div>
-
- <div style={{ border:"1px solid #24344b", borderRadius:16, background:"#0b1322", padding:"0.85rem" }}>
- {catalogMode === "programs" && selectedProgramDefinition ? (
- <div style={{ display:"grid", gap:"0.58rem" }}>
- <div>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>PROGRAM PREVIEW</div>
- <div style={{ fontSize:"0.74rem", color:"#f8fafc", fontWeight:600, lineHeight:1.25 }}>{selectedProgramCardExplanation?.title || selectedProgramDefinition.displayName}</div>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", marginTop:"0.2rem", lineHeight:1.58 }}>{selectedProgramCardExplanation?.summary || selectedProgramDefinition.summary}</div>
- </div>
-
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
- {selectedProgramCardExplanation?.basisLine}
- </div>
- <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
- {selectedProgramCardExplanation?.confidenceLine}
- </div>
- <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
- {selectedProgramCardExplanation?.commitmentLine}
- </div>
- </div>
-
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
- Target user: <span style={{ color:"#dbe7f6" }}>{selectedProgramDefinition.targetUser}</span>
- </div>
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
- Weekly shape: <span style={{ color:"#dbe7f6" }}>{(selectedProgramDefinition.weeklyStructureTemplate || []).map((session) => session.focus).slice(0, 4).join(" - ")}</span>
- </div>
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
- Required setup: <span style={{ color:"#dbe7f6" }}>{(selectedProgramDefinition.requiredEquipment || []).join(", ") || "No special setup"}</span>
- </div>
-
- <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.68rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.18rem" }}>COMPATIBILITY</div>
- <div style={{ fontSize:"0.6rem", color:selectedProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : selectedProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.caution ? "#93c5fd" : C.green, fontWeight:600, lineHeight:1.35 }}>
- {selectedProgramActivationCopy?.headline || buildCompatibilityHeadline(selectedProgramCompatibility)}
- </div>
- <div style={{ fontSize:"0.53rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.55 }}>
- {selectedProgramActivationCopy?.body || selectedProgramWarningCopy?.body || "This is a clean fit right now."}
- </div>
- {(selectedProgramWarningCopy?.details || []).slice(0, 2).map((line, index) => (
- <div key={`program_change_${index}`} style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{line}</div>
- ))}
- </div>
-
- <div style={{ display:"grid", gap:"0.32rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>ACTIVATE AS</div>
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- {[
- { key: PROGRAM_FIDELITY_MODES.runAsWritten, label: "Run mostly as written", enabled: selectedProgramDefinition?.fidelityModeSupport?.run_as_written },
- { key: PROGRAM_FIDELITY_MODES.adaptToMe, label: "Fit it to me", enabled: selectedProgramDefinition?.fidelityModeSupport?.adapt_to_me },
- { key: PROGRAM_FIDELITY_MODES.useAsStyle, label: "Use for feel", enabled: selectedProgramDefinition?.fidelityModeSupport?.use_as_style },
- ].filter((mode) => mode.enabled).map((mode) => {
- const selected = selectedProgramFidelityMode === mode.key;
- return (
- <button
- key={mode.key}
- className="btn"
- onClick={() => setSelectedProgramFidelityMode(mode.key)}
- style={{
- fontSize:"0.5rem",
- color:selected ? "#f8fafc" : "#cbd5e1",
- borderColor:selected ? `${C.blue}55` : "#2b3d55",
- background:selected ? "rgba(59,130,246,0.14)" : "#0f172a",
- }}
- >
- {mode.label}
- </button>
- );
- })}
- </div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
- {selectedProgramActivationCopy?.detail || selectedProgramDefinition.explanationTemplate?.adaptationSummary}
- </div>
- </div>
-
- <button
- className="btn btn-primary"
- onClick={() => handleActivateProgram(selectedProgramFidelityMode)}
- disabled={selectedProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible}
- style={{ width:"100%" }}
- >
- Use {selectedProgramDefinition.displayName}
- </button>
- </div>
- ) : catalogMode === "styles" && selectedStyleDefinition ? (
- <div style={{ display:"grid", gap:"0.58rem" }}>
- <div>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>STYLE PREVIEW</div>
- <div style={{ fontSize:"0.74rem", color:"#f8fafc", fontWeight:600, lineHeight:1.25 }}>{selectedStyleCardExplanation?.title || selectedStyleDefinition.displayName}</div>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", marginTop:"0.2rem", lineHeight:1.58 }}>{selectedStyleCardExplanation?.summary || selectedStyleDefinition.summary}</div>
- </div>
-
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
- {selectedStyleCardExplanation?.basisLine}
- </div>
- <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
- {selectedStyleCardExplanation?.confidenceLine}
- </div>
- <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
- {selectedStyleCardExplanation?.emphasisLine}
- </div>
- </div>
-
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
- What it changes: <span style={{ color:"#dbe7f6" }}>{selectedStyleOverlayPreview?.biasSummary || selectedStyleDefinition.summary}</span>
- </div>
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
- Exercise focus: <span style={{ color:"#dbe7f6" }}>{(selectedStyleDefinition.exerciseSelectionBias || []).join(" - ")}</span>
- </div>
-
- <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.68rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.18rem" }}>COMPATIBILITY</div>
- <div style={{ fontSize:"0.6rem", color:selectedStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : selectedStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.caution ? "#93c5fd" : C.green, fontWeight:600, lineHeight:1.35 }}>
- {selectedStyleActivationCopy?.headline || buildCompatibilityHeadline(selectedStyleCompatibility)}
- </div>
- <div style={{ fontSize:"0.53rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.55 }}>
- {selectedStyleActivationCopy?.body || selectedStyleWarningCopy?.body || "This style can layer onto the current plan."}
- </div>
- {(selectedStyleWarningCopy?.details || []).slice(0, 2).map((line, index) => (
- <div key={`style_change_${index}`} style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{line}</div>
- ))}
- </div>
-
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
- {selectedStyleActivationCopy?.detail || selectedStyleDefinition.explanationTemplate?.overlaySummary}
- </div>
-
- <button
- className="btn btn-primary"
- onClick={handleActivateStyle}
- disabled={selectedStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible}
- style={{ width:"100%" }}
- >
- Use {selectedStyleDefinition.displayName}
- </button>
- </div>
- ) : (
- <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.55 }}>Choose a program or style to preview it here.</div>
- )}
- </div>
- </div>
- </section>
-
- <section className="card card-subtle" style={{ borderColor:C.blue+"26" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", marginBottom:"0.7rem" }}>
- <div>
- <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>GOAL TRACKING</div>
- <div style={{ fontSize:"0.58rem", color:"#8fa5c8", lineHeight:1.55 }}>{goalProgressTracking?.summary || "Resolved goals drive what gets tracked."}</div>
- </div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", background:"#1e293b", padding:"0.18rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>RESOLVED-GOAL NATIVE</div>
- </div>
- <GoalAnchorQuickEntryPanel
- goalProgressTracking={goalProgressTracking}
- surface="program"
- bodyweights={bodyweights}
- manualProgressInputs={manualProgressInputs}
- saveBodyweights={saveBodyweights}
- saveManualProgressInputs={saveManualProgressInputs}
- accentColor={C.blue}
- />
- {goalProgressCards.length > 0 ? (
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:"0.7rem", marginTop:"0.7rem" }}>
- {goalProgressCards.map((card) => {
- const tone = getGoalProgressTone(card.status);
- return (
- <div key={card.goalId || card.summary} style={{ border:`1px solid ${tone.border}`, borderRadius:14, background:"#0f172a", padding:"0.8rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.5rem", marginBottom:"0.45rem" }}>
- <div style={{ minWidth:0 }}>
- <div style={{ fontSize:"0.7rem", color:"#f8fafc", fontWeight:600, lineHeight:1.25 }}>{card.summary}</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
- {String(card.trackingMode || "tracking").replaceAll("_", " ")} - review {card.reviewCadence}
- </div>
- </div>
- <div style={{ fontSize:"0.48rem", color:tone.color, background:tone.bg, border:`1px solid ${tone.border}`, padding:"0.16rem 0.45rem", borderRadius:999, letterSpacing:"0.08em", whiteSpace:"nowrap" }}>
- {String(card.status || "tracking").replaceAll("_", " ")}
- </div>
- </div>
- <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>{card.statusSummary}</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5, marginTop:"0.24rem" }}>
- Tracking: {(card.whatIsTracked || []).join(" - ") || "Awaiting resolved metrics."}
- </div>
- <div style={{ display:"grid", gap:"0.42rem", marginTop:"0.6rem" }}>
- {(card.trackedItems || []).slice(0, 4).map((item) => (
- <div key={`${card.goalId}_${item.key}`} style={{ border:"1px solid #22324a", borderRadius:10, background:"#0b1322", padding:"0.5rem 0.55rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.35rem", flexWrap:"wrap" }}>
- <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>{item.label}</div>
- <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.06em" }}>{String(item.kind || "proxy").toUpperCase()}</div>
- </div>
- <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.2rem", lineHeight:1.5 }}>{item.currentDisplay || "No current data yet."}</div>
- {item.targetDisplay && <div style={{ fontSize:"0.5rem", color:"#93c5fd", marginTop:"0.14rem", lineHeight:1.45 }}>Target: {item.targetDisplay}</div>}
- {item.trendDisplay && <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>{item.trendDisplay}</div>}
- <div style={{ fontSize:"0.49rem", color:"#64748b", marginTop:"0.18rem", lineHeight:1.5 }}>Why: {item.why}</div>
- </div>
- ))}
- </div>
- <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.55, marginTop:"0.55rem" }}>{card.honestyNote}</div>
- {card.unresolvedGaps?.[0] && (
- <div style={{ display:"grid", gap:"0.24rem", marginTop:"0.3rem" }}>
- <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.5 }}>Still open: {card.unresolvedGaps[0]}</div>
- <div style={{ display:"flex", gap:"0.32rem", flexWrap:"wrap" }}>
- <button
- data-testid={`program-goal-fix-clarity-${toTestIdFragment(card.goalId || card.summary)}`}
- className="btn"
- onClick={() => seedGoalRepair(card)}
- style={{ fontSize:"0.47rem", color:C.blue, borderColor:`${C.blue}35` }}
- >
- Tighten goal details
- </button>
- {(card.trackedItems || []).some((item) => item?.status === GOAL_PROGRESS_STATUSES.needsData) && (
- <button
- data-testid={`program-goal-fix-inputs-${toTestIdFragment(card.goalId || card.summary)}`}
- className="btn"
- onClick={openProgramRepairPanel}
- style={{ fontSize:"0.47rem", color:C.amber, borderColor:`${C.amber}35` }}
- >
- Add missing input
- </button>
- )}
- </div>
- </SurfaceCard>
- )}
- {card.tradeoffs?.[0] && (
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5, marginTop:"0.22rem" }}>Tradeoff: {card.tradeoffs[0]}</div>
- )}
- {!card.unresolvedGaps?.[0] && (card.trackedItems || []).some((item) => item?.status === GOAL_PROGRESS_STATUSES.needsData) && (
- <div style={{ marginTop:"0.3rem" }}>
- <button
- data-testid={`program-goal-fix-inputs-${toTestIdFragment(card.goalId || card.summary)}`}
- className="btn"
- onClick={openProgramRepairPanel}
- style={{ fontSize:"0.47rem", color:C.amber, borderColor:`${C.amber}35` }}
- >
- Add missing input
- </button>
- </div>
- )}
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5, marginTop:"0.3rem" }}>Next review: {card.nextReviewFocus}</div>
-</div>
-);
-})}
- </div>
- ) : (
- <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.55 }}>No resolved goals are available for progress tracking yet.</div>
- )}
- </section>
-
- <section className="card card-subtle" style={{ borderColor:goalReview?.due?.dueState === GOAL_REVIEW_DUE_STATES.dueNow ? `${C.amber}40` : `${C.blue}28`, background:"#101622" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.6rem", flexWrap:"wrap", marginBottom:"0.75rem" }}>
- <div>
- <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>GOAL REVIEW</div>
- <div style={{ fontSize:"0.66rem", color:"#f8fafc", fontWeight:600, lineHeight:1.35 }}>{goalReview?.headline || "Goal review snapshot"}</div>
- <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.14rem", lineHeight:1.55 }}>
- {goalReview?.due?.summary || "Quick check on whether the goal still fits and the tracking still makes sense."}
- </div>
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{goalReviewSummaryLine}</div>
- </div>
- <div style={{ display:"grid", gap:"0.22rem", justifyItems:"end" }}>
- <div style={{ fontSize:"0.48rem", color:goalReview?.due?.dueState === GOAL_REVIEW_DUE_STATES.dueNow ? C.amber : "#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.2rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>
- {goalReview?.due?.dueState === GOAL_REVIEW_DUE_STATES.dueNow ? "review due" : goalReview?.due?.dueState === GOAL_REVIEW_DUE_STATES.soon ? "review soon" : "not due"}
- </div>
- {latestGoalReviewEvent?.effectiveDate && (
- <div style={{ fontSize:"0.47rem", color:"#64748b", letterSpacing:"0.06em" }}>last reviewed {latestGoalReviewEvent.effectiveDate}</div>
- )}
- </div>
- </div>
-
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.55rem" }}>
- {(goalReview?.reviewItems || []).map((item) => {
- const tone = getGoalReviewVerdictTone(item?.verdict);
- return (
- <div key={item?.key} style={{ border:`1px solid ${tone.border}`, borderRadius:12, background:"#0f172a", padding:"0.7rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.35rem", marginBottom:"0.28rem" }}>
- <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.45 }}>
- {humanizeGoalReviewPrompt(item?.key)}
- </div>
- <div style={{ fontSize:"0.45rem", color:tone.color, background:tone.bg, border:`1px solid ${tone.border}`, padding:"0.14rem 0.38rem", borderRadius:999, letterSpacing:"0.08em", whiteSpace:"nowrap" }}>
- {humanizeGoalReviewVerdict(item?.verdict)}
- </div>
- </div>
- <div style={{ fontSize:"0.56rem", color:"#f8fafc", lineHeight:1.5 }}>{item?.answer}</div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5, marginTop:"0.2rem" }}>{item?.detail}</div>
- </div>
- );
- })}
- </div>
-
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", marginTop:"0.7rem" }}>
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
- Recommendation: <span style={{ color:"#dbe7f6" }}>{goalReviewRecommendationLine}</span>
- </div>
- <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
- <button className="btn" onClick={() => handleMarkGoalReview(GOAL_REVIEW_RECOMMENDATIONS.keepCurrentGoal)} disabled={goalReviewSaving} style={{ borderColor:"#2b3d55", color:"#dbe7f6" }}>
- {goalReviewSaving ? "Saving..." : "Keep it"}
- </button>
- <button className="btn" onClick={() => handleMarkGoalReview(GOAL_REVIEW_RECOMMENDATIONS.refineCurrentGoal)} disabled={goalReviewSaving} style={{ borderColor:`${C.blue}40`, color:C.blue }}>
- Tighten it
- </button>
- <button className="btn" onClick={() => handleMarkGoalReview(GOAL_REVIEW_RECOMMENDATIONS.reprioritizeGoalStack)} disabled={goalReviewSaving} style={{ borderColor:`${C.amber}40`, color:C.amber }}>
- Shift priority
- </button>
- </div>
- </div>
- {goalReviewNotice && (
- <div style={{ fontSize:"0.52rem", color:"#94a3b8", lineHeight:1.5, marginTop:"0.4rem" }}>{goalReviewNotice}</div>
- )}
- </section>
-
- <section ref={goalChangeSectionRef} className="card card-subtle" style={{ borderColor:C.amber+"30", background:"#11141d" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.6rem", flexWrap:"wrap", marginBottom:"0.75rem" }}>
- <div>
- <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>CHANGE MY GOAL</div>
- <div style={{ fontSize:"0.62rem", color:"#f8fafc", fontWeight:600, lineHeight:1.35 }}>Start vague if you need to. We'll resolve it before it changes the plan.</div>
-<div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.18rem", lineHeight:1.55 }}>
- This uses the same setup flow as onboarding. Nothing changes your plan until you confirm it.
- </div>
- <div style={{ fontSize:"0.46rem", color:"#64748b", marginTop:"0.16rem", letterSpacing:"0.08em", textTransform:"uppercase" }}>
- You changed this
- </div>
- {goalRepairHint && (
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.5 }}>
- {goalRepairHint}
- </div>
- )}
- </div>
- {latestGoalChangeEvent && (
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.2rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>
- LAST CHANGE {latestGoalChangeEvent.effectiveDate || ""}
- </div>
- )}
- </div>
-
- <div style={{ display:"grid", gap:"0.65rem" }}>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
- {Object.values(GOAL_CHANGE_MODES).map((mode) => {
- const meta = GOAL_CHANGE_MODE_META?.[mode] || null;
- const selected = goalChangeMode === mode;
- return (
- <button
- key={mode}
- className="btn"
- onClick={() => {
- setGoalChangeMode(mode);
- setGoalChangePreview(null);
- setGoalChangeError("");
- setGoalChangeNotice("");
- }}
- style={{
- textAlign:"left",
- minHeight:84,
- padding:"0.65rem 0.72rem",
- color:selected ? "#f8fafc" : "#cbd5e1",
- borderColor:selected ? `${C.amber}55` : "#2b3d55",
- background:selected ? "rgba(245, 158, 11, 0.12)" : "#0f172a",
- }}
- >
- <div style={{ fontSize:"0.56rem", fontWeight:700, color:selected ? C.amber : "#dbe7f6", marginBottom:"0.18rem" }}>{meta?.label || mode}</div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{meta?.effectLine}</div>
- </button>
- );
- })}
- </div>
-
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>
- {GOAL_CHANGE_MODE_META?.[goalChangeMode]?.historyLine}
- </div>
-
- <textarea
- value={goalChangeIntent}
- onChange={(event) => {
- setGoalChangeIntent(event.target.value);
- setGoalChangePreview(null);
- setGoalChangeError("");
- setGoalChangeNotice("");
- }}
- placeholder='Examples: "have six pack by August", "bench 225", "be a hybrid athlete", "lose fat but keep strength"'
- rows={3}
- style={{ resize:"vertical", minHeight:88 }}
- />
-
- <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
- <button className="btn btn-primary" onClick={handleGoalChangePreview} disabled={goalChangePreviewing || goalChangeApplying}>
- {goalChangePreviewing ? "Previewing..." : "See change"}
- </button>
- {goalChangePreview && (
- <button className="btn" onClick={handleGoalChangeApply} disabled={goalChangeApplying || goalChangePreviewing} style={{ color:C.green, borderColor:`${C.green}44` }}>
- {goalChangeApplying ? "Saving..." : "Save change"}
- </button>
- )}
- </div>
-
- {goalChangeError && (
- <div style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>{goalChangeError}</div>
- )}
- {goalChangeNotice && (
- <div style={{ fontSize:"0.54rem", color:C.green, lineHeight:1.5 }}>{goalChangeNotice}</div>
- )}
-
- {goalChangePreview && (
- <div style={{ display:"grid", gap:"0.7rem", border:"1px solid #2b3d55", borderRadius:14, background:"#0b1220", padding:"0.8rem" }}>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:"0.6rem" }}>
- <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.7rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>INTERPRETATION</div>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>
- {goalChangePreview?.aiInterpretationProposal
- ? "AI proposal only. Review it before confirming."
-: "AI unavailable. Showing the built-in version instead."}
- </div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.24rem", lineHeight:1.5 }}>
- Goal type: {goalChangePreview?.aiInterpretationProposal?.interpretedGoalType || goalChangePreview?.orderedResolvedGoals?.[0]?.goalFamily || "pending"}
- </div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
- Measurability: {String(goalChangePreview?.orderedResolvedGoals?.[0]?.measurabilityTier || "pending").replaceAll("_", " ")}
- </div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
- Realism: {String(goalChangePreview?.goalFeasibility?.realismStatus || "pending").replaceAll("_", " ")}
- </div>
- </div>
-
- <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.7rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>WHAT CHANGES</div>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalChangePreview?.modeMeta?.effectLine}</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.24rem", lineHeight:1.5 }}>{goalChangePreview?.modeMeta?.historyLine}</div>
- {goalChangePreview?.goalFeasibility?.suggestedSequencing?.[0]?.summary && (
- <div style={{ fontSize:"0.5rem", color:"#93c5fd", marginTop:"0.24rem", lineHeight:1.5 }}>
- Sequencing: {goalChangePreview.goalFeasibility.suggestedSequencing[0].summary}
- </div>
- )}
- </div>
- </div>
-
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.65 }}>{goalChangePreview?.explanationText}</div>
-
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:"0.6rem" }}>
- {goalChangePreview.orderedResolvedGoals.map((goal) => {
- const goalTiming = buildGoalTimingPresentation(goal, {
- visibleHorizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS,
- });
- return (
- <div key={goal.id || goal.summary} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.75rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem" }}>
- <div>
- <div style={{ fontSize:"0.66rem", color:"#f8fafc", fontWeight:600, lineHeight:1.3 }}>{goal.summary}</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>
- {String(goal.goalFamily || "goal").replaceAll("_", " ")} - priority {goal.planningPriority}
- </div>
- </div>
- <div style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#162131", border:"1px solid #24344b", padding:"0.16rem 0.4rem", borderRadius:999, letterSpacing:"0.08em" }}>
- {String(goal.confidence || "low").toUpperCase()}
- </div>
- </div>
- <div style={{ fontSize:"0.52rem", color:"#dbe7f6", marginTop:"0.35rem", lineHeight:1.55 }}>
- Track: {[goal?.primaryMetric?.label, ...(goal?.proxyMetrics || []).map((metric) => metric.label)].filter(Boolean).join(" - ") || "First 30-day success only"}
- </div>
- <div style={{ fontSize:"0.5rem", color:"#93c5fd", marginTop:"0.18rem", lineHeight:1.5 }}>
- {goalTiming.label}
- </div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>
- {goalTiming.detail}
- </div>
- {goal?.first30DaySuccessDefinition && (
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
- First 30 days: {goal.first30DaySuccessDefinition}
- </div>
- )}
- {goal?.unresolvedGaps?.[0] && (
- <div style={{ fontSize:"0.5rem", color:C.amber, marginTop:"0.2rem", lineHeight:1.5 }}>
- Still open: {goal.unresolvedGaps[0]}
- </div>
- )}
- {goal?.tradeoffs?.[0] && (
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
- Tradeoff: {goal.tradeoffs[0]}
- </div>
- )}
- </div>
- )})}
- </div>
-
- {(goalChangePreview?.goalFeasibility?.conflictFlags?.length || 0) > 0 && (
- <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.55 }}>
- Tradeoffs to respect: {goalChangePreview.goalFeasibility.conflictFlags.map((item) => item.summary).filter(Boolean).join(" - ")}
- </div>
- )}
-
- {intakeDebugMode && (
- <details style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(8,14,25,0.58)" }}>
- <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>INTAKE DEBUG</summary>
- <div style={{ display:"grid", gap:"0.45rem", marginTop:"0.65rem" }}>
- <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.55 }}>
- State: {machineDebugView?.state || "pending"}
- </div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>
- Missing anchors: {(machineDebugView?.missing_anchors?.length || 0)
- ? machineDebugView.missing_anchors.map((item) => item.field_id).join(", ")
- : "none"}
- </div>
- <label style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>
- <input
- type="checkbox"
- checked={showParseDebug}
- onChange={(e) => setShowParseDebug(e.target.checked)}
- />
- Show parse debug
- </label>
- {parseDebugView.visible && (
- <div style={{ display:"grid", gap:"0.24rem", border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.55rem" }}>
- <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>
- field_id: {parseDebugView.field_id || "none"}
- </div>
- <pre style={{ margin:0, whiteSpace:"pre-wrap", wordBreak:"break-word", fontSize:"0.47rem", lineHeight:1.45, color:"#dbe7f6", fontFamily:"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }}>
- {JSON.stringify(parseDebugView.parsed_value, null, 2)}
- </pre>
- </div>
- )}
- <div style={{ display:"grid", gap:"0.28rem" }}>
- {(machineDebugView?.last_events || []).map((entry) => (
- <div key={entry.transition_id} style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.5 }}>
- {entry.type} | {entry.stage_before}{" -> "}{entry.stage_after}{entry.field_id ? ` | ${entry.field_id}` : ""}
- </div>
- ))}
- </div>
- </div>
- </details>
- )}
- </div>
- )}
- </div>
- </section>
-
- <section className="card card-action" style={{ borderColor:C.green+"38", background:"#0d1510" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", marginBottom:"0.7rem" }}>
- <div>
- <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>CURRENT WEEK DETAIL</div>
- <div style={{ fontSize:"1rem", color:"#f8fafc", fontWeight:650 }}>{sanitizeDisplayText(currentWeekLabel)}</div>
- <div style={{ fontSize:"0.55rem", color:"#8fa5c8", marginTop:"0.12rem" }}>Your current plan week. Today may still reflect live day-level adjustments.</div>
- </div>
- <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
- <div style={{ fontSize:"0.5rem", color:C.green, background:C.green+"14", padding:"0.18rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>CURRENT</div>
- <div style={{ fontSize:"0.48rem", color:programTrustTone.color, background:programTrustTone.bg, padding:"0.18rem 0.5rem", borderRadius:999 }}>{programTrust.label}</div>
- </div>
- </div>
-
- <div style={{ display:"grid", gridTemplateColumns:"1.1fr 0.9fr", gap:"0.8rem", marginBottom:"0.75rem" }}>
- <div style={{ display:"grid", gap:"0.42rem" }}>
- <div style={{ display:"grid", gap:"0.18rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WEEK PURPOSE</div>
- <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.45 }}>{currentWeekPurposeLine}</div>
- </div>
- <div style={{ display:"grid", gap:"0.18rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WHAT MATTERS MOST</div>
- <div style={{ fontSize:"0.54rem", color:"#cbd5e1", lineHeight:1.5 }}>{currentWeekMattersLine}</div>
- </div>
- <div style={{ display:"grid", gap:"0.18rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WHAT CHANGES THIS WEEK</div>
- <div style={{ fontSize:"0.53rem", color:badWeekTriage ? C.amber : "#8fa5c8", lineHeight:1.5 }}>{currentWeekChangesLine}</div>
- </div>
- <div style={{ display:"grid", gap:"0.18rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WIN THE WEEK</div>
- <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.5 }}>{currentWeekWinLine}</div>
- </div>
- <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.45 }}>{currentWeekContextLine}</div>
- {!!currentWeekMetaLine && <div style={{ fontSize:"0.49rem", color:"#7f93b2", lineHeight:1.4 }}>{currentWeekMetaLine}</div>}
- <details>
- <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#8fa5c8" }}>Week context</summary>
- <div style={{ marginTop:"0.28rem", display:"grid", gap:"0.2rem" }}>
- <div style={{ fontSize:"0.49rem", color:"#94a3b8", lineHeight:1.5 }}>
- {currentCommittedWeekReview
- ? `A saved week snapshot exists for ${currentCommittedWeekReview.label}. The rest of the ${visibleProgramHorizonLabel} stay projected until they become current.`
- : `Saved week history appears as each week becomes current. The rest of the ${visibleProgramHorizonLabel} stay projected until then.`}
- </div>
- <div style={{ fontSize:"0.49rem", color:"#94a3b8", lineHeight:1.5 }}>{programTrust.summary}</div>
- {Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0 && (
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>Constraints: {currentWeekModel.constraints.slice(0, 4).join(" - ")}</div>
- )}
- </div>
- </details>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(2,minmax(0,1fr))", gap:"0.45rem" }}>
- <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>STATUS</div>
- <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.16rem" }}>{String(currentWeekModel?.status || "planned").replaceAll("_", " ")}</div>
- </div>
- <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>COMPLETION</div>
- <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.16rem" }}>{sessionsCompletedThisWeek}/{Math.max(1, plannedSessionsThisWeek)}</div>
- </div>
- <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>WEEK TYPE</div>
- <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.16rem" }}>{nextWeekType}</div>
- </div>
- <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>PLAN MODE</div>
- <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.16rem" }}>{deviceSyncAudit?.planMode || "normal"}</div>
- </div>
- <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>DURABILITY</div>
- <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.16rem" }}>{currentCommittedWeekReview ? "saved history" : "not yet saved"}</div>
- </div>
- </div>
- </div>
-
- <div style={{ marginBottom:"0.7rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.32rem" }}>THIS WEEK PLAN</div>
- <div style={{ display:"grid", gap:"0.45rem" }}>
- {(currentWeekSessions ?? []).map((session) => {
- const isSelected = selectedProgramSessionKey === session.key && selectedProgramSessionSurface === "program_main_week";
- return (
- <ProgramSessionInlineRow
- key={session.key || `current_${session.day}_${session.title}`}
- session={session}
- isSelected={isSelected}
- onToggle={() => toggleProgramSession(session.key, "program_main_week")}
- accentColor={C.green}
- testIdPrefix="program-main-week-session"
- buttonStyle={{
- border:`1px solid ${isSelected ? `${C.green}55` : "#1f3026"}`,
- borderRadius:10,
- background:isSelected ? "#122018" : "#0f172a",
- padding:"0.55rem 0.6rem",
- textAlign:"left",
- display:"block",
- minHeight:0,
- }}
- >
- <>
- <div style={{ fontSize:"0.48rem", color:isSelected ? "#8fbda0" : "#64748b", letterSpacing:"0.08em" }}>{session.day}</div>
- <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.12rem", display:"flex", alignItems:"center", justifyContent:"space-between", gap:"0.28rem", flexWrap:"wrap" }}>
- <span style={{ display:"inline-flex", alignItems:"center", gap:"0.28rem" }}>
- {session.icon && <InlineGlyph name={session.icon} color={C.green} size={12} />}
- <span>{sanitizeDisplayText(session.title)}</span>
- </span>
- <span style={{ fontSize:"0.43rem", color:isSelected ? C.green : "#8fa5c8", background:isSelected ? `${C.green}16` : "#15263f", padding:"0.12rem 0.34rem", borderRadius:999 }}>
- {isSelected ? "Hide" : "View"}
- </span>
- </div>
- <div style={{ fontSize:"0.54rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{sanitizeDisplayText(session.detail || "Planned session")}</div>
- {session.live && <div style={{ fontSize:"0.48rem", color:C.green, marginTop:"0.18rem" }}>Live PlanDay view</div>}
- </>
- </ProgramSessionInlineRow>
- );
- })}
- </div>
- )}
- </div>
-
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.7rem" }}>
- <div style={{ borderTop:"1px solid #1f3026", paddingTop:"0.6rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.35rem" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>WEEK CHECK-IN</div>
- <div className={weeklyGoalHit ? "pulse-ring" : ""} style={{ width:38, height:38, borderRadius:999, display:"grid", placeItems:"center", background:`conic-gradient(${C.green} ${weeklyProgress * 3.6}deg, #25334a 0deg)`, padding:3 }}>
- <div className="mono" style={{ width:"100%", height:"100%", borderRadius:999, display:"grid", placeItems:"center", background:"#0f172a", fontSize:"0.5rem", color:weeklyGoalHit ? C.green : "#94a3b8" }}>{weeklyProgress}%</div>
- </div>
- </div>
- <div style={{ display:"grid", gap:"0.32rem" }}>
- {([["energy", "Energy"], ["stress", "Stress"], ["confidence", "Confidence"]] ?? []).map(([k, label]) => (
- <div key={k} style={{ display:"grid", gridTemplateColumns:"110px 1fr", alignItems:"center", gap:"0.45rem" }}>
- <div style={{ fontSize:"0.53rem", color:"#94a3b8" }}>{label}</div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:"0.22rem" }}>
- {([1,2,3,4,5] ?? []).map((n) => (
- <button key={n} className="btn" onClick={()=>setMiniWeekly(prev=>({ ...prev, [k]: n }))} style={{ fontSize:"0.5rem", padding:"3px 0", borderColor:Number(miniWeekly[k])===n ? C.green : "#1e293b", color:Number(miniWeekly[k])===n ? C.green : "#64748b" }}>{n}</button>
- ))}
- </div>
- </div>
- ))}
- <button className="btn btn-primary" onClick={()=>saveWeeklyCheckin(currentWeek, miniWeekly)} style={{ width:"fit-content", fontSize:"0.54rem" }}>Save weekly check-in</button>
- </div>
- </div>
-
- <div style={{ borderTop:"1px solid #1f3026", paddingTop:"0.6rem", display:"grid", gap:"0.45rem" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>WEEK SETTINGS</div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr auto auto", gap:"0.3rem", alignItems:"center" }}>
- <select value={environmentSelection?.mode || personalization?.environmentConfig?.defaultMode || "Home"} onChange={e=>setEnvironmentMode({ mode:e.target.value, scope: "week" })} style={{ fontSize:"0.55rem" }}>
- {(["Home","Gym","Outdoor","Travel"] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
- </select>
- <button className="btn" onClick={()=>setEnvironmentMode({ mode: environmentSelection?.mode || "Home", scope: "week" })} style={{ fontSize:"0.5rem" }}>This week</button>
- <button className="btn" onClick={()=>setEnvironmentMode({ mode: environmentSelection?.mode || "Home", scope: "base" })} style={{ fontSize:"0.5rem" }}>Default</button>
- </div>
- <div style={{ fontSize:"0.51rem", color:"#8fa5c8", lineHeight:1.55 }}>
- Recovery signal: {(deviceSyncAudit?.utilization || ["No device signals available yet."]).slice(0, 2).join(" ")}
- </div>
- <div style={{ fontSize:"0.49rem", color:"#94a3b8", lineHeight:1.5 }}>
- Built from: {programTrust.sourceLine}
- </div>
- {scheduleEntries.length > 0 && (
- <div style={{ fontSize:"0.51rem", color:"#8fa5c8", lineHeight:1.55 }}>
- Upcoming environment schedule: {scheduleEntries.slice(0, 2).map((slot) => `${slot.startDate} to ${slot.endDate} ${slot.mode}`).join(" - ")}
- </div>
- )}
- </div>
- </div>
- </section>
-
- <section className="card card-subtle" style={{ borderColor:C.blue+"26" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", marginBottom:"0.7rem" }}>
- <div>
- <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>{visibleProgramHorizonLabel.toUpperCase()}</div>
- <div style={{ fontSize:"0.58rem", color:"#8fa5c8", lineHeight:1.55 }}>Projected structure only. This visible window shows the next phase of work, not the finish line for every goal.</div>
- </div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", background:"#1e293b", padding:"0.18rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>PROJECTED</div>
- </div>
-
- <div style={{ display:"grid", gap:"0.55rem" }}>
- {futureWeekRows.map((h) => {
- const w = h?.template || null;
- const adaptive = adjustedWeekMap[h.absoluteWeek] || { adjusted: w, changed: [] };
- const weekSessions = getProgramWeekSessions(h.absoluteWeek, h);
- const weekIntent = h?.planWeek?.weeklyIntent || (h?.planWeek ? {
- focus: h.planWeek.focus,
- aggressionLevel: h.planWeek.aggressionLevel,
- recoveryBias: h.planWeek.recoveryBias,
- nutritionEmphasis: h.planWeek.nutritionEmphasis,
- } : null);
- const isExpanded = openWeek === h.absoluteWeek;
- const hasCanonicalSessions = Object.values(h?.planWeek?.sessionsByDay || {}).some(Boolean);
- const projectionLabel = h.kind === "recovery"
- ? "Recovery placeholder"
- : h.kind === "next_goal_prompt"
- ? "Next-goal placeholder"
- : hasCanonicalSessions
- ? "Projected week"
- : "Directional preview";
- const previewTone = hasCanonicalSessions ? C.blue : C.amber;
- const collapsedSummary = weekSessions.length > 0
- ? weekSessions.slice(0, 3).map((session) => `${session.day} ${session.title}`).join(" - ")
-: (h?.focus || "No preview ready");
- return (
- <div key={h.absoluteWeek} className="card card-subtle" style={{ borderColor:"#22324a", background:"#0d1117" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.6rem", flexWrap:"wrap" }}>
- <div>
- <div style={{ fontSize:"0.74rem", color:"#f8fafc", fontWeight:600 }}>{sanitizeDisplayText(h.weekLabel || `${w?.phase || "Plan"} - Week ${h.absoluteWeek}`)}</div>
- <div style={{ fontSize:"0.5rem", color:previewTone, marginTop:"0.12rem", letterSpacing:"0.08em" }}>{projectionLabel}</div>
- {weekIntent?.focus && <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.18rem" }}>{weekIntent.focus}</div>}
- <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.55 }}>
- {hasCanonicalSessions ? "Built from the saved week structure. Day details may still change when that week becomes current." : "Direction derived from templates and current planning inputs. Day detail is not final yet."}
- </div>
- </div>
- <button className="btn" onClick={()=>setOpenWeek(openWeek===h.absoluteWeek ? null : h.absoluteWeek)} style={{ fontSize:"0.5rem" }}>{isExpanded ? "Hide" : "View"}</button>
- </div>
-
- {!isExpanded && <div style={{ fontSize:"0.55rem", color:"#94a3b8", marginTop:"0.35rem", lineHeight:1.6 }}>{collapsedSummary}</div>}
-
- {isExpanded && (
- <div style={{ marginTop:"0.45rem", display:"grid", gap:"0.4rem" }}>
- <div style={{ display:"grid", gap:"0.4rem" }}>
- {(weekSessions ?? []).map((session) => {
- const isSelected = selectedProgramSessionKey === session.key && selectedProgramSessionSurface === `program_preview_week_${h.absoluteWeek}`;
- return (
- <ProgramSessionInlineRow
- key={session.key || `${h.absoluteWeek}_${session.day}_${session.title}`}
- session={session}
- isSelected={isSelected}
- onToggle={() => toggleProgramSession(session.key, `program_preview_week_${h.absoluteWeek}`)}
- accentColor={previewTone}
- testIdPrefix="program-preview-week-session"
- buttonStyle={{
- border:`1px solid ${isSelected ? `${previewTone}55` : "#1e293b"}`,
- borderRadius:9,
- background:isSelected ? "#121d2b" : "#0f172a",
- padding:"0.45rem 0.5rem",
- textAlign:"left",
- display:"block",
- minHeight:0,
- }}
- >
- <>
- <div style={{ fontSize:"0.48rem", color:isSelected ? "#9cb5d4" : "#64748b", letterSpacing:"0.08em" }}>{session.day}</div>
- <div style={{ fontSize:"0.57rem", color:"#e2e8f0", marginTop:"0.12rem", display:"flex", alignItems:"center", justifyContent:"space-between", gap:"0.25rem", flexWrap:"wrap" }}>
- <span style={{ display:"inline-flex", alignItems:"center", gap:"0.25rem" }}>
- {session.icon && <InlineGlyph name={session.icon} color={previewTone} size={12} />}
- <span>{sanitizeDisplayText(session.title)}</span>
- </span>
- <span style={{ fontSize:"0.43rem", color:isSelected ? previewTone : "#8fa5c8", background:isSelected ? `${previewTone}16` : "#15263f", padding:"0.12rem 0.34rem", borderRadius:999 }}>
- {isSelected ? "Hide" : "View"}
- </span>
- </div>
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{sanitizeDisplayText(session.detail || "Planned session")}</div>
- </>
- </ProgramSessionInlineRow>
- );
- })}
- </div>
- {adaptive.changed?.length > 0 && (
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
- {adaptive.changed.slice(0,3).map((line, idx) => <div key={idx}>- {line}</div>)}
- </div>
- )}
- </div>
- )}
- </div>
- );
- })}
- </div>
- </section>
-
- </div>
- {Object.keys(paceOverrides || {}).length > 0 && (
- <div style={{ marginTop:"0.75rem", padding:"0.6rem 0.8rem", background:"#0d1117", border:`1px solid ${C.amber}30`, borderRadius:8, fontSize:"0.58rem", color:C.amber }}>
- Paces were adjusted from recent execution. <button className="btn" onClick={() => setPaceOverrides({})} style={{ marginLeft:"0.4rem", fontSize:"0.5rem", color:C.amber, borderColor:C.amber+"30" }}>Reset</button>
- </div>
- )}
- </div>
- );
-}
-
-// LOG TAB (POLISHED)
-function LogTab({ planDay = null, surfaceModel = null, logs, dailyCheckins = {}, plannedDayRecords = {}, planWeekRecords = {}, weeklyCheckins = {}, nutritionActualLogs = {}, saveLogs, bodyweights, saveBodyweights, personalization, athleteProfile = null, saveManualProgressInputs = async () => null, currentWeek, todayWorkout: legacyTodayWorkout, planArchives = [], planStartDate = "", syncStateModel = null, syncSurfaceModel = null }) {
- const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
- const plannedWorkout = planDay?.base?.training || legacyTodayWorkout;
- const goals = athleteProfile?.goals || [];
- const manualProgressInputs = personalization?.manualProgressInputs || {};
- const today = new Date().toISOString().split("T")[0];
- const e2eLogPlanOverride = useMemo(() => {
- if (typeof window === "undefined") return null;
- const searchParams = new URLSearchParams(window.location.search || "");
- if (!searchParams.has("e2e")) return null;
- try {
- const rawOverride = JSON.parse(window.localStorage.getItem("trainer_e2e_log_plan_override_v1") || "null");
- const historyEntry = normalizePrescribedDayHistoryEntry(today, rawOverride);
- const plannedDayRecord = getCurrentPrescribedDayRecord(historyEntry)
- || (rawOverride?.dateKey === today ? rawOverride : null);
- if (!plannedDayRecord?.dateKey || plannedDayRecord.dateKey !== today) return null;
- return { historyEntry, plannedDayRecord };
- } catch {
- return null;
- }
- }, [today]);
- const todayPlannedDayRecord = e2eLogPlanOverride?.plannedDayRecord || buildPlannedDayRecord(planDay);
- const FEEL_LABELS = {
- "1": { title: "Rough", tip: "Rest, eat, sleep. Tomorrow is a new session." },
- "2": { title: "Tired", tip: "Manageable. Log it and move on." },
- "3": { title: "Solid", tip: "Standard execution. Building as planned." },
- "4": { title: "Strong", tip: "Good day. Note it - the coach will." },
- "5": { title: "Best", tip: "Flag this. Worth knowing when these happen." },
- };
- const [detailed, setDetailed] = useState({
- date: today,
- family: WORKOUT_LOG_FAMILIES.generic,
- sessionType: sanitizeDisplayText(todayWorkout?.type || plannedWorkout?.type || "session"),
- sessionLabel: sanitizeDisplayText(todayWorkout?.label || plannedWorkout?.label || "Session"),
- prescribedLabel: sanitizeDisplayText(todayWorkout?.label || plannedWorkout?.label || ""),
- plannedSummary: surfaceModel?.display || buildDayPrescriptionDisplay({
- training: todayWorkout || plannedWorkout || null,
- includeWhy: false,
- prescribedExercises: buildStrengthPrescriptionEntriesForLogging(todayWorkout || plannedWorkout || null),
- }),
- feel: "3",
- location: "home",
- notes: "",
- run: { enabled: false, distance: "", duration: "", pace: "", purpose: "", structure: "" },
- strength: { enabled: false, hasPrescribedStructure: false, rows: [] },
- generic: { visible: true, reps: "", weight: "" },
- });
- const [saved, setSaved] = useState(false);
- const [savedMsg, setSavedMsg] = useState("");
- const [savedAtLabel, setSavedAtLabel] = useState("");
- const [saveErrorMsg, setSaveErrorMsg] = useState("");
- const [feelTooltip, setFeelTooltip] = useState("");
- const [quickDetailsOpen, setQuickDetailsOpen] = useState(false);
- const [advancedFieldsOpen, setAdvancedFieldsOpen] = useState(false);
- const [restTimer, setRestTimer] = useState({
-  active: false,
-  rowIndex: -1,
-  label: "",
-  totalSeconds: 0,
-  remainingSeconds: 0,
- });
- const [pendingDeleteDate, setPendingDeleteDate] = useState("");
- const [selectedReviewDate, setSelectedReviewDate] = useState(today);
- const [selectedArchiveReviewTarget, setSelectedArchiveReviewTarget] = useState({ archiveId: "", dateKey: "" });
- const feelTooltipTimerRef = useRef(null);
- const detailedHydratedRef = useRef(false);
- const logFormRef = useRef(null);
-
- const history = Object.entries(logs || {})
- .filter(([date]) => date <= today)
- .sort((a,b)=>b[0].localeCompare(a[0]));
- const reviewDateKeys = useMemo(
- () => Array.from(new Set([
- ...Object.keys(logs || {}),
- ...Object.keys(dailyCheckins || {}),
- ...Object.keys(plannedDayRecords || {}),
- ...Object.keys(nutritionActualLogs || {}),
- today,
- ])).filter((dateKey) => dateKey && dateKey <= today).sort((a, b) => b.localeCompare(a)),
- [logs, dailyCheckins, plannedDayRecords, nutritionActualLogs, today]
- );
- const committedWeekReviews = useMemo(
- () => buildHistoricalWeekAuditEntries({ planWeekRecords, logs, weeklyCheckins, currentWeek })
- .filter((entry) => Number(entry?.absoluteWeek || 0) <= Number(currentWeek || 0)),
- [planWeekRecords, logs, weeklyCheckins, currentWeek]
- );
- const goalProgressTracking = useMemo(() => buildGoalProgressTrackingFromGoals({
- goals,
- logs,
- bodyweights,
- dailyCheckins,
- weeklyCheckins,
- manualProgressInputs,
- now: new Date(),
- }), [goals, logs, bodyweights, dailyCheckins, weeklyCheckins, manualProgressInputs]);
- const quickCapture = useMemo(() => buildWorkoutQuickCaptureModel({ draft: detailed }), [detailed]);
- const quickCaptureHasValues = useMemo(() => hasWorkoutQuickCaptureValues({ draft: detailed }), [detailed]);
- const archivedPlanAudits = useMemo(
- () => (planArchives || []).map((archive) => buildArchivedPlanAudit({ archive })).filter(Boolean),
- [planArchives]
- );
- const toDateKey = (d) => new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split("T")[0];
- const getPlannedHistoryForDate = (dateKey, entry = null) => {
- // LEGACY_COMPAT: review surfaces still need archived prescribed snapshots
- // and template-derived rows until older arcs all carry durable day history.
- return resolvePlannedDayHistoryEntry({
- dateKey,
- existingEntry: (dateKey === today ? e2eLogPlanOverride?.historyEntry : null) || plannedDayRecords?.[dateKey] || null,
- todayKey: today,
- todayPlannedDayRecord,
- legacySnapshot: entry?.prescribedPlanSnapshot
- ? { ...entry.prescribedPlanSnapshot, ts: entry?.ts || null }
- : null,
- planStartDate,
- });
- };
- const getPlanComparison = (dateKey, entry = null) => {
- if (entry?.comparison?.completionKind) return entry.comparison;
- return buildDayReviewComparison({
- dateKey,
- actualLog: entry || {},
- actualCheckin: dailyCheckins?.[dateKey] || {},
- plannedDayRecord: getCurrentPrescribedDayRecord(getPlannedHistoryForDate(dateKey, entry)),
- });
- };
- const classifyStatus = (dateKey, entry) => {
- return classifyDayReviewStatus(getPlanComparison(dateKey, entry));
- };
- const formatReviewTimestamp = (value) => {
- if (!value) return "unknown";
- const date = new Date(value);
- return Number.isNaN(date.getTime()) ? "unknown" : date.toLocaleString();
- };
- const buildSessionSummary = (training = null) => {
- if (!training) return { label: "No prescribed session", detail: "", type: "" };
- return {
- label: sanitizeDisplayText(training?.label || training?.run?.t || training?.type || "Session"),
- detail: sanitizeDisplayText(training?.run?.d || training?.strengthDose || training?.strengthDuration || training?.fallback || training?.success || ""),
- type: sanitizeDisplayText(String(training?.type || "").replaceAll("-", " ")),
- };
- };
- const buildNutritionActualSummary = (actualNutrition = null) => {
- if (!actualNutrition?.loggedAt) {
- return { label: "Not logged", detail: "Actual nutrition has not been logged.", status: "missing" };
- }
- return {
- label: sanitizeDisplayText(actualNutrition?.quickStatus || actualNutrition?.adherence || "logged"),
- detail: sanitizeDisplayText(actualNutrition?.note || actualNutrition?.issue || actualNutrition?.deviationKind || "Nutrition log saved."),
- status: actualNutrition?.deviationKind || "",
- };
- };
- const buildRecoveryActualSummary = (actualRecovery = null) => {
- if (!actualRecovery?.loggedAt) {
- return { label: "Not logged", detail: "Actual recovery has not been logged.", status: "missing" };
- }
- return {
- label: sanitizeDisplayText(actualRecovery?.summary || "Recovery logged"),
- detail: sanitizeDisplayText(
- actualRecovery?.hydrationSupport?.summary
- || actualRecovery?.supplementAdherence?.summary
- || actualRecovery?.note
- || "Recovery log saved."
- ),
- status: actualRecovery?.hydrationSupport?.followed ? "match" : actualRecovery?.status || "",
- };
- };
- const reviewBadgeTone = (kind = "") => buildReviewBadgeTone(kind, C);
- const selectedDayReview = useMemo(
- () => buildDayReview({
- dateKey: selectedReviewDate,
- logs,
- dailyCheckins,
- nutritionActualLogs,
- resolvePrescribedHistory: getPlannedHistoryForDate,
- getCurrentPrescribedDayRevision,
- getCurrentPrescribedDayRecord,
- }),
- [selectedReviewDate, logs, dailyCheckins, plannedDayRecords, nutritionActualLogs, todayPlannedDayRecord]
- );
- const selectedArchivedDayReview = useMemo(() => {
- if (!selectedArchiveReviewTarget?.archiveId || !selectedArchiveReviewTarget?.dateKey) return null;
- const selectedArchive = (planArchives || []).find((archive) => (archive?.id || archive?.archivedAt) === selectedArchiveReviewTarget.archiveId);
- if (!selectedArchive) return null;
- return {
- archiveId: selectedArchiveReviewTarget.archiveId,
- dateKey: selectedArchiveReviewTarget.dateKey,
- review: buildArchivedDayReview({
- archive: selectedArchive,
- dateKey: selectedArchiveReviewTarget.dateKey,
- }),
- };
- }, [selectedArchiveReviewTarget, planArchives]);
- const summarizeExecutionDelta = (comparison = {}) => {
- if (!comparison?.hasPlannedDay) return "No planned day available for comparison.";
- return `${sanitizeStatusLabel(comparison?.completionKind)} - ${sanitizeStatusLabel(comparison?.differenceKind)}`;
- };
- useEffect(() => {
- if (!reviewDateKeys.length) return;
- if (!reviewDateKeys.includes(selectedReviewDate)) setSelectedReviewDate(reviewDateKeys[0]);
- }, [reviewDateKeys, selectedReviewDate]);
- useEffect(() => {
- if (!archivedPlanAudits.length) {
- if (selectedArchiveReviewTarget.archiveId || selectedArchiveReviewTarget.dateKey) {
- setSelectedArchiveReviewTarget({ archiveId: "", dateKey: "" });
- }
- return;
- }
- const selectedArchive = archivedPlanAudits.find((archive) => archive.id === selectedArchiveReviewTarget.archiveId);
- if (selectedArchive?.dayEntries?.some((entry) => entry.dateKey === selectedArchiveReviewTarget.dateKey)) return;
- const fallbackArchive = archivedPlanAudits.find((archive) => archive.dayEntries.length > 0) || null;
- if (!fallbackArchive) {
- if (selectedArchiveReviewTarget.archiveId || selectedArchiveReviewTarget.dateKey) {
- setSelectedArchiveReviewTarget({ archiveId: "", dateKey: "" });
- }
- return;
- }
- setSelectedArchiveReviewTarget({
- archiveId: fallbackArchive.id,
- dateKey: fallbackArchive.dayEntries[0]?.dateKey || "",
- });
- }, [archivedPlanAudits, selectedArchiveReviewTarget]);
- // LEGACY_COMPAT: older logs/archive rows may only have helper-derived labels.
- const cleanHistorySessionName = (value = "") => buildLegacyHistoryDisplayLabel(value, sanitizeDisplayText);
- const buildDetailedDraft = (dateKey = today, entryOverride = null) => {
- const safeDate = String(dateKey || today);
- const logEntry = entryOverride || logs?.[safeDate] || {};
- const plannedHistory = getPlannedHistoryForDate(safeDate, logEntry);
- const plannedDayRecord = getCurrentPrescribedDayRecord(plannedHistory) || (safeDate === today ? todayPlannedDayRecord : null);
- const fallbackTraining = getPlannedTrainingForLogDraft(plannedDayRecord) || (safeDate === today ? (todayWorkout || plannedWorkout) : null);
- return buildWorkoutLogDraft({
- dateKey: safeDate,
- plannedDayRecord,
- logEntry,
- fallbackTraining,
- prescribedExercises: buildStrengthPrescriptionEntriesForLogging(fallbackTraining),
- });
- };
-const updateStrengthRow = (rowIndex, updates = {}) => {
-setDetailed((current) => ({
-...current,
-strength: {
-...(current?.strength || {}),
- rows: (current?.strength?.rows || []).map((row, index) => {
- if (index !== rowIndex) return row;
- const nextExercise = updates?.exercise ?? row?.exercise ?? "";
- const nextMode = updates?.mode || inferExerciseMode(nextExercise, row?.mode || "");
- const prescribedKey = normalizeExerciseKey(row?.prescribedExercise || "");
- const actualKey = normalizeExerciseKey(nextExercise || "");
- const substituted = Boolean(prescribedKey && actualKey && prescribedKey !== actualKey);
- return {
- ...row,
- ...updates,
- exercise: nextExercise,
- mode: nextMode,
- bodyweightOnly: nextMode === "bodyweight",
- bandTension: nextMode === "band"
- ? (updates?.bandTension ?? row?.bandTension ?? BAND_TENSION_LEVELS[0] ?? "Light")
- : (updates?.bandTension ?? row?.bandTension ?? ""),
- actualWeight: nextMode === "weighted" ? (updates?.actualWeight ?? row?.actualWeight ?? "") : "",
- isSubstituted: substituted,
- substitutionState: substituted ? "substituted" : (row?.prescribedExercise ? "prescribed" : "unplanned"),
- canResetToPrescribed: substituted && Boolean(row?.prescribedExercise),
- };
- }),
-},
-}));
-};
- const updateRunDraft = (fieldKey, value) => {
- setDetailed((current) => ({
- ...current,
- run: {
- ...(current?.run || {}),
- enabled: true,
- [fieldKey]: value,
- },
- }));
- };
- const updateGenericDraft = (fieldKey, value) => {
- setDetailed((current) => ({
- ...current,
- generic: {
- ...(current?.generic || {}),
- visible: true,
- [fieldKey]: value,
- },
- }));
- };
- const addExtraStrengthRow = () => {
- setDetailed((current) => ({
- ...current,
- strength: {
- ...(current?.strength || {}),
- enabled: true,
- rows: [
- ...(current?.strength?.rows || []),
- {
- key: `extra_${Date.now()}_${Math.max(0, (current?.strength?.rows || []).length)}`,
- prescribedExercise: "",
- exercise: "",
- prescribedSetsText: "",
- prescribedRepsText: "",
- prescribedSets: 0,
- prescribedReps: 0,
- prescribedWeight: null,
- actualWeight: "",
- actualSets: "",
- actualReps: "",
- bandTension: "",
- bodyweightOnly: false,
- mode: "weighted",
- bucket: "general_strength",
- isSubstituted: true,
- substitutionState: "unplanned",
- canResetToPrescribed: false,
- substitutionAllowed: true,
- prefilledFromPrescription: false,
- },
- ],
- },
- }));
- };
- const removeStrengthRow = (rowIndex) => {
- setDetailed((current) => ({
- ...current,
- strength: {
- ...(current?.strength || {}),
- rows: (current?.strength?.rows || []).filter((_, index) => index !== rowIndex),
- },
- }));
- };
- const normalizeSteppedValue = (currentValue, delta, { min = 0, max = null, precision = 0 } = {}) => {
-  const numericCurrent = Number(currentValue);
-  const safeCurrent = Number.isFinite(numericCurrent) ? numericCurrent : 0;
-  const numericDelta = Number(delta);
-  const safeDelta = Number.isFinite(numericDelta) ? numericDelta : 0;
-  let nextValue = safeCurrent + safeDelta;
-  if (Number.isFinite(Number(min))) {
-   nextValue = Math.max(Number(min), nextValue);
-  }
-  if (Number.isFinite(Number(max))) {
-   nextValue = Math.min(Number(max), nextValue);
-  }
-  if (precision > 0) {
-   return String(Number(nextValue.toFixed(precision)));
-  }
-  return String(Math.round(nextValue));
- };
- const updateStrengthFieldValue = (rowIndex, fieldKey, value) => {
-  if (fieldKey === "exercise") {
-   updateStrengthRow(rowIndex, { exercise: value });
-   return;
-  }
-  if (fieldKey === "bandTension") {
-   updateStrengthRow(rowIndex, { bandTension: value, mode: "band" });
-   return;
-  }
-  if (fieldKey === "actualWeight") {
-   updateStrengthRow(rowIndex, { actualWeight: value, mode: "weighted" });
-   return;
-  }
-  updateStrengthRow(rowIndex, { [fieldKey]: value });
- };
- const stepStrengthField = (rowIndex, fieldKey, delta, options = {}) => {
-  const row = detailed?.strength?.rows?.[rowIndex] || {};
-  const nextValue = normalizeSteppedValue(row?.[fieldKey], delta, options);
-  updateStrengthFieldValue(rowIndex, fieldKey, nextValue);
- };
- const stepRunField = (fieldKey, delta, options = {}) => {
-  const nextValue = normalizeSteppedValue(detailed?.run?.[fieldKey], delta, options);
-  updateRunDraft(fieldKey, nextValue);
- };
- const stepGenericField = (fieldKey, delta, options = {}) => {
-  const nextValue = normalizeSteppedValue(detailed?.generic?.[fieldKey], delta, options);
-  updateGenericDraft(fieldKey, nextValue);
- };
- const formatRestTimerDisplay = (totalSeconds = 0) => {
-  const safeSeconds = Math.max(0, Number(totalSeconds) || 0);
-  const minutes = Math.floor(safeSeconds / 60);
-  const seconds = safeSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
- };
- const clearRestTimer = () => {
-  setRestTimer({ active: false, rowIndex: -1, label: "", totalSeconds: 0, remainingSeconds: 0 });
- };
- const startRestTimer = (row = null, rowIndex = -1, totalSeconds = 90) => {
-  const safeSeconds = Math.max(15, Number(totalSeconds) || 90);
-  setRestTimer({
-   active: true,
-   rowIndex,
-   label: sanitizeDisplayText(row?.exercise || row?.prescribedExercise || `Exercise ${rowIndex + 1}`),
-   totalSeconds: safeSeconds,
-   remainingSeconds: safeSeconds,
-  });
- };
- const extendRestTimer = () => {
-  setRestTimer((current) => {
-   if (!current?.active) return current;
-   return {
-    ...current,
-    totalSeconds: current.totalSeconds + 30,
-    remainingSeconds: current.remainingSeconds + 30,
-   };
-  });
- };
- const usePlannedExercise = (rowIndex) => {
-  const row = detailed?.strength?.rows?.[rowIndex] || {};
-  updateStrengthRow(rowIndex, {
-   exercise: row?.prescribedExercise || "",
-   actualWeight: row?.prescribedWeight ? String(row.prescribedWeight) : "",
-   actualSets: row?.prescribedSets ? String(row.prescribedSets) : "",
-   actualReps: row?.prescribedReps ? String(row.prescribedReps) : "",
-  });
- };
-useEffect(() => {
- const nextDraft = buildDetailedDraft(today, logs?.[today] || {});
- const draftStillUnhydrated = !detailedHydratedRef.current;
- const currentHasStructuredPrescription = Boolean(
-  detailed?.sections?.run?.enabled
-  || detailed?.sections?.strength?.enabled
-  || (Array.isArray(detailed?.strength?.rows) && detailed.strength.rows.length > 0)
- );
- const nextHasStructuredPrescription = Boolean(
-  nextDraft?.sections?.run?.enabled
-  || nextDraft?.sections?.strength?.enabled
-  || (Array.isArray(nextDraft?.strength?.rows) && nextDraft.strength.rows.length > 0)
- );
- const currentHasUserInput = Boolean(
-  hasWorkoutQuickCaptureValues({ draft: detailed })
-  || String(detailed?.notes || "").trim()
- );
- if (
-  draftStillUnhydrated
-  || (
-   detailed?.date === today
-   && !currentHasStructuredPrescription
-   && nextHasStructuredPrescription
-   && !currentHasUserInput
-  )
- ) {
-  setDetailed(nextDraft);
-  detailedHydratedRef.current = true;
- }
-}, [today, todayWorkout?.label, plannedWorkout?.label, plannedDayRecords?.[today], logs?.[today]]);
- useEffect(() => {
-  setQuickDetailsOpen(false);
-  setAdvancedFieldsOpen(false);
-  clearRestTimer();
- }, [detailed?.date, detailed?.family]);
- useEffect(() => {
-  if (!restTimer?.active) return undefined;
-  const intervalId = window.setInterval(() => {
-   setRestTimer((current) => {
-    if (!current?.active) return current;
-    const nextRemainingSeconds = Math.max(0, Number(current.remainingSeconds || 0) - 1);
-    if (nextRemainingSeconds <= 0) {
-     return { active: false, rowIndex: -1, label: current.label || "", totalSeconds: 0, remainingSeconds: 0 };
-    }
-    return {
-     ...current,
-     remainingSeconds: nextRemainingSeconds,
-    };
-   });
-  }, 1000);
-  return () => window.clearInterval(intervalId);
- }, [restTimer?.active]);
- const openHistoryEntry = (date, log = {}) => {
-  setSelectedReviewDate(date);
-  setDetailed(buildDetailedDraft(date, log));
-  setQuickDetailsOpen(false);
-  setAdvancedFieldsOpen(false);
-  clearRestTimer();
-  setPendingDeleteDate("");
- };
-
- const savePrescribed = async () => {
- // one-tap completion path
- setSaveErrorMsg("");
- const entry = {
- date: today,
- type: cleanHistorySessionName(todayWorkout?.label || plannedWorkout?.label || "Prescribed workout"),
- notes: "Marked prescribed workout complete.",
- feel: "3",
- planDayId: planDay?.id || "",
- prescribedPlanSnapshot: planDay ? {
- dateKey: planDay?.dateKey || today,
- baseLabel: planDay?.base?.training?.label || "",
- resolvedLabel: planDay?.resolved?.training?.label || "",
- mode: planDay?.decision?.mode || "",
- modeLabel: planDay?.decision?.modeLabel || "",
- modifiedFromBase: Boolean(planDay?.decision?.modifiedFromBase),
- } : null,
- ts: Date.now(),
- checkin: { status: "completed_as_planned", sessionFeel: "about_right", note: "", ts: Date.now() }
- };
- const saveResult = await saveLogs({ ...logs, [today]: entry }, { changedDateKey: today });
- if (saveResult?.ok === false) {
- setSaved(false);
- setSavedMsg("");
- setSaveErrorMsg("Save did not finish. Try again in a moment.");
- return;
- }
- setSaved(true);
- setSavedMsg("Saved exactly as planned.");
- setSavedAtLabel(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
- setQuickDetailsOpen(false);
- setTimeout(()=>setSaved(false), 4000);
-};
-
- const persistWorkoutLog = async ({ source = "full", draftOverride = null } = {}) => {
- const draftSnapshot = draftOverride || detailed;
- if (!draftSnapshot?.date) return;
- setSaveErrorMsg("");
- const existing = logs?.[draftSnapshot.date] || {};
- setDetailed(draftSnapshot);
- const nextEntry = buildWorkoutLogEntryFromDraft({
- draft: {
- ...draftSnapshot,
- sessionLabel: cleanHistorySessionName(draftSnapshot.sessionLabel || existing.type || todayWorkout?.label || plannedWorkout?.label || "Session"),
- },
- baseEntry: existing,
- todayKey: today,
- });
- const saveResult = await saveLogs({ ...logs, [draftSnapshot.date]: nextEntry }, { changedDateKey: draftSnapshot.date });
- if (saveResult?.ok === false) {
- setSaved(false);
- setSavedMsg("");
- setSaveErrorMsg("Save did not finish. Try again in a moment.");
- return;
- }
- setSaved(true);
- setSavedAtLabel(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
- if (source === "quick") {
- setSavedMsg(draftSnapshot.date < today ? "Changes saved." : "Today's log is saved.");
- setQuickDetailsOpen(false);
- } else {
- setSavedMsg(draftSnapshot.date < today ? "Changes saved." : "Workout details saved.");
- }
- setDetailed(buildDetailedDraft(draftSnapshot.date, nextEntry));
- setTimeout(()=>setSaved(false), 4000);
- };
- const saveDetailed = async () => {
- await persistWorkoutLog({ source: "full", draftOverride: buildLiveDraftSnapshot() });
- };
- const saveQuickCapture = async () => {
- if (!quickCaptureHasValues) return;
- await persistWorkoutLog({ source: "quick", draftOverride: buildLiveDraftSnapshot() });
- };
-
- const delLog = async (date) => {
- const next = { ...logs };
- delete next[date];
- await saveLogs(next, { changedDateKey: date });
- setPendingDeleteDate("");
- };
- const showFeelTooltip = (feelValue) => {
- const tip = FEEL_LABELS[String(feelValue)]?.tip || "";
- setFeelTooltip(tip);
- if (feelTooltipTimerRef.current) clearTimeout(feelTooltipTimerRef.current);
- feelTooltipTimerRef.current = setTimeout(() => setFeelTooltip(""), 3000);
- };
- useEffect(() => () => {
- if (feelTooltipTimerRef.current) clearTimeout(feelTooltipTimerRef.current);
- }, []);
-const canonicalLogLabel = sanitizeDisplayText(
- detailed?.plannedSummary?.sessionLabel
- || detailed?.prescribedLabel
- || surfaceModel?.display?.sessionLabel
- || "Planned session"
- );
-const canonicalLogReason = sanitizeDisplayText(
- detailed?.plannedSummary?.why
- || surfaceModel?.canonicalReasonLine
- || surfaceModel?.preferenceAndAdaptationLine
- || ""
- );
- const prescribedStrengthRows = (detailed?.strength?.rows || [])
- .map((row, index) => ({ row, index }))
- .filter(({ row }) => Boolean(row?.prescribedExercise));
- const extraStrengthRows = (detailed?.strength?.rows || [])
- .map((row, index) => ({ row, index }))
- .filter(({ row }) => !row?.prescribedExercise);
- const hasPlanBackbone = Boolean(
-  detailed?.plannedSummary?.sessionPlan?.available
-  || detailed?.plannedSummary?.sessionLabel
-  || detailed?.prescribedLabel
- );
- const hasExistingLog = Boolean(logs?.[detailed?.date || ""]);
- const hasAdvancedInput = Boolean(
-  String(detailed?.notes || "").trim()
-  || String(detailed?.feel || "3") !== "3"
-  || String(detailed?.location || "home") !== "home"
- );
- const primarySaveUsesPlan = !quickCaptureHasValues && !hasAdvancedInput && hasPlanBackbone;
- const canSavePrimary = Boolean(primarySaveUsesPlan || quickCaptureHasValues || hasAdvancedInput || hasExistingLog);
- const canSaveDetailed = Boolean(
-  detailed?.sections?.run?.enabled
-  || detailed?.sections?.strength?.enabled
-  || detailed?.sections?.generic?.enabled
- );
- const primarySaveLabel = primarySaveUsesPlan
-  ? "Save as planned"
- : detailed?.date && detailed.date < today
-  ? "Save changes"
-  : "Save today's log";
- const primarySaveSupportLine = primarySaveUsesPlan
-  ? "Matches the plan."
-  : quickCaptureHasValues
-  ? "Only changed fields will override the plan."
-  : hasAdvancedInput
-  ? "Your note and effort will save too."
-  : "Open a section only if something changed.";
- const strengthSummaryLine = prescribedStrengthRows.length > 0
-  ? `${prescribedStrengthRows.length} planned movement${prescribedStrengthRows.length === 1 ? "" : "s"} are loaded. Tap the cards between sets.`
-  : "Exercise logging appears when the plan includes lift detail.";
- const extrasSummaryLine = extraStrengthRows.length > 0
-  ? `${extraStrengthRows.length} extra movement${extraStrengthRows.length === 1 ? "" : "s"} added.`
-  : "Keep this for bonus work that was not part of the plan.";
- const runPrefillBits = [
-  detailed?.run?.plannedDurationHint ? `Planned time ${detailed.run.plannedDurationHint}` : "",
-  detailed?.run?.plannedDistanceHint ? `planned distance ${detailed.run.plannedDistanceHint}` : "",
-  detailed?.run?.plannedPaceHint ? `planned pace ${detailed.run.plannedPaceHint}` : "",
- ].filter(Boolean).join(" - ");
- const sessionTypeLabel = sanitizeDisplayText(
-  detailed?.plannedSummary?.sessionType
-  || String(todayWorkout?.type || plannedWorkout?.type || detailed?.family || "session").replaceAll("-", " ")
- );
- const sessionDateLabel = detailed?.date === today
-  ? "Today"
-  : new Date(`${detailed?.date || today}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
- const sessionContextLine = sanitizeDisplayText(
-  detailed?.plannedSummary?.structure
-  || detailed?.plannedSummary?.purpose
-  || runPrefillBits
-  || ""
- );
- const logExecutionLead = detailed?.sections?.strength?.enabled && detailed?.sections?.run?.enabled
-  ? "Hybrid day. Log it as one session."
-  : detailed?.sections?.strength?.enabled
-  ? "Strength day. Big controls stay ready between sets."
-  : detailed?.sections?.run?.enabled
-  ? "Run first, save fast, and only touch the numbers that changed."
-  : "Capture what happened quickly, then move on.";
- const restTimerModel = restTimer?.active
-  ? {
-   ...restTimer,
-   display: formatRestTimerDisplay(restTimer.remainingSeconds),
-  }
-  : null;
- const feelSelection = FEEL_LABELS[String(detailed?.feel || "3")] || FEEL_LABELS["3"];
- const saveStateLine = saveErrorMsg
-  ? saveErrorMsg
-  : saved
-  ? `${savedMsg || "Saved."}${savedAtLabel ? ` ${savedAtLabel}` : ""}`
-  : primarySaveSupportLine;
- const largeSurfaceInputStyle = {
-  minHeight: 56,
-  borderRadius: 18,
-  border: "1px solid var(--consumer-border-strong)",
-  background: "var(--consumer-subpanel)",
-  color: "var(--consumer-text)",
-  fontSize: "1rem",
-  fontWeight: 700,
-  textAlign: "center",
-  padding: "0.7rem 0.75rem",
-  width: "100%",
-  fontVariantNumeric: "tabular-nums",
- };
- const focusNextLogField = (currentTarget) => {
-  const root = logFormRef.current;
-  if (!root || !currentTarget) return;
-  const nodes = Array.from(root.querySelectorAll("input:not([type='hidden']):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), summary"))
-   .filter((node) => node.offsetParent !== null);
-  const currentIndex = nodes.findIndex((node) => node === currentTarget);
-  if (currentIndex >= 0 && nodes[currentIndex + 1] && typeof nodes[currentIndex + 1].focus === "function") {
-   nodes[currentIndex + 1].focus();
-  }
- };
- const readLiveLogControlValue = (selector, fallback = "") => {
-  const root = logFormRef.current;
-  if (!root) return fallback;
-  const node = root.querySelector(selector);
-  if (!node || typeof node.value !== "string") return fallback;
-  return node.value;
- };
- const buildLiveDraftSnapshot = () => ({
-  ...detailed,
-  run: {
-   ...(detailed?.run || {}),
-   duration: readLiveLogControlValue('[data-testid="log-run-duration"]', detailed?.run?.duration || ""),
-   distance: readLiveLogControlValue('[data-testid="log-run-distance"]', detailed?.run?.distance || ""),
-   pace: readLiveLogControlValue('[data-testid="log-run-pace"]', detailed?.run?.pace || ""),
-  },
-  strength: {
-   ...(detailed?.strength || {}),
-   rows: (detailed?.strength?.rows || []).map((row, index) => ({
-    ...row,
-    actualSets: readLiveLogControlValue(`[data-testid="log-strength-row-sets-${index}"]`, row?.actualSets || ""),
-    actualReps: readLiveLogControlValue(`[data-testid="log-strength-row-reps-${index}"]`, row?.actualReps || ""),
-    actualWeight: readLiveLogControlValue(`[data-testid="log-strength-row-weight-${index}"]`, row?.actualWeight || ""),
-    exercise: readLiveLogControlValue(`[data-testid="log-strength-row-exercise-${index}"]`, row?.exercise || ""),
-    bandTension: readLiveLogControlValue(`select[aria-label="Exercise ${index + 1} band tension"]`, row?.bandTension || ""),
-   })),
-  },
-  generic: {
-   ...(detailed?.generic || {}),
-   reps: readLiveLogControlValue('[data-testid="log-generic-reps"]', detailed?.generic?.reps || ""),
-   weight: readLiveLogControlValue('[data-testid="log-generic-weight"]', detailed?.generic?.weight || ""),
-  },
-  location: readLiveLogControlValue('select[aria-label="Workout location"]', detailed?.location || "home"),
-  notes: readLiveLogControlValue('textarea[aria-label="Session note"]', detailed?.notes || ""),
- });
- const hasAdvancedInputForDraft = (draft = null) => Boolean(
-  String(draft?.notes || "").trim()
-  || String(draft?.feel || "3") !== "3"
-  || String(draft?.location || "home") !== "home"
- );
- const shouldUsePlannedPrimarySave = (draft = null) => (
-  !hasWorkoutQuickCaptureValues({ draft })
-  && !hasAdvancedInputForDraft(draft)
-  && hasPlanBackbone
- );
- const handlePrimarySave = async () => {
-  if (!canSavePrimary) return;
-  const liveDraft = buildLiveDraftSnapshot();
-  if (shouldUsePlannedPrimarySave(liveDraft)) {
-   await savePrescribed();
-   return;
-  }
-  await persistWorkoutLog({ source: "quick", draftOverride: liveDraft });
- };
- const handleLogFormKeyDown = (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-   event.preventDefault();
-   handlePrimarySave();
-   return;
-  }
-  const tagName = String(event.target?.tagName || "").toLowerCase();
- if (event.key === "Enter" && !event.shiftKey && !["textarea", "button", "summary", "select"].includes(tagName)) {
-  event.preventDefault();
-  focusNextLogField(event.target);
- }
- };
- const logSaveFeedbackModel = buildSaveFeedbackModel({
-  phase: saveErrorMsg
-   ? SAVE_FEEDBACK_PHASES.error
-   : saved
-   ? SAVE_FEEDBACK_PHASES.saved
-   : SAVE_FEEDBACK_PHASES.idle,
-  syncState: syncStateModel,
-  savedAtLabel,
-  successMessage: savedMsg,
-  errorMessage: saveErrorMsg,
- });
- const showLogQuietSyncChip = Boolean(syncSurfaceModel?.showCompactChip && syncSurfaceModel?.tone !== "healthy");
-
-return (
- <div className="fi" data-testid="log-tab" style={{ display:"grid", gap:"0.75rem" }}>
-{syncSurfaceModel?.showFullCard && (
-<SyncStateCallout
- model={syncSurfaceModel}
- dataTestId="log-sync-status"
- compact
- style={{ background:"rgba(11, 20, 32, 0.76)" }}
-/>
-)}
-<SurfaceHero accentColor={C.green} variant="action">
- <SurfaceHeroHeader>
- <SurfaceHeroCopy>
- <SurfaceHeading
- eyebrow="Log today"
- title={canonicalLogLabel}
- supporting="Log actuals. Plan stays separate."
- eyebrowColor={C.green}
- titleTestId="log-canonical-session-label"
- titleSize="hero"
- />
- <SurfaceMetaRow>
- <SurfacePill strong>{sessionDateLabel}</SurfacePill>
- {!!sessionTypeLabel && <SurfacePill>{sessionTypeLabel}</SurfacePill>}
- <SurfacePill>Planned vs actual</SurfacePill>
- </SurfaceMetaRow>
- {!!surfaceModel?.explanationSourceLabel && (
- <div style={{ fontSize:"0.44rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
- {surfaceModel.explanationSourceLabel}
- </div>
- )}
- {!!canonicalLogReason && (
- <div data-testid="log-canonical-reason" style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- {canonicalLogReason}
- </div>
- )}
- </SurfaceHeroCopy>
- </SurfaceHeroHeader>
- <SurfaceQuietPanel>
- {logSaveFeedbackModel.show && (
- <StateFeedbackBanner
- model={logSaveFeedbackModel}
- dataTestId="log-save-status"
- compact
- />
- )}
- {showLogQuietSyncChip && (
- <CompactSyncStatus
- model={syncSurfaceModel}
- dataTestId="log-sync-status"
- style={{
- background:"rgba(11, 20, 32, 0.32)",
- opacity:0.88,
- }}
- />
- )}
- </SurfaceQuietPanel>
-</SurfaceHero>
- <div
- data-testid="log-detailed-entry"
- ref={logFormRef}
- onKeyDownCapture={handleLogFormKeyDown}
- style={{ display:"grid", gap:"0.7rem", paddingBottom:"calc(env(safe-area-inset-bottom, 0px) + 5.4rem)" }}
- >
- <SurfaceCard
- variant="elevated"
- style={{
- display:"grid",
- gap:"0.75rem",
- padding:"0.8rem",
- borderRadius:22,
- background:"color-mix(in srgb, var(--consumer-panel) 92%, transparent)",
- }}
- >
- <div style={{ display:"grid", gap:"0.28rem" }}>
- <div style={{ fontSize:"0.52rem", color:"var(--consumer-text)", fontWeight:700, lineHeight:1.4 }}>
- {logExecutionLead}
- </div>
- <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- {primarySaveUsesPlan ? "If it matched the plan, save it. If it drifted, edit that only." : "The plan stays visible above. Your actuals save underneath it."}
- </div>
- </div>
- {!!detailed?.plannedSummary && (
- <TodaySessionStackPreview summary={detailed.plannedSummary} accentColor={C.blue} />
- )}
- <RestTimerStrip
- timer={restTimerModel}
- onClear={clearRestTimer}
- onAddThirty={extendRestTimer}
- />
- {!!detailed.sections?.run?.enabled && (
- <SurfaceCard
- variant="subtle"
- style={{
- display:"grid",
- gap:"0.45rem",
- padding:"0.72rem",
- borderRadius:20,
- background:"var(--consumer-panel)",
- borderColor:"var(--consumer-border)",
- }}
- >
- <div style={{ display:"grid", gap:"0.16rem" }}>
- <div style={{ fontSize:"0.58rem", color:"var(--consumer-text)", fontWeight:700 }}>Run actuals</div>
- {!!runPrefillBits && (
- <div style={{ fontSize:"0.47rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- {runPrefillBits}
- </div>
- )}
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(112px,1fr))", gap:"0.45rem" }}>
- <LogValueStepper
- dataTestId="log-run-duration-stepper"
- inputTestId="log-run-duration"
- label="Minutes"
- value={detailed.run?.duration || ""}
- suffix="min"
- helper={detailed.run?.plannedDurationHint ? `Planned ${detailed.run.plannedDurationHint}` : "Adjust only if your time changed."}
- decrementAmount={5}
- incrementAmount={5}
- min={0}
- max={360}
- onStep={(delta) => stepRunField("duration", delta, { min: 0, max: 360, precision: 0 })}
- onChange={(nextValue) => updateRunDraft("duration", nextValue)}
- />
- <LogValueStepper
- dataTestId="log-run-distance-stepper"
- inputTestId="log-run-distance"
- label="Distance"
- value={detailed.run?.distance || ""}
- suffix="mi"
- helper={detailed.run?.plannedDistanceHint ? `Planned ${detailed.run.plannedDistanceHint}` : "Optional if you tracked distance."}
- decrementAmount={0.5}
- incrementAmount={0.5}
- min={0}
- max={99}
- precision={1}
- onStep={(delta) => stepRunField("distance", delta, { min: 0, max: 99, precision: 1 })}
- onChange={(nextValue) => updateRunDraft("distance", nextValue)}
- inputMode="decimal"
- />
- <SurfaceCard
- data-testid="log-run-pace-card"
- variant="subtle"
- style={{
- display:"grid",
- gap:"0.45rem",
- padding:"0.65rem",
- borderRadius:18,
- background:"var(--consumer-panel)",
- borderColor:"var(--consumer-border)",
- }}
- >
- <div style={{ display:"grid", gap:"0.16rem" }}>
- <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", letterSpacing:"0.06em", textTransform:"uppercase" }}>
- Pace
- </div>
- <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- {detailed.run?.plannedPaceHint ? `Planned ${detailed.run.plannedPaceHint}` : "Optional if pace matters for this session."}
- </div>
- </div>
- <input
- data-testid="log-run-pace"
- aria-label="Run pace"
- inputMode="text"
- enterKeyHint="next"
- value={detailed.run?.pace || ""}
- onChange={e=>updateRunDraft("pace", e.target.value)}
- placeholder={detailed.run?.plannedPaceHint || "8:30 / mi"}
- style={largeSurfaceInputStyle}
- />
- </SurfaceCard>
- </div>
- </SurfaceCard>
- )}
- {!!detailed.sections?.strength?.enabled && (
- <SurfaceCard
- variant="subtle"
- style={{
- display:"grid",
- gap:"0.5rem",
- padding:"0.72rem",
- borderRadius:20,
- background:"var(--consumer-panel)",
- borderColor:"var(--consumer-border)",
- }}
- >
- <div style={{ display:"grid", gap:"0.16rem" }}>
- <div style={{ fontSize:"0.58rem", color:"var(--consumer-text)", fontWeight:700 }}>Lift execution</div>
- <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- {strengthSummaryLine}
- </div>
- {!!detailed.substitutionSupport?.allowed && (
- <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- Rename the exercise only if you swapped it.
- </div>
- )}
- </div>
- {prescribedStrengthRows.length > 0 ? (
- <div style={{ display:"grid", gap:"0.45rem" }}>
- {prescribedStrengthRows.map(({ row, index }) => (
- <StrengthExecutionCard
- key={`${row?.key || "exercise"}_${index}`}
- row={row}
- index={index}
- onStepField={stepStrengthField}
- onChangeField={updateStrengthFieldValue}
- onStartRest={startRestTimer}
- onUsePlannedExercise={usePlannedExercise}
- bandTensionLevels={BAND_TENSION_LEVELS}
- />
- ))}
- </div>
- ) : (
- <div style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)", lineHeight:1.5 }}>
- This day did not save exercise-by-exercise detail.
- </div>
- )}
- </SurfaceCard>
- )}
- {!!detailed.sections?.generic?.enabled && (
- <SurfaceCard
- variant="subtle"
- style={{
- display:"grid",
- gap:"0.45rem",
- padding:"0.72rem",
- borderRadius:20,
- background:"var(--consumer-panel)",
- borderColor:"var(--consumer-border)",
- }}
- >
- <div style={{ fontSize:"0.58rem", color:"var(--consumer-text)", fontWeight:700 }}>Session actuals</div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(112px,1fr))", gap:"0.45rem" }}>
- <LogValueStepper
- dataTestId="log-generic-reps-stepper"
- inputTestId="log-generic-reps"
- label="Reps"
- value={detailed.generic?.reps || ""}
- decrementAmount={1}
- incrementAmount={1}
- min={0}
- max={999}
- onStep={(delta) => stepGenericField("reps", delta, { min: 0, max: 999, precision: 0 })}
- onChange={(nextValue) => updateGenericDraft("reps", nextValue)}
- />
- <LogValueStepper
- dataTestId="log-generic-weight-stepper"
- inputTestId="log-generic-weight"
- label="Weight"
- value={detailed.generic?.weight || ""}
- suffix="lb"
- decrementAmount={5}
- incrementAmount={5}
- min={0}
- max={999}
- onStep={(delta) => stepGenericField("weight", delta, { min: 0, max: 999, precision: 0 })}
- onChange={(nextValue) => updateGenericDraft("weight", nextValue)}
- />
- </div>
- </SurfaceCard>
- )}
- <LogFeelStrip
- dataTestId="log-feel-strip"
- value={detailed.feel}
- labels={FEEL_LABELS}
- onChange={(nextFeel) => {
- setDetailed((current) => ({ ...current, feel: nextFeel }));
- showFeelTooltip(nextFeel);
- }}
- />
- <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- {feelTooltip || feelSelection.tip}
- </div>
- <details
- data-testid="log-advanced-fields"
- open={advancedFieldsOpen}
- onToggle={e=>setAdvancedFieldsOpen(e.currentTarget.open)}
- style={{ border:"1px solid var(--consumer-border)", borderRadius:18, background:"var(--consumer-panel)", padding:"0.65rem 0.7rem" }}
- >
- <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"var(--consumer-text)" }}>Notes and context</summary>
- <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.4rem" }}>
- <select
- aria-label="Workout location"
- value={detailed.location || "home"}
- onChange={e=>setDetailed({ ...detailed, location:e.target.value })}
- style={largeSurfaceInputStyle}
- >
- <option value="home">Home</option>
- <option value="gym">Gym</option>
- <option value="outdoor">Outdoor</option>
- <option value="travel">Travel</option>
- </select>
- <textarea
- aria-label="Session note"
- value={detailed.notes || ""}
- onChange={e=>setDetailed({ ...detailed, notes:e.target.value })}
- placeholder="Optional note about what changed or how it felt."
- rows={3}
- enterKeyHint="done"
- style={{ minHeight:88, resize:"vertical", fontSize:"max(16px, 0.86rem)", lineHeight:1.5 }}
- />
- </div>
- </details>
- </SurfaceCard>
-{!!detailed.sections?.strength?.enabled && (
-<details data-testid="log-extra-exercises" open={quickDetailsOpen} onToggle={e=>setQuickDetailsOpen(e.currentTarget.open)} style={{ marginTop:"0.05rem", border:"1px solid var(--consumer-border)", borderRadius:14, background:"var(--consumer-panel)", padding:"0.55rem 0.62rem" }}>
-<summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"var(--consumer-text-muted)" }}>
-Add extra movement
-</summary>
-<div style={{ display:"grid", gap:"0.45rem", marginTop:"0.45rem" }}>
- <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- {extrasSummaryLine}
- </div>
- {!!extraStrengthRows.length && (
- <div style={{ display:"grid", gap:"0.35rem" }}>
- {extraStrengthRows.map(({ row, index }) => {
- return (
-<div key={`${row?.key || "extra"}_${index}`} data-testid={`log-extra-strength-row-${index}`} style={{ display:"grid", gap:"0.35rem" }}>
- <StrengthExecutionCard
- row={row}
- index={index}
- onStepField={stepStrengthField}
- onChangeField={updateStrengthFieldValue}
- onStartRest={startRestTimer}
- onUsePlannedExercise={usePlannedExercise}
- bandTensionLevels={BAND_TENSION_LEVELS}
- />
- <div style={{ display:"flex", justifyContent:"flex-end" }}>
- <button type="button" className="btn" onClick={()=>removeStrengthRow(index)} style={{ minHeight:48, borderRadius:14, fontSize:"0.48rem" }}>
- Remove extra
- </button>
- </div>
- </div>
- );
- })}
- </div>
- )}
-<button type="button" className="btn" onClick={addExtraStrengthRow} style={{ width:"fit-content", minHeight:48, borderRadius:14, fontSize:"0.48rem", color:"var(--consumer-text-muted)", borderColor:"var(--consumer-border-strong)" }}>
-Add movement
-</button>
- </div>
- </details>
-)}
-<div data-testid="log-sticky-save" style={{ position:"fixed", left:"max(0.75rem, env(safe-area-inset-left, 0px))", right:"max(0.75rem, env(safe-area-inset-right, 0px))", bottom:"calc(env(safe-area-inset-bottom, 0px) + 0.35rem)", zIndex:4, pointerEvents:"none" }}>
-<div style={{ border:"1px solid var(--consumer-border-strong)", borderRadius:14, background:"color-mix(in srgb, var(--consumer-panel) 92%, transparent)", backdropFilter:"blur(16px)", padding:"0.55rem 0.6rem", display:"grid", gap:"0.32rem", boxShadow:"var(--shadow-2)", maxWidth:640, margin:"0 auto", pointerEvents:"auto" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
-<div data-testid="log-save-support-line" style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- {saveStateLine}
- </div>
- {saved && (
- <span style={{ fontSize:"0.45rem", color:C.green, background:`${C.green}12`, border:`1px solid ${C.green}24`, borderRadius:999, padding:"0.12rem 0.34rem" }}>
- Saved {savedAtLabel}
- </span>
- )}
- </div>
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- <button
- data-testid="log-save-quick"
- className="btn btn-primary"
- onClick={handlePrimarySave}
- disabled={!canSavePrimary}
- style={{ flex:"1 1 220px", minHeight:52, borderRadius:16, justifyContent:"center", fontSize:"0.56rem", opacity:canSavePrimary ? 1 : 0.55 }}
- >
- {primarySaveLabel}
- </button>
- {primarySaveUsesPlan && canSaveDetailed && (
- <button data-testid="log-save-detailed" className="btn" onClick={saveDetailed} style={{ minHeight:52, borderRadius:16, fontSize:"0.5rem", color:"var(--consumer-text-muted)", borderColor:"var(--consumer-border-strong)" }}>
- Save full details
- </button>
- )}
- {!primarySaveUsesPlan && hasPlanBackbone && (
-<button data-testid="log-complete-prescribed" className="btn" onClick={savePrescribed} style={{ minHeight:52, borderRadius:16, fontSize:"0.5rem", color:"var(--consumer-text-muted)", borderColor:"var(--consumer-border-strong)" }}>
- Save as planned
- </button>
- )}
- </div>
- </div>
- </div>
- </div>
-
- <details className="card" data-testid="log-day-review-disclosure">
-<summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"var(--consumer-text)" }}>Saved day review</summary>
-<div style={{ marginTop:"0.45rem", display:"grid", gap:"0.45rem" }}>
-<select aria-label="Choose a saved day to review" value={selectedReviewDate} onChange={(e)=>setSelectedReviewDate(e.target.value)} style={{ fontSize:"0.54rem", minWidth:150 }}>
- {(reviewDateKeys || []).slice(0, 60).map((dateKey) => (
- <option key={dateKey} value={dateKey}>{dateKey}</option>
- ))}
- </select>
- <HistoryAuditDayReviewCard
- title="DAY REVIEW"
- subtitle="See what was planned, what happened, and what changes next."
- review={selectedDayReview}
- palette={C}
- sanitizeDisplayText={sanitizeDisplayText}
- sanitizeStatusLabel={sanitizeStatusLabel}
- buildReviewBadgeTone={reviewBadgeTone}
- summarizeExecutionDelta={summarizeExecutionDelta}
- formatReviewTimestamp={formatReviewTimestamp}
- buildSessionSummary={buildSessionSummary}
- buildNutritionActualSummary={buildNutritionActualSummary}
- buildRecoveryActualSummary={buildRecoveryActualSummary}
- cleanHistorySessionName={cleanHistorySessionName}
- describeProvenanceRecord={describeProvenanceRecord}
- />
- </div>
- </details>
-
- <details className="card" data-testid="log-recent-history-disclosure">
-<summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"var(--consumer-text)" }}>Recent history</summary>
- <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
- {history.slice(0, 12).map(([date, log]) => (
-<div key={date} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.45rem", alignItems:"center", border:"1px solid var(--consumer-border)", borderRadius:10, background:"var(--consumer-panel)", padding:"0.48rem 0.55rem" }}>
- <button className="btn" onClick={()=>openHistoryEntry(date, log)} style={{ border:"none", background:"transparent", padding:0, textAlign:"left", minWidth:0 }}>
-<div style={{ fontSize:"0.54rem", color:"var(--consumer-text)", lineHeight:1.4 }}>{new Date(date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})} - {cleanHistorySessionName(log?.type || "Session")}</div>
-<div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", marginTop:"0.12rem", lineHeight:1.4 }}>{summarizeExecutionDelta(getPlanComparison(date, log))}</div>
- </button>
- {pendingDeleteDate === date ? (
- <div style={{ display:"flex", gap:"0.25rem", alignItems:"center", flexWrap:"wrap" }}>
- <button className="btn" onClick={()=>delLog(date)} style={{ fontSize:"0.46rem", color:C.red, borderColor:C.red+"30", padding:"0.1rem 0.32rem" }}>Delete</button>
- <button className="btn" onClick={()=>setPendingDeleteDate("")} style={{ fontSize:"0.46rem", padding:"0.1rem 0.32rem" }}>Cancel</button>
- </div>
- ) : (
- <button className="btn" onClick={()=>setPendingDeleteDate(date)} style={{ fontSize:"0.46rem", color:C.red, borderColor:C.red+"30" }}>DEL</button>
- )}
- </div>
- ))}
- </div>
- </details>
-
- </div>
- );
-
-}
-
-const buildSundayStoreGroceryList = ({ store, nutritionLayer, realWorldNutrition }) => {
- const phaseMode = (nutritionLayer?.phaseMode || "maintain").toLowerCase();
- const mealText = `${realWorldNutrition?.mealStructure?.breakfast || ""} ${realWorldNutrition?.mealStructure?.lunch || ""} ${realWorldNutrition?.mealStructure?.dinner || ""}`.toLowerCase();
- const hasRice = /rice/.test(mealText) || phaseMode === "build";
- const hasOats = /oat/.test(mealText) || phaseMode !== "cut";
- const hasYogurt = /yogurt/.test(mealText) || true;
- const sections = [
- { name: "Produce", items: ["bananas", "berries", "mixed salad greens", "broccoli", "sweet potatoes"] },
- { name: "Protein", items: ["chicken breast", "lean ground turkey", "eggs", hasYogurt ? "Greek yogurt" : null].filter(Boolean) },
- { name: "Carbs", items: [hasRice ? "jasmine rice" : null, hasOats ? "rolled oats" : null, "whole-grain wraps", "fruit"].filter(Boolean) },
- { name: "Fats", items: ["avocado", "olive oil", "mixed nuts"] },
- { name: "Pantry/Hydration", items: ["electrolytes", "sparkling water", "salsa/hot sauce"] },
- ];
- const filteredSections = sections.map(sec => ({ ...sec, items: sec.items.filter(Boolean) })).filter(sec => sec.items.length > 0);
- return {
- title: `Sunday list for ${store} - next week (${phaseMode.toUpperCase()})`,
- sections: filteredSections,
- text: filteredSections.map(sec => `${sec.name}: ${sec.items.join(", ")}`).join("\n"),
- };
-};
-
-const buildLocationAwareOrderSuggestion = ({ nearby = [] }) => {
- const nameList = (nearby || []).map(n => String(n?.name || "").toLowerCase());
- if (nameList.some(n => n.includes("chipotle"))) {
- return "Nearby option: Chipotle with double chicken, fajita veggies, and black beans keeps protein high and fits today's target.";
- }
- if (nameList.some(n => n.includes("cava"))) {
- return "Nearby option: CAVA with greens + grains, double chicken, and hummus on the side keeps the meal balanced and protein-forward.";
- }
- if (nameList.some(n => n.includes("panera"))) {
- return "Nearby option: Panera with a teriyaki chicken bowl plus Greek yogurt is an easy protein-forward backup.";
- }
- return null;
-};
-
-// NUTRITION TAB (REDESIGNED)
-function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTodayWorkout, currentWeek, logs, personalization, athleteProfile = null, momentum, bodyweights, learningLayer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, nutritionFavorites, weeklyNutritionReview = null, saveNutritionFavorites, saveNutritionActualLog, syncStateModel = null, syncSurfaceModel = null }) {
- const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
- const goals = athleteProfile?.goals || [];
- const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
- const realWorldNutrition = planDay?.resolved?.nutrition?.reality || legacyRealWorldNutrition;
- const planDayWeek = planDay?.week || null;
- const localFoodContext = personalization?.localFoodContext || {};
- const savedLocation = personalization?.connectedDevices?.location || {};
- const favorites = {
- ...DEFAULT_NUTRITION_FAVORITES,
- ...(nutritionFavorites || {}),
- mealAnchors: {
- ...(DEFAULT_NUTRITION_FAVORITES?.mealAnchors || {}),
- ...(nutritionFavorites?.mealAnchors || {}),
- },
- supplementStack: Array.isArray(nutritionFavorites?.supplementStack) ? nutritionFavorites.supplementStack : [],
- };
- const locationPermissionGranted = Boolean(localFoodContext?.locationPermissionGranted || savedLocation?.status === "granted");
- const locationUnavailable = !locationPermissionGranted && ["denied", "unavailable"].includes(String(localFoodContext?.locationStatus || savedLocation?.status || "").toLowerCase());
- const showNearbySection = locationPermissionGranted;
- const resolvedLocationLabel = showNearbySection
- ? localFoodContext.city || localFoodContext.locationLabel || "Nearby area"
- : "";
- const hasSavedStorePreference = Boolean(localFoodContext.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0]);
- const [store, setStore] = useState(localFoodContext.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0] || "Saved default");
- const EMPTY_NUTRITION_CHECK = { deviationKind: "", issue: "", note: "" };
- const [nutritionCheck, setNutritionCheck] = useState(EMPTY_NUTRITION_CHECK);
- const [nutritionSavePhase, setNutritionSavePhase] = useState(SAVE_FEEDBACK_PHASES.idle);
- const [nutritionSaveDetail, setNutritionSaveDetail] = useState("");
- const [nutritionSaveError, setNutritionSaveError] = useState("");
- const [nutritionSavedAtLabel, setNutritionSavedAtLabel] = useState("");
- const [lastKey, setLastKey] = useState("");
- const [showNutritionWhy, setShowNutritionWhy] = useState(false);
- const [openMealKey, setOpenMealKey] = useState("");
- const [sundayGrocery, setSundayGrocery] = useState(null);
- const [groceryShareAck, setGroceryShareAck] = useState("");
- const [fridgeInput, setFridgeInput] = useState("");
- const [fridgeCoachReply, setFridgeCoachReply] = useState("");
- const [hydrationOz, setHydrationOz] = useState(0);
- const [hydrationNudgedAt, setHydrationNudgedAt] = useState(null);
- const [showHydrationNudge, setShowHydrationNudge] = useState(false);
- const [supplementTaken, setSupplementTaken] = useState({});
- const [openSupplementInfo, setOpenSupplementInfo] = useState("");
- const [newSupplementName, setNewSupplementName] = useState("");
- const [newSupplementTiming, setNewSupplementTiming] = useState("");
- const [mealAnchorDrafts, setMealAnchorDrafts] = useState({
- breakfast: "",
- lunch: "",
- travelFallback: "",
- emergencyOrder: "",
- });
- const goalContext = getGoalContext(goals) || { primary: null, secondary: [] };
- const dayType = normalizeNutritionDayType(nutritionLayer?.dayType || todayWorkout?.nutri || NUTRITION_DAY_TYPES.runEasy);
- const city = showNearbySection ? resolvedLocationLabel : "";
- const nearby = (showNearbySection
- ? getPlaceRecommendations({ city, dayType, favorites, mode: "nearby", query: "" })
- : [])
- .map((x, i) => ({ id: x?.id || `nearby_${i}_${x?.name || "option"}`, name: x?.name || "Nearby option", meal: x?.meal || "Protein + carbs + produce" }))
- .filter(x => x.id !== lastKey)
- .slice(0, 2);
- const locationAwareOrder = showNearbySection ? buildLocationAwareOrderSuggestion({ nearby }) : null;
- const basket = buildGroceryBasket({ store, city, days: 3, dayType });
- const fastest = nearby[0] || { name: "Saved default", meal: "Protein shake + fruit + sandwich", tag: "fallback" };
- const travelBreakfast = ["Starbucks: egg bites + oatmeal + banana", "Hotel breakfast: eggs + Greek yogurt + fruit", "Airport: wrap + extra protein + water"];
- const bodyCompActive = goals?.some(g => g.active && g.category === "body_comp");
- const strengthActive = goals?.some(g => g.active && g.category === "strength");
- const runningActive = goals?.some(g => g.active && g.category === "running");
- const hardDay = isHardNutritionDayType(dayType) || ["hard-run", "long-run"].includes(todayWorkout?.type);
- const recoveryDay = isRecoveryNutritionDayType(dayType) || todayWorkout?.type === "rest";
- const strengthDay = isStrengthNutritionDayType(dayType) || ["run+strength", "strength+prehab"].includes(todayWorkout?.type);
- const simplifiedWeek = ["drifting","falling off"].includes(momentum?.momentumState) || learningLayer?.adjustmentBias === "simplify";
- const nutritionUnavailable = !nutritionLayer || !realWorldNutrition;
- const resolvedTargets = nutritionLayer?.targets || { cal: 2500, p: 190, c: 240, f: 70 };
- const phaseMode = (nutritionLayer?.phaseMode || "maintain").toUpperCase();
- const currentPhase = planDayWeek?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
- const todayDate = new Date();
- todayDate.setHours(0, 0, 0, 0);
- const yesterday = new Date(todayDate);
- yesterday.setDate(todayDate.getDate() - 1);
- const yesterdayKey = yesterday.toISOString().split("T")[0];
- const yesterdayType = String(logs?.[yesterdayKey]?.type || "");
- const yesterdayIntensity = /(interval|tempo|long|hard|race)/i.test(yesterdayType) ? "high" : /(rest|easy|recovery)/i.test(yesterdayType) ? "low" : "moderate";
- const bw7 = (bodyweights || []).slice(-7).map(x => Number(x?.w)).filter(n => Number.isFinite(n));
- const weightTrend7day = bw7.length >= 2 ? (bw7[bw7.length - 1] - bw7[0]) : 0;
- const macroShiftLine = buildMacroShiftLine({
- yesterdayIntensity,
- todaySessionType: dayType || todayWorkout?.type || "session",
- phase: `${phaseMode}/${currentPhase}`,
- weightTrend7day,
- });
- const latestWeight = Number(bodyweights?.[bodyweights.length - 1]?.w) || Number(personalization?.profile?.weight) || PROFILE.weight || 190;
- const workoutType = todayWorkout?.type || "";
- const intensityBonus = (["hard", "long"].includes(workoutType) || isHardNutritionDayType(dayType))
- ? 30
- : (["easy", "otf", "strength"].includes(workoutType) || isStrengthNutritionDayType(dayType) || dayType === NUTRITION_DAY_TYPES.runEasy)
- ? 18
- : 8;
- const storedHydrationTargetOz = Number(nutritionLayer?.targets?.hydrationTargetOz || nutritionLayer?.hydrationTargetOz || 0) || 0;
- const inferredHydrationTargetOz = Math.max(80, Math.round((latestWeight * 0.5) + intensityBonus));
- const hydrationTargetOz = storedHydrationTargetOz || inferredHydrationTargetOz;
- const hydrationTargetLabel = storedHydrationTargetOz ? `Target ${hydrationTargetOz} oz` : `Suggested ${hydrationTargetOz} oz`;
- const hydrationPct = Math.max(0, Math.min(100, Math.round(((hydrationOz || 0) / hydrationTargetOz) * 100)));
- const savedMealAnchors = {
- breakfast: String(favorites?.mealAnchors?.breakfast || "").trim(),
- lunch: String(favorites?.mealAnchors?.lunch || "").trim(),
- travelFallback: String(favorites?.mealAnchors?.travelFallback || "").trim(),
- emergencyOrder: String(favorites?.mealAnchors?.emergencyOrder || "").trim(),
- };
-
- const proteinLevel = `${Math.round(resolvedTargets.p)}g`;
- const carbLevel = `${Math.round(resolvedTargets.c)}g`;
- const calorieLevel = `${Math.round(resolvedTargets.cal)} kcal`;
- const targetChangeSummary = sanitizeDisplayText(nutritionLayer?.targetChangeSummary || macroShiftLine);
- const breakfast = realWorldNutrition?.mealStructure?.breakfast || "Greek yogurt + fruit + granola";
- const lunch = realWorldNutrition?.mealStructure?.lunch || "Protein bowl with rice/potatoes + veggies";
- const dinner = realWorldNutrition?.mealStructure?.dinner || "Lean protein + carb + vegetable";
- const snack = realWorldNutrition?.mealStructure?.snack || (hardDay ? "Banana + protein shake" : "Apple + string cheese");
- const mealSlots = Array.isArray(realWorldNutrition?.mealSlots) ? realWorldNutrition.mealSlots : [];
- const dailyRecommendations = Array.isArray(realWorldNutrition?.dailyRecommendations) ? realWorldNutrition.dailyRecommendations : [];
- const whyThisToday = realWorldNutrition?.whyToday || macroShiftLine;
- const performanceGuidance = realWorldNutrition?.performanceGuidance || null;
- const adaptiveContext = realWorldNutrition?.adaptiveContext || null;
- const performanceGuidanceRows = performanceGuidance
- ? [
- { key: "day_before", label: "DAY BEFORE", line: sanitizeDisplayText(performanceGuidance.dayBefore || "") },
- { key: "day_of", label: "DAY OF", line: sanitizeDisplayText(performanceGuidance.dayOf || "") },
- { key: "during", label: "DURING", line: sanitizeDisplayText(performanceGuidance.during || "") },
- { key: "recovery", label: "RECOVERY", line: sanitizeDisplayText(performanceGuidance.recovery || "") },
- { key: "hydration", label: "HYDRATION", line: sanitizeDisplayText(performanceGuidance.hydration || "") },
- { key: "sodium", label: "SODIUM", line: sanitizeDisplayText(performanceGuidance.sodium || "") },
- ].filter((entry) => Boolean(entry.line))
- : [];
- const adaptiveContextRows = adaptiveContext
- ? [
- { key: "phase", label: adaptiveContext?.phase?.label || "Phase", line: sanitizeDisplayText(adaptiveContext?.phase?.line || "") },
- { key: "trend", label: adaptiveContext?.trend?.label || "Trend", line: sanitizeDisplayText(adaptiveContext?.trend?.line || "") },
- { key: "energy", label: adaptiveContext?.energy?.label || "Energy model", line: sanitizeDisplayText(adaptiveContext?.energy?.line || "") },
- { key: "adjustment", label: adaptiveContext?.adjustment?.label || "Adjustment", line: sanitizeDisplayText(adaptiveContext?.adjustment?.line || "") },
- ].filter((entry) => Boolean(entry.line))
- : [];
- const emergencyOrder = sanitizeDisplayText(realWorldNutrition?.emergencyOrder || savedMealAnchors.emergencyOrder || "");
- const groceryHooks = realWorldNutrition?.groceryHooks || null;
- const customSupplementStack = Array.isArray(favorites?.supplementStack) ? favorites.supplementStack : [];
- const phaseModeLower = String(nutritionLayer?.phaseMode || "maintain").toLowerCase();
- const sessionKind = String(todayWorkout?.type || dayType || "rest");
- const sessionIntensity = /hard|long|interval|tempo/.test(sessionKind) ? "hard" : /strength|otf|hybrid/.test(sessionKind) ? "moderate" : "easy";
- const nowHour = new Date().getHours();
- const inferredSessionTime = todayWorkout?.sessionTime || todayWorkout?.scheduledTime || (nowHour < 12 ? "morning" : nowHour < 18 ? "afternoon" : "evening");
- const isTravelNoSession = Boolean(nutritionLayer?.travelMode && (recoveryDay || sessionKind === "rest"));
- const directiveSentence = isTravelNoSession
- ? joinDisplayParts(["Travel day with no session", "keep it simple and hit your recovery anchors."])
- : hardDay
- ? joinDisplayParts(["Hard session today", "lead with carbs, close with protein."])
- : strengthDay
- ? joinDisplayParts(["Strength session today", "prioritize protein timing and steady carbs."])
- : recoveryDay
- ? joinDisplayParts(["Recovery day", "keep protein high and appetite decisions simple."])
- : joinDisplayParts(["Steady day", "balanced meals and consistency win."]);
- const shoppingDay = Number(favorites?.shoppingDay ?? 0);
- const todayDow = new Date().getDay();
- const showSundayGrocerySection = todayDow === shoppingDay || todayDow === ((shoppingDay + 6) % 7);
- const describeSupplementPlainText = (name = "") => {
- const lower = String(name || "").toLowerCase();
- if (lower.includes("creatine")) return "Creatine helps your muscles produce quick energy and recover between hard efforts.";
- if (lower.includes("protein")) return "Protein powder is a convenient way to close protein gaps when meals fall short.";
- if (lower.includes("electrolyte")) return "Electrolytes replace sodium and minerals lost in sweat so pacing and energy stay steadier.";
- if (lower.includes("omega")) return "Omega-3s support general recovery and joint comfort when training load builds.";
- if (lower.includes("magnesium")) return "Magnesium supports relaxation and sleep quality, which improves recovery.";
- if (lower.includes("vitamin d")) return "Vitamin D3 supports immune and bone function, especially if sun exposure is inconsistent.";
- return `${name || "This supplement"} supports consistency when food or training constraints are high.`;
- };
- const defaultSupplements = [
- { key: "Creatine", name: "Creatine", defaultTiming: "with breakfast", defaultDose: "5g", product: "Thorne Creatine Monohydrate", contexts: ["daily"] },
- { key: "Protein", name: "Protein", defaultTiming: "post-workout if food protein is low", defaultDose: "1 scoop", product: "Transparent Labs 100% Grass-Fed Whey", contexts: ["hard_day", "strength_day", "if_needed"] },
- { key: "Electrolytes", name: "Electrolytes", defaultTiming: "30 min pre-run", defaultDose: "1 serving", product: "LMNT Electrolyte Drink Mix", contexts: ["hard_day", "travel_day"] },
- { key: "Omega-3", name: "Omega-3", defaultTiming: "with lunch", defaultDose: "2 caps", product: "Nordic Naturals Ultimate Omega", contexts: ["daily"] },
- { key: "Magnesium", name: "Magnesium", defaultTiming: "before bed", defaultDose: "400mg", product: "Doctor's Best High Absorption Magnesium", contexts: ["daily", "recovery_day"] },
- { key: "Vitamin D3", name: "Vitamin D3", defaultTiming: "with first meal", defaultDose: "1 cap", product: "NOW Vitamin D3 2000 IU", contexts: ["daily"] },
- ];
- const approvedSupplementStack = customSupplementStack
- .map((supplement, idx) => ({
- key: `custom_${idx}_${String(supplement?.name || "supplement").toLowerCase().replace(/\s+/g, "_")}`,
- name: supplement?.name || "Custom Supplement",
- defaultTiming: supplement?.timing || "with a meal",
- defaultDose: supplement?.dose || "1 serving",
- product: supplement?.product || `${supplement?.name || "Brand"} (user-selected brand)`,
- contexts: Array.isArray(supplement?.contexts) ? supplement.contexts : ["daily"],
- }))
- .filter((supplement, idx, arr) => idx === arr.findIndex((candidate) => String(candidate?.name || "").toLowerCase() === String(supplement?.name || "").toLowerCase()));
- const supplementCatalog = [
- ...defaultSupplements,
- ...approvedSupplementStack,
- ].filter((supplement, idx, arr) => idx === arr.findIndex((candidate) => String(candidate?.name || "").toLowerCase() === String(supplement?.name || "").toLowerCase()));
- const supplementCatalogByName = Object.fromEntries(supplementCatalog.map((supplement) => [
- String(supplement?.name || "").toLowerCase(),
- supplement,
- ]));
- const activeSupplementItems = Array.isArray(planDay?.resolved?.supplements?.plan?.items)
- ? planDay.resolved.supplements.plan.items
- : [];
- const supplementRows = activeSupplementItems.map((item, index) => {
- const catalog = supplementCatalogByName[String(item?.name || "").toLowerCase()] || {};
- return {
- key: item?.id || `active_supplement_${index}`,
- name: item?.name || catalog.name || "Supplement",
- instruction: [item?.dose || catalog.defaultDose || "", item?.timing || catalog.defaultTiming || ""].filter(Boolean).join(" ").trim(),
- purpose: item?.purpose || catalog.purpose || "",
- product: item?.product || catalog.product || "",
- plain: describeSupplementPlainText(item?.name || catalog.name || "Supplement"),
- };
- });
- const supplementInfoByName = Object.fromEntries([
- ...supplementCatalog,
- ...supplementRows,
- ].map((supplement) => [
- supplement.name,
- {
- plain: describeSupplementPlainText(supplement.name),
- why: `Included for your active goals: ${(goals || []).filter((goal) => goal.active).map((goal) => goal.name).slice(0, 2).join(" + ") || "performance consistency"}.`,
- stop: "Reduce or pause if your clinician advises, if labs indicate no need, or if GI side effects persist for more than a week.",
- product: supplement.product ? `${supplement.product} - Amazon or brand direct.` : "Use the brand and dose you already tolerate well.",
- },
- ]));
- const mealMacroPlan = [
- { key: "breakfast", label: "Breakfast", text: breakfast, split: { p: 0.24, c: 0.27, f: 0.24 } },
- { key: "lunch", label: "Lunch", text: lunch, split: { p: 0.30, c: 0.30, f: 0.28 } },
- { key: "dinner", label: "Dinner", text: dinner, split: { p: 0.31, c: 0.28, f: 0.30 } },
- { key: "snack", label: "Optional snack", text: snack, split: { p: 0.15, c: 0.15, f: 0.18 } },
- ];
- const mealMacroRows = mealMacroPlan.map((m, idx) => {
- const p = Math.round((resolvedTargets.p || 0) * m.split.p);
- const c = Math.round((resolvedTargets.c || 0) * m.split.c);
- const f = Math.round((resolvedTargets.f || 0) * m.split.f);
- const running = mealMacroPlan.slice(0, idx + 1).reduce((acc, cur) => ({
- p: acc.p + Math.round((resolvedTargets.p || 0) * cur.split.p),
- c: acc.c + Math.round((resolvedTargets.c || 0) * cur.split.c),
- f: acc.f + Math.round((resolvedTargets.f || 0) * cur.split.f),
- }), { p: 0, c: 0, f: 0 });
- return { ...m, p, c, f, running };
- });
- const mealSlotByKey = Object.fromEntries(mealSlots.map((slot) => [slot.key, slot]));
-
- const todayKey = new Date().toISOString().split("T")[0];
- const nutritionLogDateOptions = Array.from({ length: 7 }, (_, offset) => {
- const nextDate = new Date(`${todayKey}T12:00:00`);
- nextDate.setDate(nextDate.getDate() - offset);
- return nextDate.toISOString().split("T")[0];
- });
- const [selectedLogDateKey, setSelectedLogDateKey] = useState(todayKey);
- const selectedLogDateOptionKey = nutritionLogDateOptions.join("|");
- const selectedLogIsToday = selectedLogDateKey === todayKey;
- const formatNutritionLogDateLabel = (dateKey = "") => {
- if (!dateKey) return "Today";
- const safeDate = new Date(`${dateKey}T12:00:00`);
- if (Number.isNaN(safeDate.getTime())) return dateKey;
- const formatted = safeDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
- return dateKey === todayKey ? `${formatted} (Today)` : formatted;
- };
- const actualNutritionToday = nutritionActualLogs?.[todayKey] || planDay?.resolved?.nutrition?.actual || normalizeActualNutritionLog({ dateKey: todayKey, feedback: {} });
- const actualNutritionForSelectedDate = nutritionActualLogs?.[selectedLogDateKey]
- || (selectedLogIsToday ? planDay?.resolved?.nutrition?.actual : null)
- || normalizeActualNutritionLog({ dateKey: selectedLogDateKey, feedback: {} });
- const selectedLogDateLabel = formatNutritionLogDateLabel(selectedLogDateKey);
- const nutritionComparison = planDay?.resolved?.nutrition?.comparison || compareNutritionPrescriptionToActual({
- nutritionPrescription: nutritionLayer,
- actualNutritionLog: actualNutritionToday,
- });
- const nutritionGoalName = goalContext?.primary?.name || "current goal";
- const currentSessionLabel = sanitizeDisplayText(todayWorkout?.label || todayWorkout?.type || dayType || "session");
- const nutritionBasisLabel = planDay?.resolved?.nutrition?.prescription
- ? "stored nutrition target for today"
- : "suggested nutrition defaults for today";
- const nutritionProvenance = buildProvenanceText({
- inputs: [
- nutritionBasisLabel,
- `your current goal (${nutritionGoalName})`,
- "time of day",
- actualNutritionToday?.loggedAt ? "your logged nutrition today" : null,
- ],
- limitation: actualNutritionToday?.loggedAt ? "" : "Today's intake log is limited.",
- });
- const recoveryPrescription = planDay?.resolved?.recovery?.prescription || null;
- const supplementPlan = planDay?.resolved?.supplements?.plan || null;
- const canonicalNutritionLabel = sanitizeDisplayText(
- surfaceModel?.display?.sessionLabel
- || currentSessionLabel
- || "Today's session"
- );
- const canonicalNutritionReason = sanitizeDisplayText(
- surfaceModel?.canonicalReasonLine
- || surfaceModel?.preferenceAndAdaptationLine
- || nutritionProvenance
- );
- const hasStoredSupplementPlan = activeSupplementItems.length > 0;
- const showSupplementChecklist = supplementRows.length > 0;
- const supplementPrescriptionLine = hasStoredSupplementPlan
- ? `Active today: ${activeSupplementItems.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" - ")}`
- : approvedSupplementStack.length
- ? "You have an approved supplement stack, but nothing is active for today's training and recovery context."
- : "No supplement stack is approved yet. Add only the supplements you actually use.";
- const approvedSupplementLine = approvedSupplementStack.length
- ? `${approvedSupplementStack.length} approved item${approvedSupplementStack.length === 1 ? "" : "s"} stored for contextual use.`
- : "Approved supplements are opt-in. Nothing becomes a checklist until you add it here.";
- const hydrationSupportLine = storedHydrationTargetOz
- ? recoveryPrescription?.hydrationSupport?.summary || `Stored hydration target: ${Math.round(storedHydrationTargetOz)} oz.`
- : "No explicit hydration target is stored for today. The tracker below uses a suggested baseline from bodyweight and session load.";
- const weeklyNutritionHeadline = weeklyNutritionReview?.coaching?.headline || "Your weekly meal strategy sharpens as real days get logged.";
- const weeklyPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Keep the plan separate from what actually happened so next week's guidance stays realistic.";
- const weeklyAdherenceLine = weeklyNutritionReview?.adherence?.summary || "Still learning which days feel easiest to execute.";
- const weeklyHydrationLine = weeklyNutritionReview?.hydration?.summary || "Hydration pattern is still coming into focus.";
- const weeklySupplementLine = weeklyNutritionReview?.supplements?.summary || "Supplement routine is optional and still taking shape.";
- const weeklyFrictionLine = weeklyNutritionReview?.friction?.summary || "No repeating meal friction has stood out yet.";
-const weeklyAdaptationLine = weeklyNutritionReview?.adaptation?.summary || "Stay with the current meal structure next week.";
- const weeklyTopCauses = Array.isArray(weeklyNutritionReview?.friction?.topCauses)
- ? weeklyNutritionReview.friction.topCauses.slice(0, 2)
- : [];
- const groceryExecutionSupport = deriveGroceryExecutionSupport({
- nutritionLayer,
- realWorldNutrition,
- weeklyNutritionReview,
- favorites,
- localFoodContext,
- savedLocation,
- dayType,
- travelMode: Boolean(nutritionLayer?.travelMode),
- recoveryDay,
- hardDay,
- strengthDay,
- });
-useEffect(() => {
-if (nutritionLogDateOptions.includes(selectedLogDateKey)) return;
-setSelectedLogDateKey(todayKey);
-}, [todayKey, selectedLogDateKey, selectedLogDateOptionKey]);
-useEffect(() => {
-setNutritionSavePhase(SAVE_FEEDBACK_PHASES.idle);
-setNutritionSaveDetail("");
-setNutritionSaveError("");
-setNutritionSavedAtLabel("");
-}, [selectedLogDateKey]);
-useEffect(() => {
-setMealAnchorDrafts({
-breakfast: savedMealAnchors.breakfast,
- lunch: savedMealAnchors.lunch,
- travelFallback: savedMealAnchors.travelFallback,
- emergencyOrder: savedMealAnchors.emergencyOrder,
- });
- }, [savedMealAnchors.breakfast, savedMealAnchors.lunch, savedMealAnchors.travelFallback, savedMealAnchors.emergencyOrder]);
- useEffect(() => {
- if (!actualNutritionForSelectedDate?.loggedAt) {
- setNutritionCheck(EMPTY_NUTRITION_CHECK);
- setHydrationOz(0);
- setHydrationNudgedAt(null);
- setSupplementTaken({});
- setShowHydrationNudge(false);
- return;
- }
- setNutritionCheck({
- deviationKind: actualNutritionForSelectedDate?.deviationKind || "",
- issue: actualNutritionForSelectedDate?.issue || "",
- note: actualNutritionForSelectedDate?.note || "",
- });
- setHydrationOz(Number(actualNutritionForSelectedDate?.hydration?.oz || 0));
- setHydrationNudgedAt(actualNutritionForSelectedDate?.hydration?.nudgedAt || null);
- setSupplementTaken(actualNutritionForSelectedDate?.supplements?.takenMap || {});
- setShowHydrationNudge(false);
- }, [
- selectedLogDateKey,
- actualNutritionForSelectedDate?.loggedAt,
- actualNutritionForSelectedDate?.deviationKind,
- actualNutritionForSelectedDate?.issue,
- actualNutritionForSelectedDate?.note,
- actualNutritionForSelectedDate?.hydration?.oz,
- actualNutritionForSelectedDate?.hydration?.nudgedAt,
- JSON.stringify(actualNutritionForSelectedDate?.supplements?.takenMap || {}),
- ]);
- useEffect(() => {
- if (!selectedLogIsToday) return;
- const hour = new Date().getHours();
- if (hour < 15 || hydrationPct >= 50 || hydrationNudgedAt || showHydrationNudge) return;
- setShowHydrationNudge(true);
- const nudgedAt = Date.now();
- setHydrationNudgedAt(nudgedAt);
- }, [hydrationPct, hydrationNudgedAt, selectedLogIsToday, showHydrationNudge, todayKey]);
-const requestFridgeMeal = () => {
-const reply = deriveFridgeCoachMealSuggestion({ fridgeInput, dayType });
-setFridgeCoachReply(reply.coachLine || "");
-};
-const hasExplicitNutritionSignal = (payload = {}) => {
-const safePayload = payload || {};
-return Boolean(
-String(safePayload?.deviationKind || "").trim()
- || String(safePayload?.issue || "").trim()
- || String(safePayload?.note || "").trim()
- || Number(safePayload?.hydrationOz || 0) > 0
- || Object.values(safePayload?.supplementTaken || {}).some(Boolean)
-);
-};
-const persistNutritionFeedback = async (payload, successMessage = "Saved nutrition update.") => {
-if (!hasExplicitNutritionSignal(payload)) return;
-startNutritionSave("Saving your nutrition update.");
-const result = await saveNutritionActualLog(selectedLogDateKey, payload);
-if (!result?.ok) {
-failNutritionSave("Nutrition update did not save. Try again.");
-return;
-}
-finishNutritionSave(successMessage);
-};
- const nutritionQuickLogReady = hasExplicitNutritionSignal({
- ...nutritionCheck,
- hydrationOz,
- supplementTaken,
- });
- const logHydration = async (oz = 12) => {
- const nextHydration = applyHydrationQuickAdd({
- currentOz: hydrationOz,
- targetOz: hydrationTargetOz,
- incrementOz: oz,
- });
- setHydrationOz(nextHydration.hydrationOz);
- await persistNutritionFeedback({ ...nutritionCheck, hydrationOz: nextHydration.hydrationOz, hydrationTargetOz, hydrationNudgedAt }, "Hydration saved.");
- };
- const toggleSupplementTaken = async (name) => {
- const nextTaken = { ...supplementTaken, [name]: !supplementTaken?.[name] };
- setSupplementTaken(nextTaken);
- await persistNutritionFeedback({ ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt, supplementTaken: nextTaken }, "Supplement update saved.");
- };
-const saveMealAnchors = async () => {
-const nextAnchors = {
-breakfast: String(mealAnchorDrafts?.breakfast || "").trim(),
-lunch: String(mealAnchorDrafts?.lunch || "").trim(),
-travelFallback: String(mealAnchorDrafts?.travelFallback || "").trim(),
-emergencyOrder: String(mealAnchorDrafts?.emergencyOrder || "").trim(),
-};
-startNutritionSave("Saving your meal anchors.");
-const result = await saveNutritionFavorites({ ...favorites, mealAnchors: nextAnchors });
-if (!result?.ok) {
-failNutritionSave("Meal anchors did not save. Try again.");
-return;
-}
-finishNutritionSave("Meal anchors saved.");
-};
- const toggleApprovedSupplement = async (supplement) => {
- const nextName = String(supplement?.name || "").trim();
- if (!nextName) return;
- const exists = approvedSupplementStack.some((item) => String(item?.name || "").toLowerCase() === nextName.toLowerCase());
- const nextStack = exists
- ? approvedSupplementStack.filter((item) => String(item?.name || "").toLowerCase() !== nextName.toLowerCase())
- : [
- ...approvedSupplementStack,
- {
- name: supplement.name,
- timing: supplement.defaultTiming,
- dose: supplement.defaultDose,
- product: supplement.product,
- contexts: supplement.contexts || ["daily"],
- },
- ];
- startNutritionSave("Saving your approved supplements.");
- const result = await saveNutritionFavorites({ ...favorites, supplementStack: nextStack });
- if (!result?.ok) {
- failNutritionSave("Supplement changes did not save. Try again.");
- return;
- }
- finishNutritionSave(exists ? "Supplement removed from your saved stack." : "Supplement added to your saved stack.");
- };
- const addCustomSupplement = async () => {
- if (!newSupplementName.trim() || !newSupplementTiming.trim()) return;
- const nextStack = [
- ...approvedSupplementStack,
- { name: newSupplementName.trim(), timing: newSupplementTiming.trim(), contexts: ["daily"] },
- ];
- startNutritionSave("Saving your supplement defaults.");
- const result = await saveNutritionFavorites({ ...favorites, supplementStack: nextStack });
- if (!result?.ok) {
- failNutritionSave("Supplement defaults did not save. Try again.");
- return;
- }
- setNewSupplementName("");
- setNewSupplementTiming("");
- finishNutritionSave("Supplement defaults saved.");
- };
- const removeCustomSupplement = async (name) => {
- const nextStack = approvedSupplementStack.filter((x) => String(x?.name || "").toLowerCase() !== String(name || "").toLowerCase());
- startNutritionSave("Saving your supplement defaults.");
- const result = await saveNutritionFavorites({ ...favorites, supplementStack: nextStack });
- if (!result?.ok) {
- failNutritionSave("Supplement defaults did not save. Try again.");
- return;
- }
- finishNutritionSave("Supplement defaults saved.");
- };
-
- const nutritionTone = buildReviewBadgeTone(nutritionComparison?.adherence || nutritionComparison?.deviationKind, C);
- const targetTone = buildReviewBadgeTone(sessionIntensity === "hard" ? "progression" : recoveryDay ? "recovery" : "match", C);
- const comparisonLabel = actualNutritionToday?.loggedAt
- ? `${sanitizeStatusLabel(nutritionComparison?.adherence, "logged")} - ${sanitizeStatusLabel(nutritionComparison?.deviationKind, "matched")}`
- : "Not logged yet";
- const complianceLine = actualNutritionToday?.loggedAt
- ? sanitizeDisplayText(nutritionComparison?.summary || "Nutrition logged.")
-: "Log a quick outcome once the day settles so today's plan and what you actually ate stay clear.";
- const savedFallbackMeal = sanitizeDisplayText(
- savedMealAnchors.lunch
- || savedMealAnchors.breakfast
- || favorites?.safeMeals?.[0]?.meal
- || favorites?.safeMeals?.[0]?.name
- || favorites?.defaultMeals?.[0]?.meal
- || favorites?.defaultMeals?.[0]?.name
- || ""
- );
- const fastFallback = locationAwareOrder || (showNearbySection
- ? `${fastest.name}: ${fastest.meal}`
- : nutritionLayer?.travelMode
- ? savedMealAnchors.travelFallback || travelBreakfast[0]
- : emergencyOrder
- ? `Emergency order: ${emergencyOrder}`
- : savedFallbackMeal
- ? `Saved default: ${savedFallbackMeal}`
- : "Use your default: protein + carb + fruit + water.");
- const weeklyGrocerySupportLine = basket?.headline
- ? `Grocery: ${basket.headline}`
- : groceryExecutionSupport?.summary
- ? `Grocery support: ${groceryExecutionSupport.summary}`
- : hasSavedStorePreference
- ? `${store}: ${(groceryHooks?.priorityItems || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`
- : `Suggested staples: ${(groceryHooks?.priorityItems || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`;
- const approvedSupplementNames = new Set(
- approvedSupplementStack.map((supplement) => String(supplement?.name || "").toLowerCase())
- );
- const approvedCustomSupplements = approvedSupplementStack.filter((supplement) => (
- !defaultSupplements.some((preset) => String(preset?.name || "").toLowerCase() === String(supplement?.name || "").toLowerCase())
- ));
- const breakfastAnchorSuggestion = sanitizeDisplayText(mealSlotByKey.breakfast?.primary || breakfast);
- const lunchAnchorSuggestion = sanitizeDisplayText(mealSlotByKey.lunch?.primary || lunch);
- const travelAnchorSuggestion = sanitizeDisplayText(
- savedMealAnchors.travelFallback
- || mealSlotByKey.breakfast?.travelSwap
- || mealSlotByKey.lunch?.travelSwap
- || travelBreakfast[0]
- );
- const emergencyOrderLine = emergencyOrder || "No emergency takeout order is saved yet.";
- const travelOrGroceryTitle = nutritionLayer?.travelMode ? "TRAVEL OPTION" : "GROCERY HOOK";
- const travelOrGroceryLine = nutritionLayer?.travelMode
- ? travelAnchorSuggestion
- : hasSavedStorePreference
- ? `${store}: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`
- : `Suggested staples: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`;
- const nutritionSurfaceModel = buildNutritionSurfaceModel({
- dayType,
- todayWorkout,
- nutritionLayer,
- realWorldNutrition,
- weeklyNutritionReview,
- nutritionComparison,
- hydrationOz,
- hydrationTargetOz,
- fallbackMeal: fastFallback,
- });
- const compressNutritionCopy = (text = "", maxLen = 110) => {
- const normalized = String(text || "").replace(/\s+/g, " ").trim();
- if (!normalized) return "";
- if (normalized.length <= maxLen) return normalized;
- return `${normalized.slice(0, Math.max(0, maxLen - 1)).trim()}...`;
- };
- const compactDirectiveSentence = compressNutritionCopy(directiveSentence, 78);
- const compactNutritionReason = sanitizeDisplayText(canonicalNutritionReason || nutritionProvenance);
- const compactTargetChangeSummary = targetChangeSummary && targetChangeSummary !== canonicalNutritionReason
- ? compressNutritionCopy(targetChangeSummary, 88)
- : "";
- const compactComplianceLine = compressNutritionCopy(complianceLine, 88);
- const visiblePerformanceGuidanceRows = performanceGuidanceRows.slice(0, 3);
- const compactAdaptiveContextRows = adaptiveContextRows.slice(0, 2);
- const compactWhyThisToday = compressNutritionCopy(whyThisToday, 92);
- const compactDailyRecommendations = dailyRecommendations
- .slice(0, 2)
- .map((line) => compressNutritionCopy(line, 72))
- .filter(Boolean);
- const compactWeeklyNutritionHeadline = compressNutritionCopy(weeklyNutritionHeadline, 84);
- const compactWeeklyPlannedVsActualLine = compressNutritionCopy(weeklyPlannedVsActualLine, 88);
- const compactWeeklyFrictionLine = compressNutritionCopy(weeklyFrictionLine, 84);
- const compactWeeklyGrocerySupportLine = compressNutritionCopy(weeklyGrocerySupportLine, 92);
- const compactHydrationSupportLine = compressNutritionCopy(hydrationSupportLine, 88);
- const compactSupplementPrescriptionLine = compressNutritionCopy(supplementPrescriptionLine, 88);
- const compactApprovedSupplementLine = compressNutritionCopy(approvedSupplementLine, 88);
- const compactNutritionHeroLine = compressNutritionCopy(nutritionSurfaceModel?.heroLine || compactDirectiveSentence, 112);
- const compactNutritionTargetBiasLine = compressNutritionCopy(nutritionSurfaceModel?.targetBiasLine || "", 88);
- const compactNutritionStrategySummary = compressNutritionCopy(nutritionSurfaceModel?.strategySummary || compactWhyThisToday, 118);
- const nutritionStrategyRows = Array.isArray(nutritionSurfaceModel?.strategyRows)
- ? nutritionSurfaceModel.strategyRows
- : [];
- const nutritionAdjustmentRows = Array.isArray(nutritionSurfaceModel?.adjustments)
- ? nutritionSurfaceModel.adjustments
- : [];
- const compactFuelingDetailSummary = compactDailyRecommendations[0]
- || compressNutritionCopy(performanceGuidance?.priorityLine || whyThisToday, 96)
- || compactDirectiveSentence;
- const compactApprovedSupplementEmptyLine = approvedSupplementStack.length
- ? "Approved stack saved."
- : "No approved supplements saved yet.";
- const startNutritionSave = (detail = "Saving your nutrition update.") => {
- setNutritionSavePhase(SAVE_FEEDBACK_PHASES.saving);
- setNutritionSaveDetail(detail);
- setNutritionSaveError("");
- };
- const finishNutritionSave = (detail = "Nutrition is up to date.") => {
- const stamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
- setNutritionSavedAtLabel(stamp);
- setNutritionSaveDetail(detail);
- setNutritionSaveError("");
- setNutritionSavePhase(SAVE_FEEDBACK_PHASES.saved);
- };
- const failNutritionSave = (message = "Nutrition update did not save. Try again.") => {
- setNutritionSaveError(message);
- setNutritionSavePhase(SAVE_FEEDBACK_PHASES.error);
- };
- const nutritionSaveFeedbackModel = buildSaveFeedbackModel({
- phase: nutritionSavePhase,
- syncState: syncStateModel,
- savedAtLabel: nutritionSavedAtLabel,
- successMessage: nutritionSaveDetail,
- savingMessage: nutritionSaveDetail,
- errorMessage: nutritionSaveError,
- });
- const showNutritionQuietSyncChip = Boolean(syncSurfaceModel?.showCompactChip && syncSurfaceModel?.tone !== "healthy");
-
- return (
- <div className="fi" data-testid="nutrition-tab" style={{ display:"grid", gap:"0.75rem" }}>
- {syncSurfaceModel?.showFullCard && (
- <SyncStateCallout
- model={syncSurfaceModel}
- dataTestId="nutrition-sync-status"
- compact
- style={{ background:"rgba(11, 20, 32, 0.76)" }}
- />
- )}
- <div data-testid="nutrition-daily-target" className="card card-soft card-action" style={{ borderColor:C.blue+"28" }}>
- <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.5rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start", flexWrap:"wrap" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>TODAY'S FUEL</div>
- <span className="ui-pill" style={{ color:C.blue, background:`${C.blue}12`, borderColor:`${C.blue}22` }}>
- {sanitizeDisplayText(nutritionSurfaceModel?.laneLabel || sanitizeStatusLabel(dayType, "today"))}
- </span>
- </div>
- <div style={{ fontSize:"0.68rem", color:"#f8fafc", lineHeight:1.35 }}>
- {sanitizeDisplayText(nutritionSurfaceModel?.heroTitle || "Fuel today")}
- </div>
-<div style={{ fontSize:"0.56rem", color:"#e2e8f0", lineHeight:1.45 }}>{compactNutritionHeroLine}</div>
-<div data-testid="nutrition-canonical-session-label" style={{ fontSize:"0.54rem", color:"#f8fafc", lineHeight:1.45 }}>{canonicalNutritionLabel}</div>
- {!!surfaceModel?.explanationSourceLabel && (
- <div style={{ fontSize:"0.44rem", color:"#64748b", letterSpacing:"0.08em", textTransform:"uppercase" }}>
- {surfaceModel.explanationSourceLabel}
- </div>
- )}
- {!!compactNutritionReason && (
- <div data-testid="nutrition-canonical-reason" style={{ fontSize:"0.49rem", color:"#9fb2d2", lineHeight:1.45 }}>
- {compactNutritionReason}
- </div>
- )}
- {nutritionSaveFeedbackModel.show && (
- <StateFeedbackBanner
- model={nutritionSaveFeedbackModel}
- dataTestId="nutrition-save-status"
- compact
- />
- )}
- {showNutritionQuietSyncChip && (
- <CompactSyncStatus
- model={syncSurfaceModel}
- dataTestId="nutrition-sync-status"
- style={{
- background:"rgba(11, 20, 32, 0.32)",
- opacity:0.88,
- }}
- />
- )}
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:"0.35rem" }}>
- {[["Protein", proteinLevel, C.red], ["Carbs", carbLevel, C.green], ["Calories", calorieLevel, C.amber]].map(([label, value, tone]) => (
- <div key={label} style={{ border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem" }}>
- <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>{label}</div>
- <div style={{ fontSize:"0.62rem", color:tone, marginTop:"0.12rem" }}>{value}</div>
- </div>
- ))}
- </div>
- {!!compactNutritionTargetBiasLine && (
- <div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.45, marginTop:"0.45rem" }}>
- {compactNutritionTargetBiasLine}
- </div>
- )}
- <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", marginTop:"0.42rem" }}>
- <span className="ui-pill" style={{ color:nutritionTone.color, background:nutritionTone.bg, borderColor:"transparent" }}>
- {comparisonLabel}
- </span>
- </div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45, marginTop:"0.45rem" }}>
- {compactComplianceLine}
- </div>
- </div>
-
-<div data-testid="nutrition-meal-strategy" className="card card-subtle" style={{ borderColor:C.amber+"28" }}>
-<div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.45rem" }}>
-<div className="sect-title" style={{ color:C.amber, marginBottom:0 }}>TODAY'S MEAL STRATEGY</div>
- <div style={{ fontSize:"0.58rem", color:"#f8fafc", lineHeight:1.45 }}>{compactNutritionStrategySummary}</div>
-</div>
-<div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:"0.35rem" }}>
-{nutritionStrategyRows.map((row) => (
-<div key={row.key} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>{sanitizeDisplayText(row.label)}</div>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{sanitizeDisplayText(row.line)}</div>
- </div>
-))}
-</div>
-</div>
-
- <div data-testid="nutrition-quick-log" className="card card-action" style={{ borderColor:C.green+"30", background:"#0d1410" }}>
- <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.45rem" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>QUICK LOG</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
- {selectedLogIsToday
- ? "Save the day in a few taps."
- : "Log a recent day."}
- </div>
- </div>
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", flexWrap:"wrap", alignItems:"end" }}>
- <div data-testid="nutrition-log-date-label" style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>
- For {selectedLogDateLabel}.
- </div>
- <label style={{ display:"grid", gap:"0.14rem", minWidth:180 }}>
- <span style={{ fontSize:"0.44rem", color:"#64748b", letterSpacing:"0.08em" }}>LOG DAY</span>
- <select data-testid="nutrition-log-date-select" value={selectedLogDateKey} onChange={(e)=>setSelectedLogDateKey(e.target.value)} style={{ fontSize:"0.54rem" }}>
- {nutritionLogDateOptions.map((dateKey) => (
- <option key={dateKey} value={dateKey}>{formatNutritionLogDateLabel(dateKey)}</option>
- ))}
- </select>
- </label>
- </div>
- <div style={{ display:"grid", gap:"0.18rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>How did the day compare with the plan?</div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:"0.3rem" }}>
- {[["followed","Followed plan"],["under_fueled","Under-fueled"],["over_indulged","Ate more than planned"],["deviated","Different than plan"]].map(([key, label]) => (
- <button key={key} className={`btn ${nutritionCheck.deviationKind===key ? "btn-selected" : ""}`} onClick={()=>setNutritionCheck((current)=>({ ...current, deviationKind:key, issue:key === "followed" ? "" : current.issue }))} style={{ fontSize:"0.54rem", borderColor:nutritionCheck.deviationKind===key?C.green:"#1e293b", color:nutritionCheck.deviationKind===key?C.green:"#64748b", background:nutritionCheck.deviationKind===key?`${C.green}12`:"transparent" }}>
- {label}
- </button>
- ))}
- </div>
- </div>
- <div style={{ display:"grid", gap:"0.18rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>Main friction, if anything</div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:"0.3rem" }}>
- {[["","None"],["hunger","Hunger"],["convenience","Convenience"],["travel","Travel"]].map(([key, label]) => (
- <button key={label} className={`btn ${(nutritionCheck.issue||"")===key ? "btn-selected" : ""}`} onClick={()=>setNutritionCheck((current)=>({ ...current, issue:key }))} style={{ fontSize:"0.54rem", borderColor:(nutritionCheck.issue||"")===key?C.blue:"#1e293b", color:(nutritionCheck.issue||"")===key?C.blue:"#64748b", background:(nutritionCheck.issue||"")===key?`${C.blue}12`:"transparent" }}>
- {label}
- </button>
- ))}
- </div>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.35rem", alignItems:"start" }}>
- <input value={nutritionCheck.note || ""} onChange={e=>setNutritionCheck((current)=>({ ...current, note:e.target.value }))} placeholder="Quick note (optional)" />
- <button data-testid="nutrition-save-quick" className="btn btn-primary" disabled={!nutritionQuickLogReady} onClick={()=>persistNutritionFeedback({ ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt, supplementTaken }, actualNutritionForSelectedDate?.loggedAt ? `Nutrition log updated for ${selectedLogDateLabel}.` : `Nutrition log saved for ${selectedLogDateLabel}.`)} style={{ fontSize:"0.52rem", opacity:nutritionQuickLogReady ? 1 : 0.5, width:"fit-content" }}>
- Save
- </button>
- </div>
- </div>
- </div>
-
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.75rem" }}>
- <div className="card card-subtle" style={{ borderColor:C.blue+"24" }}>
- <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.4rem" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>HYDRATION</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{compactHydrationSupportLine}</div>
- </div>
- <button className="btn" onClick={()=>logHydration(12)} style={{ width:"100%", display:"block", textAlign:"left", borderColor:"#2a3b56", padding:"0.42rem 0.46rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", fontSize:"0.56rem", color:"#dbe7f6", marginBottom:"0.22rem" }}>
- <span>{Math.round(hydrationOz)} oz logged</span>
- <span style={{ color:"#8fa5c8" }}>{hydrationTargetLabel}</span>
- </div>
- <div style={{ width:"100%", height:10, borderRadius:999, background:"#0f172a", border:"1px solid #243752", overflow:"hidden" }}>
- <div style={{ width:`${hydrationPct}%`, height:"100%", background: hydrationPct >= 100 ? C.green : C.blue, transition:"width 180ms ease" }} />
- </div>
- <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#8fa5c8" }}>Tap to add 12 oz</div>
- </button>
- </div>
-
- <div className="card card-subtle" style={{ borderColor:C.green+"24" }}>
- <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.4rem" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>KEY ADJUSTMENTS</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{compactFuelingDetailSummary}</div>
- </div>
- <div style={{ display:"grid", gap:"0.35rem" }}>
- {(nutritionAdjustmentRows.length ? nutritionAdjustmentRows : [{ key: "detail_focus", label: "Today", line: compactFuelingDetailSummary }]).map((row) => (
- <div key={row.key} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>{sanitizeDisplayText(row.label)}</div>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{sanitizeDisplayText(row.line)}</div>
- </div>
- ))}
- </div>
- </div>
- </div>
-
- <details data-testid="nutrition-performance-guidance" className="card card-subtle" style={{ borderColor:C.green+"28" }}>
- <summary style={{ cursor:"pointer", fontSize:"0.56rem", color:"#dbe7f6" }}>
- Fueling details
- </summary>
- <div style={{ display:"grid", gap:"0.42rem", marginTop:"0.45rem" }}>
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.58rem", color:"#f8fafc", lineHeight:1.45 }}>{compactWhyThisToday}</div>
- {compactDailyRecommendations.length > 0 && (
- <div style={{ display:"grid", gap:"0.14rem" }}>
- {compactDailyRecommendations.map((line, index) => (
- <div key={`nutrition_detail_tip_${index}`} style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
- {line}
- </div>
- ))}
- </div>
- )}
- </div>
- {!!visiblePerformanceGuidanceRows.length && (
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:"0.35rem" }}>
- {visiblePerformanceGuidanceRows.map((entry) => (
- <div key={entry.key} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>{entry.label}</div>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{entry.line}</div>
- </div>
- ))}
- </div>
- )}
- {!!compactAdaptiveContextRows.length && (
- <div data-testid="nutrition-adaptive-context" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:"0.35rem" }}>
- {compactAdaptiveContextRows.map((entry) => (
- <div key={entry.key} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>{sanitizeDisplayText(entry.label)}</div>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{compressNutritionCopy(entry.line, 78)}</div>
- </div>
- ))}
- </div>
- )}
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.35rem" }}>
- <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>LOW-FRICTION BACKUP</div>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{fastFallback}</div>
- </div>
- <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>{travelOrGroceryTitle}</div>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{travelOrGroceryLine}</div>
- </div>
- <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>EMERGENCY ORDER</div>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{emergencyOrderLine}</div>
- </div>
- </div>
- </div>
- </details>
-
- <details data-testid="nutrition-meal-anchors" className="card card-subtle" style={{ borderColor:C.blue+"24" }}>
- <summary style={{ cursor:"pointer", fontSize:"0.56rem", color:"#dbe7f6" }}>Saved meal anchors</summary>
- <div style={{ display:"grid", gap:"0.18rem", marginTop:"0.45rem", marginBottom:"0.45rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
- Save the meals you repeat so this tab stays useful when the day gets busy.
- </div>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.35rem" }}>
- <label style={{ display:"grid", gap:"0.16rem" }}>
- <span style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>DEFAULT BREAKFAST</span>
- <input value={mealAnchorDrafts.breakfast} onChange={(e)=>setMealAnchorDrafts((current)=>({ ...current, breakfast:e.target.value }))} placeholder="Greek yogurt + berries + granola" />
- </label>
- <label style={{ display:"grid", gap:"0.16rem" }}>
- <span style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>DEFAULT LUNCH</span>
- <input value={mealAnchorDrafts.lunch} onChange={(e)=>setMealAnchorDrafts((current)=>({ ...current, lunch:e.target.value }))} placeholder="Chicken rice bowl + fruit" />
- </label>
- <label style={{ display:"grid", gap:"0.16rem" }}>
- <span style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>TRAVEL FALLBACK</span>
- <input value={mealAnchorDrafts.travelFallback} onChange={(e)=>setMealAnchorDrafts((current)=>({ ...current, travelFallback:e.target.value }))} placeholder="Egg bites + oatmeal + banana" />
- </label>
- <label style={{ display:"grid", gap:"0.16rem" }}>
- <span style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>EMERGENCY TAKEOUT</span>
- <input value={mealAnchorDrafts.emergencyOrder} onChange={(e)=>setMealAnchorDrafts((current)=>({ ...current, emergencyOrder:e.target.value }))} placeholder="Chipotle double chicken bowl" />
- </label>
- </div>
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.45rem" }}>
- <button className="btn" onClick={()=>setMealAnchorDrafts((current)=>({ ...current, breakfast: breakfastAnchorSuggestion }))} style={{ fontSize:"0.5rem", borderColor:"#2a3b56", color:"#dbe7f6" }}>
- Use today's breakfast
- </button>
- <button className="btn" onClick={()=>setMealAnchorDrafts((current)=>({ ...current, lunch: lunchAnchorSuggestion }))} style={{ fontSize:"0.5rem", borderColor:"#2a3b56", color:"#dbe7f6" }}>
- Use today's lunch
- </button>
- <button className="btn btn-primary" onClick={saveMealAnchors} style={{ fontSize:"0.5rem" }}>
- Save anchors
- </button>
- </div>
- <div style={{ display:"grid", gap:"0.14rem", marginTop:"0.42rem" }}>
- <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>Breakfast suggestion: {breakfastAnchorSuggestion}</div>
- <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>Lunch suggestion: {lunchAnchorSuggestion}</div>
- <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>Travel backup: {travelAnchorSuggestion}</div>
- </div>
- </details>
-
- <details className="card card-subtle" style={{ borderColor:C.blue+"24" }}>
- <summary style={{ cursor:"pointer", fontSize:"0.56rem", color:"#dbe7f6" }}>Supplement plan</summary>
- <div style={{ display:"grid", gap:"0.42rem", marginTop:"0.45rem" }}>
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{compactSupplementPrescriptionLine}</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
- {showSupplementChecklist ? compactApprovedSupplementLine : compactApprovedSupplementEmptyLine}
- </div>
- </div>
- {!showSupplementChecklist && (
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
- {compactApprovedSupplementEmptyLine}
- </div>
- )}
- {showSupplementChecklist && (
- <div style={{ display:"grid", gap:"0.3rem" }}>
- {supplementRows.map((supp, i) => (
- <div key={`${supp.name}_${i}`} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
- <div style={{ display:"grid", gridTemplateColumns:"auto 1fr auto", gap:"0.35rem", alignItems:"center" }}>
- <button className="btn" onClick={()=>toggleSupplementTaken(supp.name)} style={{ width:24, minWidth:24, height:24, padding:0, borderColor:"#2d435f", color:supplementTaken?.[supp.name] ? C.green : "#64748b", background:"transparent", fontSize:"0.62rem" }}>
- {supplementTaken?.[supp.name] ? "x" : ""}
- </button>
- <div>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>{supp.name}</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.08rem" }}>{supp.instruction}</div>
- </div>
- <button className="btn" onClick={()=>setOpenSupplementInfo(prev => prev === supp.name ? "" : supp.name)} style={{ fontSize:"0.48rem", padding:"0.12rem 0.34rem", color:"#8fa5c8", borderColor:"#2c3e58" }}>{openSupplementInfo === supp.name ? "Hide" : "Why"}</button>
- </div>
- {openSupplementInfo === supp.name && (
- <div style={{ marginTop:"0.28rem", fontSize:"0.51rem", color:"#9fb2d2", lineHeight:1.55 }}>
- {supplementInfoByName[supp.name]?.plain}
- </div>
- )}
- </div>
- ))}
- </div>
- )}
- <details style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.52rem 0.56rem" }}>
- <summary style={{ cursor:"pointer", fontSize:"0.52rem", color:"#dbe7f6" }}>Manage approved supplements</summary>
- <div style={{ display:"grid", gap:"0.28rem", marginTop:"0.4rem" }}>
- <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>APPROVED STACK</div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
- {compactApprovedSupplementLine}
- </div>
- <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
- {defaultSupplements.map((supplement) => {
- const isApproved = approvedSupplementNames.has(String(supplement?.name || "").toLowerCase());
- return (
- <button
- key={supplement.key}
- className="btn"
- onClick={()=>toggleApprovedSupplement(supplement)}
- style={{
- fontSize:"0.48rem",
- borderColor:isApproved ? C.green : "#2a3b56",
- color:isApproved ? C.green : "#dbe7f6",
- background:isApproved ? `${C.green}12` : "transparent",
- }}
- >
- {isApproved ? `Remove ${supplement.name}` : `Add ${supplement.name}`}
- </button>
- );
- })}
- </div>
- {approvedCustomSupplements.length > 0 && (
- <div style={{ display:"grid", gap:"0.18rem" }}>
- {approvedCustomSupplements.map((supplement) => (
- <div key={`approved_custom_${supplement.key}`} style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
- <div style={{ fontSize:"0.48rem", color:"#dbe7f6", lineHeight:1.45 }}>
- {supplement.name} / {supplement.defaultTiming}
- </div>
- <button className="btn" onClick={()=>removeCustomSupplement(supplement.name)} style={{ fontSize:"0.46rem", borderColor:"#2a3b56", color:"#8fa5c8" }}>
- Remove
- </button>
- </div>
- ))}
- </div>
- )}
- <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr) auto", gap:"0.3rem", alignItems:"start" }}>
- <input value={newSupplementName} onChange={(e)=>setNewSupplementName(e.target.value)} placeholder="Custom supplement" />
- <input value={newSupplementTiming} onChange={(e)=>setNewSupplementTiming(e.target.value)} placeholder="Timing" />
- <button className="btn btn-primary" onClick={addCustomSupplement} disabled={!newSupplementName.trim() || !newSupplementTiming.trim()} style={{ fontSize:"0.48rem", opacity:newSupplementName.trim() && newSupplementTiming.trim() ? 1 : 0.5 }}>
- Add
- </button>
- </div>
- </div>
- </details>
- </div>
- </details>
-
- </div>
- );
- if (false) return (
- <div className="fi">
- <div className="card card-soft card-action" style={{ marginBottom:"0.8rem", borderColor:C.blue+"28" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem", flexWrap:"wrap", marginBottom:"0.45rem" }}>
- <div>
- <div className="sect-title" style={{ color:C.blue, marginBottom:"0.14rem" }}>TODAY'S NUTRITION TARGET</div>
- <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.5 }}>{directiveSentence}</div>
- </div>
- <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
- <span className="ui-pill" style={{ color:targetTone.color, background:targetTone.bg, borderColor:"transparent" }}>{sanitizeStatusLabel(dayType, "today")}</span>
- <span className="ui-pill" style={{ color:nutritionTone.color, background:nutritionTone.bg, borderColor:"transparent" }}>{comparisonLabel}</span>
- <span className="ui-pill" style={{ color:"#8fa5c8", background:"#0f172a", borderColor:"#243752" }}>{phaseMode}</span>
- </div>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:"0.4rem" }}>
- {[["Protein", proteinLevel, C.red], ["Carbs", carbLevel, C.green], ["Calories", calorieLevel, C.amber]].map(([label, value, col]) => (
- <div key={label} style={{ background:"#0f172a", border:`1px solid ${col}30`, borderRadius:10, padding:"0.46rem 0.4rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>{label}</div>
- <div className="mono" style={{ color:col, fontSize:"0.9rem", marginTop:"0.12rem" }}>{value}</div>
- </div>
- ))}
- </div>
- </div>
-
- <div className="card" style={{ marginBottom:"0.8rem" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>WHY THIS MATCHES TODAY'S TRAINING</div>
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.48rem 0.52rem" }}>
- <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.55 }}>{whyThisToday}</div>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>TRAINING LINK</div>
- <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{currentSessionLabel}</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{macroShiftLine}</div>
- </div>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>GUIDANCE BASIS</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.55 }}>{nutritionProvenance}</div>
- </div>
- </div>
- {dailyRecommendations.length > 0 && (
- <div style={{ display:"grid", gap:"0.22rem" }}>
- {dailyRecommendations.slice(0, 3).map((line, idx) => (
- <div key={`nutrition_rec_${idx}`} style={{ fontSize:"0.54rem", color:"#c7d5ea", lineHeight:1.5 }}>
- {idx + 1}. {line}
- </div>
- ))}
- </div>
- )}
- </div>
- </div>
-
- <div className="card" style={{ marginBottom:"0.8rem" }}>
- <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>PRACTICAL MEAL STRUCTURE</div>
- <div style={{ display:"grid", gap:"0.38rem" }}>
- {mealMacroRows.map((meal) => (
- <div key={meal.key} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.46rem 0.52rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center", flexWrap:"wrap" }}>
- <div style={{ fontSize:"0.58rem", color:"#e2e8f0" }}>{meal.label}</div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>{meal.p}g protein - {meal.c}g carbs - {meal.f}g fat</div>
- </div>
- <div style={{ fontSize:"0.54rem", color:"#c7d5ea", marginTop:"0.12rem", lineHeight:1.5 }}>{meal.text}</div>
- </div>
- ))}
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>LOW-FRICTION BACKUP</div>
- <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{fastFallback}</div>
- </div>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>SHOPPING / TRAVEL NOTE</div>
- <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>
- {nutritionLayer?.travelMode
- ? travelBreakfast[0]
- : hasSavedStorePreference
- ? `${store}: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`
- : `Suggested staples: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`}
- </div>
- </div>
- </div>
- </div>
- </div>
-
- <div className="card" style={{ marginBottom:"0.8rem", borderColor:C.green+"24" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.32rem" }}>
- <div>
- <div className="sect-title" style={{ color:C.green, marginBottom:"0.14rem" }}>GROCERY EXECUTION SUPPORT</div>
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>{groceryExecutionSupport.summary}</div>
- </div>
- <span style={{ fontSize:"0.48rem", color:C.green, background:C.green+"14", padding:"0.16rem 0.42rem", borderRadius:999 }}>
- {sanitizeStatusLabel(groceryExecutionSupport.basketType, "support")}
- </span>
- </div>
- <div style={{ display:"grid", gap:"0.38rem" }}>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.46rem 0.5rem" }}>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{groceryExecutionSupport.title}</div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{groceryExecutionSupport.anchorPrompt}</div>
- <div style={{ fontSize:"0.48rem", color:"#64748b", marginTop:"0.14rem", lineHeight:1.5 }}>{groceryExecutionSupport.optionalityLine}</div>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>TODAY'S BASKET</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>
- {sanitizeDisplayText(groceryExecutionSupport.preferredStore || store)}
- </div>
- <div style={{ marginTop:"0.14rem", display:"grid", gap:"0.16rem" }}>
- {(groceryExecutionSupport.basket?.items || []).slice(0, 8).map((item, idx) => (
- <div key={`grocery_item_${idx}`} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>
- {idx + 1}. {sanitizeDisplayText(item)}
- </div>
- ))}
- </div>
- </div>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>LOW-FRICTION ANCHORS</div>
- <div style={{ marginTop:"0.14rem", display:"grid", gap:"0.16rem" }}>
- {(groceryExecutionSupport.mealAnchors || []).slice(0, 4).map((anchor, idx) => (
- <div key={`grocery_anchor_${idx}`} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>
- {idx + 1}. {sanitizeDisplayText(anchor)}
- </div>
- ))}
- {(!groceryExecutionSupport.mealAnchors || groceryExecutionSupport.mealAnchors.length === 0) && (
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>No saved anchors yet. Use today's breakfast and lunch structure as the first two anchors.</div>
- )}
- </div>
- </div>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>CONVENIENCE MOVES</div>
- <div style={{ marginTop:"0.14rem", display:"grid", gap:"0.16rem" }}>
- {(groceryExecutionSupport.convenienceOptions || []).slice(0, 3).map((option, idx) => (
- <div key={`grocery_option_${idx}`} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>
- {idx + 1}. {sanitizeDisplayText(option)}
- </div>
- ))}
- </div>
- </div>
- </div>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>CONTEXT</div>
- <div style={{ fontSize:"0.52rem", color:"#dbe7f6", marginTop:"0.12rem", lineHeight:1.5 }}>{groceryExecutionSupport.weeklyExecutionLine}</div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{groceryExecutionSupport.locationContextLine}</div>
- <div style={{ fontSize:"0.48rem", color:"#64748b", marginTop:"0.12rem", lineHeight:1.5 }}>{groceryExecutionSupport.honestyLine}</div>
- </div>
- </div>
- </div>
-
- <div className="card" style={{ marginBottom:"0.8rem", borderColor:C.blue+"24" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>RECOVERY + SUPPLEMENT GUIDANCE</div>
- <div style={{ display:"grid", gap:"0.34rem" }}>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>RECOVERY</div>
- <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>
-{recoveryPrescription?.summary || "Recovery guidance is connected to today's plan."}
- </div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{hydrationSupportLine}</div>
- </div>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>SUPPLEMENTS</div>
- <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>{supplementPrescriptionLine}</div>
- </div>
- </div>
- </div>
-
- <div className="card" style={{ marginBottom:"0.8rem" }}>
-<div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>HYDRATION & SUPPLEMENTS</div>
- <div style={{ display:"grid", gap:"0.42rem" }}>
- <button className="btn" onClick={()=>logHydration(12)} style={{ width:"100%", display:"block", textAlign:"left", borderColor:"#2a3b56", padding:"0.42rem 0.46rem" }}>
- <div style={{ display:"flex", justifyContent:"space-between", fontSize:"0.56rem", color:"#dbe7f6", marginBottom:"0.22rem" }}>
- <span>{Math.round(hydrationOz)} oz logged</span>
- <span style={{ color:"#8fa5c8" }}>{hydrationTargetLabel}</span>
- </div>
- <div style={{ width:"100%", height:10, borderRadius:999, background:"#0f172a", border:"1px solid #243752", overflow:"hidden" }}>
- <div style={{ width:`${hydrationPct}%`, height:"100%", background: hydrationPct >= 100 ? C.green : C.blue, transition:"width 180ms ease" }} />
- </div>
- <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#8fa5c8" }}>Tap to add 12 oz</div>
- </button>
- {!showSupplementChecklist && (
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
-Your supplement checklist shows up once a supplement plan is saved for today.
- </div>
- )}
- {showSupplementChecklist && (
- <div style={{ display:"grid", gap:"0.3rem" }}>
- {supplementRows.map((supp, i) => (
- <div key={`${supp.name}_${i}`} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
- <div style={{ display:"grid", gridTemplateColumns:"auto 1fr auto", gap:"0.35rem", alignItems:"center" }}>
- <button className="btn" onClick={()=>toggleSupplementTaken(supp.name)} style={{ width:24, minWidth:24, height:24, padding:0, borderColor:"#2d435f", color:supplementTaken?.[supp.name] ? C.green : "#64748b", background:"transparent", fontSize:"0.62rem" }}>
- {supplementTaken?.[supp.name] ? "?" : ""}
- </button>
- <div>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>{supp.name}</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.08rem" }}>{supp.instruction}</div>
- </div>
- <button className="btn" onClick={()=>setOpenSupplementInfo(prev => prev === supp.name ? "" : supp.name)} style={{ fontSize:"0.48rem", padding:"0.12rem 0.34rem", color:"#8fa5c8", borderColor:"#2c3e58" }}>{openSupplementInfo === supp.name ? "Hide" : "Why"}</button>
- </div>
- {openSupplementInfo === supp.name && (
- <div style={{ marginTop:"0.28rem", fontSize:"0.51rem", color:"#9fb2d2", lineHeight:1.55 }}>
- {supplementInfoByName[supp.name]?.plain}
- </div>
- )}
- </div>
- ))}
- </div>
- )}
- </div>
- </div>
-
- </div>
- );
-}
-
-// COACH TAB (REDESIGNED)
-function LegacyCoachTabUnused({ planDay = null, logs, dailyCheckins, currentWeek, todayWorkout: legacyTodayWorkout, bodyweights, personalization, athleteProfile = null, momentum, arbitration, expectations, memoryInsights, compoundingCoachMemory, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, weeklyNutritionReview = null, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onOpenSettings = () => {}, onPersist }) {
- const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
- const goals = athleteProfile?.goals || [];
- const goalState = athleteProfile?.goalState || {};
- const userProfile = athleteProfile?.userProfile || {};
- const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
- const realWorldNutrition = planDay?.resolved?.nutrition?.reality || legacyRealWorldNutrition;
- const planDayWeek = planDay?.week || null;
- const livePlanningBasis = planDayWeek?.planningBasis || planComposer?.planningBasis || null;
- const livePlanBasisExplanation = livePlanningBasis?.planBasisExplanation || null;
- const canonicalCoachRecovery = planDay?.resolved?.recovery || null;
- const canonicalCoachSupplements = planDay?.resolved?.supplements || null;
- const todayKey = new Date().toISOString().split("T")[0];
- const nutritionActual = planDay?.resolved?.nutrition?.actual || nutritionActualLogs?.[todayKey] || normalizeActualNutritionLog({ dateKey: todayKey, feedback: {} });
- const nutritionComparison = planDay?.resolved?.nutrition?.comparison || compareNutritionPrescriptionToActual({
- nutritionPrescription: nutritionLayer,
- actualNutritionLog: nutritionActual,
- });
- const coachPhase = planDayWeek?.phase || todayWorkout?.week?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
- const coachWeekFocus = planDayWeek?.weeklyIntent?.focus || planDayWeek?.planWeek?.weeklyIntent?.focus || "";
- const coachWeekSummary = planDayWeek?.summary || planDayWeek?.planWeek?.summary || "";
- const activeGoalsOrdered = [...(goals || [])]
- .filter((goal) => goal?.active)
- .sort((a, b) => (a?.priority || 99) - (b?.priority || 99));
- const currentPrimaryGoal = activeGoalsOrdered[0]?.name || arbitration?.priorityStack?.primary || "Consistency";
- const coachPrioritySummary = buildGoalPrioritySummaryLine(activeGoalsOrdered, { maxVisible: 3 });
- const currentBlockLabel = sanitizeDisplayText(
- planDayWeek?.programBlock?.label
- || planDayWeek?.label
- || `${coachPhase} block`
- );
- const currentPlanFocus = sanitizeDisplayText(
- livePlanBasisExplanation?.coachLine
- || planDayWeek?.weeklyIntent?.focus
- || planDayWeek?.successDefinition
- || coachWeekFocus
- || coachWeekSummary
- || planDayWeek?.programBlock?.summary
- || "Current week plan"
- );
- const coachPlanLine = joinDisplayParts([
- coachPrioritySummary ? `Priorities: ${coachPrioritySummary}` : (currentPrimaryGoal ? `Priority 1: ${currentPrimaryGoal}` : ""),
-livePlanningBasis?.activeProgramName ? `Plan: ${livePlanningBasis.activeProgramName}` : "",
- livePlanningBasis?.activeStyleName ? `Style: ${livePlanningBasis.activeStyleName}` : "",
- currentBlockLabel,
- ]);
-const liveFidelityLabel = livePlanBasisExplanation?.effectiveFidelityMode === "strict"
-? "run mostly as written"
-: livePlanBasisExplanation?.effectiveFidelityMode === "style_only"
-? "use for feel"
-: livePlanBasisExplanation?.effectiveFidelityMode === "adapted"
-? "fit to you"
-: "";
- const coachDebugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
- const coachOperatorHostname = typeof window !== "undefined" ? window.location.hostname : "";
- const allowClientSuppliedAiKey = canUseClientSuppliedAiKey({ debugMode: coachDebugMode, hostname: coachOperatorHostname });
- const [coachSurfaceMode, setCoachSurfaceMode] = useState(COACH_SURFACE_MODES.todayWeek);
- const [selectedTodayPrompt, setSelectedTodayPrompt] = useState("status");
- const [messages, setMessages] = useState([]);
- const [input, setInput] = useState("");
- const [loading, setLoading] = useState(false);
- const [apiKey, setApiKey] = useState(typeof window !== "undefined"
- ? resolveStoredAiApiKey({ safeStorageGet, storageLike: localStorage, debugMode: coachDebugMode, hostname: coachOperatorHostname })
- : "");
- const [changePreview, setChangePreview] = useState(null);
- const [coachNotice, setCoachNotice] = useState("");
- const [coachError, setCoachError] = useState("");
- const coachMode = "auto";
-
-const commitAction = async (action) => {
-const commitResult = coordinateCoachActionCommit({
-action,
-runtime: { adjustments: coachPlanAdjustments, weekNotes, planAlerts, personalization },
- currentWeek,
- todayWorkout,
- mergePersonalization,
- buildInjuryRuleResult,
- existingCoachActions: coachActions,
- });
- if (!commitResult.ok) {
- setCoachError(commitResult.ui.message);
- setCoachNotice("");
- return commitResult;
- }
- const mutation = commitResult.mutation;
- const nextActions = commitResult.nextActions;
- setCoachActions(nextActions);
- setCoachPlanAdjustments(mutation.adjustments);
- setWeekNotes(mutation.weekNotes);
- setPlanAlerts(mutation.planAlerts);
- setPersonalization(mutation.personalization);
- await onPersist(mutation.personalization, nextActions, mutation.adjustments, mutation.weekNotes, mutation.planAlerts);
- setCoachError("");
- setCoachNotice("Accepted and saved. Future plan logic will now see this change.");
- return commitResult;
- };
-
- const getSessionContextPrompt = () => {
- const activeGoals = (arbitration?.priorityStack?.ordered || []).filter(Boolean);
- const primaryGoal = activeGoals[0] || currentPrimaryGoal || goalState?.primaryGoal || "Consistency";
- const secondaryGoals = activeGoals.slice(1, 4).join(", ") || "None listed";
- const todayDetails = todayWorkout?.run
- ? `${todayWorkout.run.t || "Run"} - ${todayWorkout.run.d || "target pending"}`
- : `${todayWorkout?.type || "session"} - ${todayWorkout?.strengthDuration || todayWorkout?.fallback || "as prescribed"}`;
- const injury = `${personalization?.injuryPainState?.level || "none"} (${personalization?.injuryPainState?.area || "Achilles"})`;
- const last5 = Object.entries(logs || {}).sort((a,b)=>a[0].localeCompare(b[0])).slice(-5).map(([,l]) => `${l?.type || "session"} - feel ${l?.feel || 3} - ${l?.checkin?.status || "not_logged"}`).join(" | ") || "No recent sessions";
- const last14 = Object.entries(logs || {}).sort((a,b)=>a[0].localeCompare(b[0])).slice(-14);
- const done14 = last14.filter(([,l]) => ["completed_as_planned","completed_modified","partial_completed"].includes(l?.checkin?.status)).length;
- const consistency = `${done14} of ${Math.max(1, last14.length)} sessions`;
- const bw = (bodyweights || []).slice(-6).map(x => Number(x?.w)).filter(Number.isFinite);
- const weightTrend = bw.length < 2 ? "stable" : bw[bw.length - 1] > bw[0] + 0.3 ? "trending up" : bw[bw.length - 1] < bw[0] - 0.3 ? "trending down" : "stable";
- const env = resolveEnvironmentSelection({ personalization, todayKey: new Date().toISOString().split("T")[0], currentWeek });
- const envMode = String(env?.mode || "Home").toLowerCase();
- const fitnessLevel = personalization?.fitnessSignals?.fitnessLevel || personalization?.profile?.fitnessLevel || "unknown";
- const garminToday = personalization?.connectedDevices?.garmin?.dailySummaries?.[new Date().toISOString().split("T")[0]] || {};
- const garminReadiness = Number(garminToday?.trainingReadinessScore ?? personalization?.connectedDevices?.garmin?.trainingReadinessScore ?? 0) || "N/A";
- const garminStress = garminToday?.stressScore ?? "N/A";
- const garminSleep = garminToday?.sleepScore ?? "N/A";
- const memoryLine = [
- (personalization?.coachMemory?.failurePatterns || []).slice(0, 1).join(", "),
- (personalization?.coachMemory?.commonBarriers || []).slice(0, 1).join(", "),
- personalization?.coachMemory?.simplicityVsVariety || ""
- ].filter(Boolean).join(" | ") || "No memory fields yet";
- const currentMode = personalization?.injuryPainState?.level !== "none" ? "recovery" : failureMode?.mode === "chaotic" ? "reduced_load" : "locked_in";
- return `You are a personal coach inside a fitness app. You are direct, specific, and never generic. You do not motivate - you decide and explain. You speak like a coach who knows this person well, not like a customer service bot.
-
-Current user state:
-- Goals: ${primaryGoal} | ${secondaryGoals}
-- Current block: ${currentBlockLabel}
-- Weekly intent: ${currentPlanFocus}
-- Today's plan: ${todayWorkout?.label || "Session"} - ${todayDetails}
-- Built from: ${livePlanBasisExplanation?.basisSummary || "your goals, schedule, and routine"}
-- Basis detail: ${livePlanBasisExplanation?.personalizationSummary || "No named program or style layer is active."}
-- Plan style: ${liveFidelityLabel || "built for you"}
-- Achilles status: ${injury}
-- Last 5 sessions: ${last5}
-- Consistency last 2 weeks: ${consistency}
-- Current weight trend: ${weightTrend}
-- Environment today: ${envMode}
-- Fitness level: ${fitnessLevel}
-- Garmin readiness: ${garminReadiness}
-- Garmin stress/sleep: ${garminStress}/${garminSleep}
-- Coach memory: ${memoryLine}
-- Current mode: ${currentMode}
-
-Rules for every response:
-- Maximum 4 sentences unless the question requires more
-- Never use bullet points in conversational responses
-- Never say "great question," "I understand," "based on your data," or "it sounds like"
-- Always end with one specific action or decision
-- If the question is about injury: give a protocol, not a referral
-- If the question is about missing a session: give a forward direction, not reassurance
-- Reference specific session names, dates, and numbers from context - never speak in generalities`;
- };
-
- const buildQuickPromptMessage = (label) => {
- const dated = Object.entries(logs || {}).sort((a,b)=>a[0].localeCompare(b[0]));
- const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
- const yKey = yesterday.toISOString().split("T")[0];
- const y = logs?.[yKey];
- const last3 = dated.slice(-3).map(([d,l]) => `${d}: ${l?.type || "session"} feel ${l?.feel || 3}`).join(" | ");
- const completion14 = dated.slice(-14).filter(([,l]) => ["completed_as_planned","completed_modified","partial_completed"].includes(l?.checkin?.status)).length;
- const total14 = Math.max(1, dated.slice(-14).length);
- const map = {
- "My Achilles feels tight": `${label}. Include today's session type (${todayWorkout?.type || "unknown"}) and injury history (${(compoundingCoachMemory?.injuryHistory || []).slice(0,2).join("; ") || "none"}).`,
- "I missed yesterday": `${label}. Yesterday was ${y?.type || "unknown"} on ${yKey}. Current week completion: ${completion14}/${total14}.`,
-"I'm traveling today": `${label}. Travel mode turns on when you need it. Today's plan: ${todayWorkout?.label || "session"}.`,
- "I feel amazing this week": `${label}. Last 3 sessions: ${last3 || "none"}. Current phase: ${coachPhase}.`,
- "I slept badly": `${label}. Today's session type: ${todayWorkout?.type || "unknown"}. Readiness context: energy ${personalization?.trainingState?.fatigueScore || "n/a"}.`,
- "I want to push harder": `${label}. Current block: ${currentBlockLabel}. Primary goal: ${currentPrimaryGoal}. Last feels ${(dated.slice(-5).map(([,l]) => l?.feel || 3).join(", ") || "none")}.`,
- };
- return map[label] || label;
- };
-
- const stripCoachRecommendationTone = (text = "") => String(text || "")
- .replace(/^[^:]+:\s*/i, "")
- .replace(/\s*\[[^\]]+\]\s*$/i, "")
- .replace(/\s+/g, " ")
- .trim();
- const formatCoachActionLabel = (action = null) => {
- const actionType = String(action?.type || "");
- if (!actionType) return "";
- if (actionType === COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME) return "Apply the condensed version";
- if (actionType === COACH_TOOL_ACTIONS.REPLACE_SPEED_EASY) return "Swap the hard run for an easy version";
- if (actionType === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_MEALS) return "Switch to travel meals";
- if (actionType === COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY) return "Use the matching nutrition day";
- if (actionType === COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS) return "Apply a small progression";
- if (actionType === COACH_TOOL_ACTIONS.SET_PAIN_STATE) return "Save the pain flag";
- if (actionType === COACH_TOOL_ACTIONS.SWAP_TODAY_RECOVERY) return "Swap today to recovery";
- if (actionType === COACH_TOOL_ACTIONS.MOVE_LONG_RUN) return "Move the long run";
- return sanitizeStatusLabel(actionType, "coach action");
- };
- const buildCompactCoachFallbackText = (packet = null) => {
- const summary = packet?.summary || {};
- const recommendation = stripCoachRecommendationTone(packet?.recommendations?.[0] || "");
- const actionLabel = formatCoachActionLabel(packet?.actions?.[0] || null);
- return [
- summary?.headline || recommendation || sanitizeDisplayText(packet?.notices?.[0] || "Coach update ready."),
- summary?.recommendedAction ? `Action: ${summary.recommendedAction}` : null,
- summary?.whyNow ? `Why: ${summary.whyNow}` : sanitizeDisplayText(packet?.effects?.[0] || packet?.notices?.[0] || ""),
- summary?.watchFor ? `Watch: ${summary.watchFor}` : null,
- actionLabel ? `Deterministic action available: ${actionLabel}.` : "No state changes happen until you accept a recommendation.",
- ]
- .filter(Boolean)
- .join("\n");
- };
-
- const renderCoachMessageContent = (message = {}) => {
- const summary = message?.packet?.summary || null;
- const actionLabel = formatCoachActionLabel(message?.packet?.actions?.[0] || null);
- if (message?.role === "assistant" && summary) {
- return (
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div className="coach-copy" style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>{summary.headline}</div>
- {!!summary.recommendedAction && <div style={{ fontSize:"0.49rem", color:"#cbd5e1", lineHeight:1.45 }}><span style={{ color:"#8fa5c8" }}>Action:</span> {summary.recommendedAction}</div>}
- {!!summary.whyNow && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}><span style={{ color:"#64748b" }}>Why:</span> {summary.whyNow}</div>}
- {!!summary.watchFor && <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}><span style={{ color:"#64748b" }}>Watch:</span> {summary.watchFor}</div>}
- {!!actionLabel && <div style={{ fontSize:"0.47rem", color:C.blue, lineHeight:1.45 }}>Suggested change: {actionLabel}</div>}
- </div>
- );
- }
- return (
- <div className="coach-copy" style={{ fontSize:"0.54rem", color:message.role==="user"?"#a9bddc":"#dbe7f6", whiteSpace:"pre-wrap", lineHeight:1.5 }}>
- {message.text || "Coach update ready."}
- </div>
- );
- };
-
- const streamCoachResponse = async ({ userMsg, history }) => {
- const deterministic = deterministicCoachPacket({ input: userMsg, todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual, nutritionComparison, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
- validateDeterministicCoachPacketInvariant(deterministic, "deterministicCoachPacket.chat");
- const coachPacketArgs = {
- dateKey: todayKey,
- currentWeek,
- canonicalGoalState: goalState,
- canonicalUserProfile: userProfile,
- goals,
- planDay,
- planWeek: planDayWeek?.planWeek || null,
- logs,
- dailyCheckins,
- nutritionActualLogs,
- bodyweights,
- momentum,
- expectations,
- strengthLayer,
- optimizationLayer,
- failureMode,
- readiness: canonicalCoachRecovery,
- nutritionComparison,
- arbitration,
- memoryInsights,
- coachMemoryContext: compoundingCoachMemory,
- weekNotes,
- planAlerts,
- };
- validateAiPacketInvariant(coachPacketArgs, "runCoachChatRuntime");
- return runCoachChatRuntime({
- apiKey,
- coachMode,
- userMsg,
- history,
- deterministicText: buildCompactCoachFallbackText(deterministic),
- packetArgs: coachPacketArgs,
- fetchImpl: fetch,
- onText: (text) => setStreamingText(text),
- }).then((result) => ({ ...result, deterministicPacket: deterministic }));
- };
-
- useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, pendingActions, loading]);
-
- const persistReadinessPromptSignal = async (label) => {
- const updatedAt = Date.now();
- const signalMap = {
- "I feel amazing this week": { state: "push", label, source: "coach_quick_prompt", updatedAt },
- "I want to push harder": { state: "push", label, source: "coach_quick_prompt", updatedAt },
- "I slept badly": { state: "recover", label, source: "coach_quick_prompt", updatedAt },
- };
- const nextSignal = signalMap[label];
- if (!nextSignal) return;
- const signalProvenance = buildAdjustmentProvenance({
- actor: PROVENANCE_ACTORS.user,
- trigger: "coach_quick_prompt",
- mutationType: "readiness_signal",
- revisionReason: label,
- sourceInputs: ["CoachTab", "quick_readiness_prompt"],
- timestamp: updatedAt,
- details: {
- dateKey: todayKey,
- state: nextSignal.state,
- },
- });
- const nextAdjustments = {
- ...coachPlanAdjustments,
- extra: {
- ...(coachPlanAdjustments?.extra || {}),
- readinessSignals: {
- ...(coachPlanAdjustments?.extra?.readinessSignals || {}),
- [todayKey]: {
- ...nextSignal,
- provenance: signalProvenance,
- },
- },
- },
- };
- setCoachPlanAdjustments(nextAdjustments);
- await onPersist(personalization, coachActions, nextAdjustments, weekNotes, planAlerts);
- };
-
- const send = async (preset) => {
- const prepared = preset ? buildQuickPromptMessage(preset) : input;
- const userMsg = (prepared || "").trim();
- if (!userMsg || loading) return;
- setInput("");
- setLoading(true);
- setStreamingText("");
- setStreamingCursor(true);
- if (preset) await persistReadinessPromptSignal(preset);
- const ts = Date.now();
- const nextHistory = [...messages, { role:"user", text:userMsg, ts }].slice(-12);
- setMessages(nextHistory);
- const historyForModel = nextHistory.filter(m => m.role === "user" || m.role === "assistant").slice(-12).map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.text || m.response || "" }));
- const streamed = await streamCoachResponse({ userMsg, history: historyForModel });
- const deterministicPacket = streamed.source === "deterministic" || streamed.source === "deterministic-fallback"
- ? (streamed.deterministicPacket || null)
- : null;
- setMessages(m => [...m, { role:"assistant", text: streamed.text, source: streamed.source, ts: Date.now(), helpful: null, packet: deterministicPacket }].slice(-12));
- setLoading(false);
- setStreamingCursor(false);
- setStreamingText("");
- };
-
- const quickPrompts = ["My Achilles feels tight", "I missed yesterday", "I'm traveling today", "I feel amazing this week", "I slept badly", "I want to push harder"];
-
- const sundayArchive = personalization?.coachMemory?.sundayReviews || [];
- const readinessPromptSignal = coachPlanAdjustments?.extra?.readinessSignals?.[todayKey] || null;
- const coachReadiness = canonicalCoachRecovery || deriveDeterministicReadinessState({
- todayKey,
- checkin: dailyCheckins?.[todayKey] || logs?.[todayKey]?.checkin || {},
- promptSignal: readinessPromptSignal,
- workout: todayWorkout,
- logs,
- dailyCheckins,
- personalization,
- momentum,
- userProfile: userProfile || {},
- });
- const readinessMetrics = coachReadiness?.metrics || {};
- const env = resolveEnvironmentSelection({ personalization, todayKey, currentWeek });
- const dayTypeMap = { "long-run":"long", long:"long", "hard-run":"tempo", hard:"tempo", "easy-run":"easy", easy:"easy", "strength+prehab":"strength", strength:"strength", "run+strength":"hybrid", conditioning:"hybrid", otf:"hybrid", recovery:"recovery", rest:"recovery" };
- const dayType = dayTypeMap[todayWorkout?.type] || "hybrid";
- const calibrationState = deriveCalibrationState({ logs, dailyCheckins });
- const isCalibration = Boolean(momentum?.isCalibration || calibrationState.isCalibration);
- const weekState = failureMode?.mode === "chaotic" ? "chaotic" : momentum?.fatigueNotes >= 2 ? "fatigued" : "normal";
- const adherenceTrend = isCalibration ? "calibrating" : momentum?.completionRate >= 0.72 ? "stable" : momentum?.completionRate >= 0.5 ? "mixed" : "slipping";
- const fatigueSignal = (personalization?.trainingState?.fatigueScore || 1) >= 4 || momentum?.fatigueNotes >= 2;
- const injuryFlag = personalization?.injuryPainState?.level || "none";
- const recoveryAdjustedToday = coachReadiness?.state === "recovery" || todayWorkout?.type === "rest" || todayWorkout?.type === "recovery" || /recovery/i.test(String(todayWorkout?.label || ""));
- const reducedLoadToday = coachReadiness?.state === "reduced_load" || Boolean(todayWorkout?.minDay);
- const progressionReadyToday = coachReadiness?.state === "progression" || /progression-ready/i.test(String(todayWorkout?.label || ""));
- const goalPriority = currentPrimaryGoal;
- const recentEntries = Array.from(new Set([...(Object.keys(logs || {})), ...(Object.keys(dailyCheckins || {}))]))
- .sort((a, b) => a.localeCompare(b))
- .slice(-7)
- .map((dateKey) => {
- const log = logs?.[dateKey] || {};
- return [dateKey, { ...log, checkin: { ...(log?.checkin || {}), ...(dailyCheckins?.[dateKey] || {}) } }];
- });
- const recentLogCount = recentEntries.length;
- const completedStatuses = new Set(["completed_as_planned", "completed_modified", "partial_completed"]);
- const recentSessionLabels = recentEntries
- .map(([, entry]) => entry?.type || entry?.label || "")
- .filter(Boolean)
- .slice(-3);
- const recentCountableStatuses = recentEntries
- .map(([dateKey, entry]) => resolveEffectiveStatus(entry?.checkin, dateKey))
- .filter((status) => status !== "not_logged" && status !== "not_logged_grace");
- const recentCompletedCount = recentCountableStatuses.filter((status) => completedStatuses.has(status)).length;
- const recentSkippedCount = recentCountableStatuses.filter((status) => status === "skipped").length;
- const recentModifiedCount = recentCountableStatuses.filter((status) => status === "completed_modified" || status === "partial_completed").length;
- const recentAdherence = readinessMetrics.countableCount
- ? (Number(readinessMetrics.completedCount || 0) / Math.max(1, Number(readinessMetrics.countableCount || 0)))
- : recentCountableStatuses.length
- ? (recentCompletedCount / recentCountableStatuses.length)
- : 0;
- const latestCompletedEntry = [...recentEntries].reverse().find(([dateKey, entry]) => completedStatuses.has(resolveEffectiveStatus(entry?.checkin, dateKey)));
- const latestCheckinEntry = [...recentEntries].reverse().find(([, entry]) => hasReadinessInputs(entry?.checkin) || entry?.checkin?.status && entry?.checkin?.status !== "not_logged");
- const latestCheckin = latestCheckinEntry?.[1]?.checkin || {};
- const latestFeel = String(latestCheckin?.sessionFeel || latestCheckinEntry?.[1]?.feel || "").toLowerCase();
- const latestSleep = Number(latestCheckin?.readiness?.sleep || 0);
- const latestStress = Number(latestCheckin?.readiness?.stress || 0);
- const latestSoreness = Number(latestCheckin?.readiness?.soreness || 0);
- const lowRecoverySignal = (latestSleep > 0 && latestSleep <= 2) || latestStress >= 4 || latestSoreness >= 4 || latestFeel === "harder_than_expected";
- const highRecoverySignal = latestSleep >= 4 && latestStress > 0 && latestStress <= 2 && latestSoreness > 0 && latestSoreness <= 2 && latestFeel !== "harder_than_expected";
- const latestCompletedLabel = latestCompletedEntry?.[1]?.type || latestCompletedEntry?.[1]?.label || "recent session";
- const todaySessionLabel = todayWorkout?.label || todayWorkout?.type || "today's session";
- const readinessEvidence = joinHumanList((coachReadiness?.factors || []).slice(0, 2));
- const veryLowConsistency = (Number(readinessMetrics.consistencyRatio || 0) > 0 && Number(readinessMetrics.consistencyRatio || 0) < 0.45) || recentSkippedCount >= 3;
- const feelDescriptor = latestFeel === "easier_than_expected"
- ? "easier than expected"
- : latestFeel === "harder_than_expected"
- ? "harder than expected"
- : latestFeel
- ? "steady"
- : "not recently logged";
-
- const coachDecisionMode = (() => {
- if (isCalibration) return "Hold";
- if (coachReadiness?.state === "recovery" || recoveryAdjustedToday) return "Protect";
- if (injuryFlag !== "none" || fatigueSignal) return "Protect";
- if (coachReadiness?.state === "reduced_load" || reducedLoadToday) return veryLowConsistency ? "Rebuild" : "Simplify";
- if (weekState === "chaotic" || env.time === "20" || adherenceTrend === "slipping") return "Simplify";
- if (momentum?.logGapDays >= 4 || recentLogCount <= 2 || recentAdherence < 0.55) return "Rebuild";
- if (coachReadiness?.state === "progression" || (progressionReadyToday && (momentum?.score || 0) >= 60 && weekState === "normal" && env.time !== "20")) return "Push";
- if ((momentum?.score || 0) >= 74 && weekState === "normal" && env.time !== "20") return "Push";
- return "Hold";
- })();
-
- const coachDecision = (() => {
- const dayLabel = dayType === "tempo" ? "quality run" : dayType === "long" ? "long-run" : dayType === "easy" ? "easy run" : dayType === "strength" ? "strength" : dayType === "recovery" ? "recovery" : "hybrid";
- if (coachDecisionMode === "Protect") return {
- stance: `Do the condensed ${dayLabel} version today and keep intensity controlled.`,
- why: `Recovery signals are elevated${readinessEvidence ? ` because ${readinessEvidence}` : ""}, so we protect consistency while keeping ${goalPriority} on track.`,
- watch: "I am watching pain and session feel after this workout.",
- options: [
- { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 10, reason: "protect_mode" } }, primary: true },
- { label: "Move to tomorrow", action: { type: COACH_TOOL_ACTIONS.MOVE_LONG_RUN, payload: { days: 1, reason: "protect_shift" } } }
- ]
- };
- if (coachDecisionMode === "Simplify") return {
- stance: `Keep this simple: complete the short ${dayLabel} version.`,
- why: coachReadiness?.state === "reduced_load"
- ? `Readiness says control the day${readinessEvidence ? ` because ${readinessEvidence}` : ""}.`
- : `Time and adherence say simplify now, then rebuild consistency.`,
- watch: "I am watching completion rate over the next 3 days.",
- options: [
- { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 12, reason: "simplify_mode" } }, primary: true },
- { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "simplify_week" } } }
- ]
- };
- if (coachDecisionMode === "Rebuild") return {
- stance: `Take the short version of the ${dayLabel} session and rebuild rhythm first.`,
- why: `Recent execution dipped, so we rebuild frequency before adding load${readinessEvidence ? ` while respecting ${readinessEvidence}` : ""}.`,
- watch: "I am watching whether you can stack 2-3 clean sessions.",
- options: [
- { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "rebuild_mode" } }, primary: true },
- { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 18, reason: "rebuild_week" } } }
- ]
- };
- if (coachDecisionMode === "Push") return {
- stance: `Keep the full ${dayLabel} session and add one small progression.`,
- why: `Stability is strong enough to push while still protecting recovery${readinessEvidence ? ` because ${readinessEvidence}` : ""}.`,
- watch: "I am watching session quality and next-day fatigue.",
- options: [
- { label: "Keep full session", action: null, primary: true },
- { label: "Push slightly", action: { type: COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS, payload: { weeks: 1, reason: "push_mode" } } }
- ]
- };
- return {
- stance: `Keep the full ${dayLabel} session as written.`,
- why: `Current signals support staying steady and executing cleanly${readinessEvidence ? ` because ${readinessEvidence}` : ""}.`,
- watch: "I am watching consistency and workout quality this week.",
- options: [
- { label: "Keep full session", action: null, primary: true },
- { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 8, reason: "hold_condense" } } }
- ]
- };
- })();
- const coachSnapshot = (() => {
- const recentNames = recentSessionLabels.length ? recentSessionLabels.join(", ") : "no recent workouts logged";
- const adherenceLine = recentCountableStatuses.length
- ? `${recentCompletedCount}/${recentCountableStatuses.length} recent logged sessions were completed`
- : "recent adherence data is limited";
- const recoveryLine = coachReadiness?.recoveryLine
- ? coachReadiness.recoveryLine.replace(/^Recovery recommendation:\s*/i, "").trim()
- : lowRecoverySignal
- ? `latest recovery check-in is strained (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
- : highRecoverySignal
- ? `latest recovery check-in looked supportive (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
- : `latest session felt ${feelDescriptor}`;
-
- let watching = "";
- let doToday = "";
- let noticed = "";
-
- if (coachDecisionMode === "Protect") {
- watching = `Watching recovery after ${latestCompletedLabel}: ${recoveryLine}.`;
- doToday = `Do the shortest controlled version of ${todaySessionLabel}; stop the moment pain or session feel worsens.`;
- noticed = coachReadiness?.userVisibleLine || (recentModifiedCount > 0
- ? `You kept training alive with ${recentModifiedCount} modified session${recentModifiedCount > 1 ? "s" : ""}, but recovery is the limiter right now.`
- : `Recent work (${recentNames}) stacked stress faster than recovery caught up.`);
- } else if (coachDecisionMode === "Simplify") {
- watching = `Watching whether the next 72 hours turn ${adherenceLine} into a cleaner rhythm.`;
- doToday = `Strip ${todaySessionLabel} down to the first meaningful block and log it immediately when finished.`;
- noticed = coachReadiness?.userVisibleLine || (recentSkippedCount > 0
- ? `You skipped ${recentSkippedCount} recent session${recentSkippedCount > 1 ? "s" : ""}; simplicity is more useful than adding load.`
- : `Execution has been mixed, so reducing friction matters more than perfect programming this week.`);
- } else if (coachDecisionMode === "Rebuild") {
- watching = `Watching whether you can stack the next 2 sessions after ${recentNames}.`;
- doToday = `Treat ${todaySessionLabel} as a rebuild rep: show up, finish the first block, and bank momentum.`;
- noticed = `Recent adherence is ${Math.round(recentAdherence * 100)}%, so the priority is rebuilding frequency before intensity.`;
- } else if (coachDecisionMode === "Push") {
- watching = `Watching whether today's quality stays smooth and tomorrow's recovery still looks normal after ${latestCompletedLabel}.`;
- doToday = `Keep the full ${todaySessionLabel} and add one small progression only if the first half feels controlled.`;
- noticed = coachReadiness?.userVisibleLine || `You are coming in off ${adherenceLine}, and the last session felt ${feelDescriptor}.`;
- } else {
- watching = `Watching for stable recovery and clean execution across ${recentNames}.`;
- doToday = `Run ${todaySessionLabel} as written and keep the effort boringly consistent.`;
- noticed = isCalibration
- ? `Calibration mode is active until you log ${calibrationState.minHistoryCount} meaningful sessions, so today's target is simply to complete the plan and establish baseline data.`
- : coachReadiness?.userVisibleLine || (lowRecoverySignal
- ? `You are still carrying some recovery drag, but not enough to force a full pullback.`
- : `This week looks steady: ${adherenceLine}, with no strong signal to either push or cut back.`);
- }
-
- return { watch: watching, doToday, noticed };
- })();
-
- useEffect(() => {
- const packet = deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual, nutritionComparison, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
- validateDeterministicCoachPacketInvariant(packet, "deterministicCoachPacket.status");
- const seededMessage = {
- role:"assistant",
- text: buildCompactCoachFallbackText(packet),
- source: "deterministic",
- ts: Date.now(),
- helpful: null,
- packet,
- seedKey: `${todayKey}_${currentWeek}_${todayWorkout?.label || todayWorkout?.type || "session"}_${coachDecisionMode}_${goalPriority}`,
- };
- setMessages((prev) => {
- const hasUserConversation = prev.some((message) => message.role === "user");
- if (hasUserConversation) return prev;
- if (!prev.length) return [seededMessage];
- if (prev.length === 1 && prev[0]?.role === "assistant") {
- const previousSeedKey = String(prev[0]?.seedKey || "");
- if (previousSeedKey !== seededMessage.seedKey || String(prev[0]?.text || "") !== seededMessage.text) {
- return [seededMessage];
- }
- }
- return prev;
- });
- }, [
- todayKey,
- currentWeek,
- todayWorkout?.label,
- todayWorkout?.type,
- coachDecisionMode,
- goalPriority,
- coachPhase,
- currentBlockLabel,
- currentPlanFocus,
- coachWeekSummary,
- nutritionLayer?.dayType,
- recentCompletedCount,
- recentSkippedCount,
- recentModifiedCount,
- ]);
-
- useEffect(() => {
- const isSunday = new Date().getDay() === 0;
- if (!isSunday) return;
- if (sundayArchive.some(r => r?.date === todayKey)) return;
- const review = buildSundayWeekInReview({ logs, momentum, patterns, recalibration, currentWeek });
- const nextReviews = [review, ...sundayArchive].slice(0, 26);
- const updated = mergePersonalization(personalization, { coachMemory: { ...personalization.coachMemory, sundayReviews: nextReviews } });
- setPersonalization(updated);
- onPersist(updated, coachActions, coachPlanAdjustments, weekNotes, planAlerts);
- }, [todayKey, currentWeek]);
-
- const applyDecisionOption = async (opt) => {
- if (!opt?.action) {
- setMessages(m => [...m, { role:"assistant", text:"Staying with the full plan. Execute cleanly and log it.", source:"deterministic", ts: Date.now(), helpful: null }].slice(-20));
- setPendingActions([]);
- return;
- }
- await commitAction({ ...opt.action, reason: opt.action.payload?.reason || "coach_decision" });
- setPendingActions([]);
- setMessages(m => [...m, { role:"assistant", text:"Decision applied. Execute this version today.", source:"deterministic", ts: Date.now(), helpful: null }].slice(-20));
- };
- const weeklyNotice = sundayArchive[0]?.paragraph
- || patterns?.observations?.[0]?.msg
- || (isCalibration ? `Calibration is in progress. Log ${calibrationState.minHistoryCount} sessions to unlock a real weekly assessment.` : momentum?.completionRate >= 0.72 ? "Consistency is trending up this week." : "Execution has been mixed this week.");
- const coachProvenance = buildProvenanceText({
- inputs: [
- goalPriority ? "your current goal priority" : null,
- recentEntries.length ? "recent workout logs" : null,
- recentCountableStatuses.length ? "adherence trend" : null,
- readinessMetrics?.hardSessions7d ? "recent intensity load" : null,
- latestCheckinEntry ? "latest recovery check-in" : null,
- ],
- limitation: latestCheckinEntry ? "" : "Recovery input is limited right now.",
- });
- const formatCoachResponseSource = (source = "") => {
- const normalized = String(source || "").toLowerCase();
-if (normalized === "deterministic") return "Coach";
-if (normalized === "deterministic-fallback") return "Coach backup";
- if (normalized === "llm-stream") return "AI draft from app context";
- return normalized ? normalized.replace(/_/g, " ") : "";
- };
- const latestAssistantMessage = [...messages].reverse().find((message) => message.role === "assistant") || null;
- const coachTrust = buildTrustSummary({
- explicitUserInput: Boolean(latestCheckinEntry || readinessPromptSignal),
- loggedActuals: Boolean(recentCountableStatuses.length || Object.keys(nutritionActualLogs || {}).length),
- deviceData: Boolean((Number(latestSleep) > 0) || (Number(personalization?.connectedDevices?.garmin?.trainingReadinessScore || 0) > 0)),
- inferredHeuristics: true,
- limitation: latestCheckinEntry ? "" : "Recovery input is limited right now.",
- stale: Boolean(!latestCheckinEntry && recentCountableStatuses.length === 0),
- });
- const decisionTone = buildReviewBadgeTone(
- coachDecisionMode === "Protect"
- ? "recovery"
- : coachDecisionMode === "Simplify" || coachDecisionMode === "Rebuild"
- ? "changed"
- : coachDecisionMode === "Push"
- ? "progression"
- : "match"
- , C);
- const coachTrustTone = buildReviewBadgeTone(
- coachTrust.level === "grounded" ? "match" : coachTrust.level === "partial" ? "changed" : "recovery"
- , C);
-const boundaryLine = "Coach can suggest changes, but your plan stays put until you choose one.";
- const recentAcceptedAction = (coachActions || []).find((action) => action?.acceptedBy) || null;
- const weeklyNutritionCoachLine = weeklyNutritionReview?.coaching?.coachLine || "Weekly nutrition signal is still forming.";
- const weeklyNutritionPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned nutrition guidance and logged actual intake stay separate.";
- const weeklyNutritionActionLine = weeklyNutritionReview?.adaptation?.actions?.[0] || "Keep logging meals and hydration so next week's guidance can get more specific.";
-const recoveryPrescriptionLine = canonicalCoachRecovery?.prescription?.summary || canonicalCoachRecovery?.recoveryLine || "Recovery guidance is connected to today's plan.";
- const supplementCoachLine = Array.isArray(canonicalCoachSupplements?.plan?.items) && canonicalCoachSupplements.plan.items.length
- ? canonicalCoachSupplements.plan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" - ")
- : "No explicit supplement plan stored for today.";
- const compressCoachCopy = (text = "", maxLen = 180) => {
- const normalized = String(text || "").replace(/\s+/g, " ").trim();
- if (!normalized) return "";
- if (normalized.length <= maxLen) return normalized;
- return `${normalized.slice(0, Math.max(0, maxLen - 1)).trim()}...`;
- };
-
- const buildCoachDiffLines = (previewModel = null, maxItems = 3) => (
- (previewModel?.diffLines || previewModel?.effectLines || [])
- .filter(Boolean)
- .map((line) => compressCoachCopy(line, 140))
- .slice(0, maxItems)
- );
-
- const renderCoachRecommendationCard = ({
- testId,
- headlineTestId,
- recommendation = "",
- why = "",
- likelyEffect = "",
- diffLines = [],
- actionSectionLabel = "Accept",
- actionLabel = "Accept change",
- actionTestId,
- onAction = null,
- actionDisabled = false,
- actionLoadingState = false,
- actionLoadingLabel = "Working...",
- emptyRecommendation = "No recommendation is ready yet.",
- emptyWhy = "Coach is waiting on a cleaner signal.",
- emptyLikelyEffect = "Nothing changes yet.",
- accentColor = C.blue,
- }) => {
- const normalizedDiffs = Array.isArray(diffLines) ? diffLines.filter(Boolean) : [];
- const visibleDiffs = normalizedDiffs.filter((line) => line !== likelyEffect).slice(0, 1);
- return (
- <div
- data-testid={testId}
- style={{
- ...coachRecommendationCardShellStyle,
- borderColor: `${accentColor}2b`,
- boxShadow: `inset 0 1px 0 ${accentColor}14`,
- }}
- >
- <div style={coachRecommendationPartStyle}>
- <div style={coachRecommendationLabelStyle}>Recommendation</div>
- <div data-testid={headlineTestId} style={coachRecommendationHeadlineStyle}>{recommendation || emptyRecommendation}</div>
- </div>
- <div style={coachRecommendationPartStyle}>
- <div style={coachRecommendationLabelStyle}>Why</div>
- <div style={coachRecommendationCopyStyle}>{why || emptyWhy}</div>
- </div>
- <div style={coachRecommendationPartStyle}>
- <div style={coachRecommendationLabelStyle}>Likely effect</div>
- <div style={coachRecommendationCopyStyle}>{likelyEffect || emptyLikelyEffect}</div>
- {!!visibleDiffs.length && (
- <div style={{ display: "grid", gap: "0.18rem", marginTop: "0.08rem" }}>
- {visibleDiffs.map((line, index) => (
- <div key={`${index}_${line}`} style={coachRecommendationDiffStyle}>+ {line}</div>
- ))}
- </div>
- )}
- </div>
- <div style={coachRecommendationPartStyle}>
- <div style={coachRecommendationLabelStyle}>Action</div>
- {!!onAction ? (
- <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
- <button
- type="button"
- className="btn btn-primary"
- data-testid={actionTestId}
- onClick={onAction}
- disabled={actionDisabled}
- style={{ fontSize: "0.53rem", opacity: actionDisabled ? 0.55 : 1 }}
- >
- {actionLoadingState ? actionLoadingLabel : actionLabel}
- </button>
- </div>
- ) : (
- <div style={coachRecommendationCopyStyle}>No change to apply right now.</div>
- )}
- </div>
- </div>
- );
- };
- const coachRecommendationLine = compressCoachCopy(coachDecision.stance, 140);
- const coachWhyLine = compressCoachCopy(coachDecision.why, 170);
- const coachNextLine = compressCoachCopy(coachSnapshot.doToday, 150);
- const coachWatchLine = compressCoachCopy(coachSnapshot.watch, 120);
- const coachNoticedLine = compressCoachCopy(coachSnapshot.noticed, 145);
- const latestAssistantSummary = compressCoachCopy(latestAssistantMessage?.text || "Coach update ready.", 180);
- const acceptedActionHeadline = recentAcceptedAction
- ? `${sanitizeStatusLabel(recentAcceptedAction.type, "accepted")} by ${sanitizeDisplayText(recentAcceptedAction.acceptedBy || "gate")}`
- : "No accepted coach action yet.";
- const acceptedActionSummary = compressCoachCopy(
- recentAcceptedAction
- ? sanitizeDisplayText(recentAcceptedAction.reason || recentAcceptedAction.rationale || "Accepted action saved.")
- : boundaryLine,
- 170
- );
- const supportNutritionLine = compressCoachCopy(weeklyNutritionActionLine, 140);
- const supportRecoveryLine = compressCoachCopy(recoveryPrescriptionLine, 140);
- const supportSupplementLine = compressCoachCopy(supplementCoachLine, 120);
- const latestWeeklyReviewLine = compressCoachCopy(sundayArchive[0]?.paragraph || weeklyNotice, 180);
- const latestNoteMatchesSummary = latestAssistantSummary === coachRecommendationLine || latestAssistantSummary === coachNextLine;
- const coachPrimaryPrompts = quickPrompts.filter((prompt) => [
- "I missed yesterday",
- "I'm traveling today",
- "I slept badly",
- "I want to push harder",
- ].includes(prompt));
-
- return (
- <div className="fi" data-testid="coach-tab" style={{ display:"grid", gap:"0.75rem" }}>
- <div className="card card-strong card-hero" style={{ borderColor:C.blue+"38" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.35rem" }}>
- <div>
- <div className="sect-title" style={{ color:C.blue, marginBottom:"0.16rem" }}>TODAY'S CALL</div>
- <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.45 }}>{coachRecommendationLine}</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{coachPlanLine || coachProvenance}</div>
- </div>
- <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
- <span style={{ fontSize:"0.48rem", color:decisionTone.color, background:decisionTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachDecisionMode}</span>
- <span style={{ fontSize:"0.48rem", color:coachTrustTone.color, background:coachTrustTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachTrust.label}</span>
- </div>
- </div>
- <div className="coach-copy" style={{ display:"grid", gap:"0.18rem", fontSize:"0.54rem", lineHeight:1.55 }}>
- <div><span style={{ color:"#94a3b8" }}>Why:</span> {coachWhyLine}</div>
- <div><span style={{ color:"#94a3b8" }}>Next:</span> {coachNextLine}</div>
- <div><span style={{ color:"#94a3b8" }}>Watching:</span> {coachWatchLine}</div>
- </div>
- <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.5rem" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>SUGGESTED ACTIONS</div>
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- <button className={`btn ${coachDecision.options?.[0]?.primary ? "btn-primary" : ""}`} onClick={()=>applyDecisionOption(coachDecision.options?.[0])} style={{ fontSize:"0.54rem" }}>
- {coachDecision.options?.[0]?.label || "Keep full session"}
- </button>
- {coachDecision.options?.[1] && (
- <button className="btn" onClick={()=>applyDecisionOption(coachDecision.options?.[1])} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
- {coachDecision.options[1].label}
- </button>
- )}
- </div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{boundaryLine}</div>
- </div>
- </div>
-
- <div className="card card-action" data-testid="coach-primary-entry" style={{ borderColor:C.green+"30" }}>
- <div style={{ display:"grid", gap:"0.2rem", marginBottom:"0.35rem" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>ASK COACH</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
- Ask for a decision, a plan explanation, or a safe next move. Quick prompts should lead to meaningfully different guidance, not the same speech with swapped wording.
- </div>
- </div>
- <div style={{ display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem", marginBottom:"0.35rem" }}>
- {coachPrimaryPrompts.map((prompt) => (
- <button key={prompt} className="btn" onClick={()=>send(prompt)} style={{ whiteSpace:"nowrap", fontSize:"0.52rem" }}>{prompt}</button>
- ))}
- </div>
- <div style={{ display:"flex", gap:"0.45rem" }}>
- <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()} placeholder="Ask coach what to do next" style={{ flex:1 }} disabled={loading} />
- <button className="btn btn-primary" onClick={()=>send()} disabled={loading} style={{ opacity:loading?0.5:1 }}>Send</button>
- </div>
- <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
- {messages.slice(-4).map((message, index) => (
- <div
- key={`${index}_${message.role}`}
- data-testid="coach-message"
- data-message-role={message.role}
- style={{ justifySelf:message.role==="user"?"end":"start", maxWidth:"92%", background:message.role==="user"?"#15263f":"#101b2d", border:message.role==="user"?"1px solid #325178":"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}
- >
- {renderCoachMessageContent(message)}
- </div>
- ))}
- {loading && <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Coach is drafting a response...</div>}
- </div>
- </div>
-
- <details className="card">
- <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Accepted action and support details</summary>
- <div style={{ display:"grid", gap:"0.28rem", marginTop:"0.45rem" }}>
- <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.45 }}>{acceptedActionHeadline}</div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{acceptedActionSummary}</div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Nutrition: {supportNutritionLine}</div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Recovery: {supportRecoveryLine}</div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Supplements: {supportSupplementLine}</div>
- <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>{boundaryLine}</div>
- </div>
- </details>
-
- <details className="card">
- <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Recent conversation</summary>
- <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
- {messages.slice(-12).map((message, index) => (
- <div
- key={`${index}_${message.role}`}
- data-testid="coach-message"
- data-message-role={message.role}
- style={{ justifySelf:message.role==="user"?"end":"start", maxWidth:"92%", background:message.role==="user"?"#15263f":"#101b2d", border:message.role==="user"?"1px solid #325178":"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}
- >
- {renderCoachMessageContent(message)}
- {message.source && <div style={{ fontSize:"0.44rem", color:"#8fa5c8", marginTop:"0.16rem" }}>Source: {formatCoachResponseSource(message.source)}</div>}
- </div>
- ))}
- {latestWeeklyReviewLine && <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{latestWeeklyReviewLine}</div>}
- </div>
- </details>
- </div>
- );
- if (false) return (
- <div className="fi" style={{ display:"grid", gap:"0.75rem" }}>
- <div className="card card-strong card-hero" style={{ borderColor:C.blue+"38" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.35rem" }}>
- <div>
- <div className="sect-title" style={{ color:C.blue, marginBottom:"0.16rem" }}>COACH SUMMARY</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>{coachPlanLine || coachProvenance}</div>
- </div>
- <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
- <span style={{ fontSize:"0.48rem", color:decisionTone.color, background:decisionTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachDecisionMode}</span>
- <span style={{ fontSize:"0.48rem", color:"#8fa5c8", background:"#0f172a", padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachReadiness?.state ? sanitizeStatusLabel(coachReadiness.state, "steady") : "steady"}</span>
- {liveFidelityLabel && <span style={{ fontSize:"0.48rem", color:"#dbe7f6", background:"#15263f", padding:"0.16rem 0.42rem", borderRadius:999 }}>{liveFidelityLabel}</span>}
- <span style={{ fontSize:"0.48rem", color:coachTrustTone.color, background:coachTrustTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachTrust.label}</span>
- </div>
- </div>
- <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.45, marginBottom:"0.18rem" }}>{coachRecommendationLine}</div>
- <div className="coach-copy" style={{ display:"grid", gap:"0.18rem", fontSize:"0.56rem", lineHeight:1.6 }}>
- <div><span style={{ color:"#94a3b8" }}>Why:</span> {coachWhyLine}</div>
- <div><span style={{ color:"#94a3b8" }}>Take:</span> {coachNextLine}</div>
- <div><span style={{ color:"#94a3b8" }}>Plan:</span> {compressCoachCopy(currentPlanFocus, 150)}</div>
- {!!livePlanBasisExplanation?.basisSummary && <div><span style={{ color:"#94a3b8" }}>Built from:</span> {compressCoachCopy(livePlanBasisExplanation.basisSummary, 150)}</div>}
- </div>
- <div style={{ marginTop:"0.22rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
- {coachNoticedLine ? `${coachNoticedLine} ` : ""}Watch: {coachWatchLine}
- </div>
- <div style={{ marginTop:"0.22rem", display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
- <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>CURRENT PLAN</div>
- <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{currentBlockLabel}</div>
- <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{compressCoachCopy(currentPlanFocus, 130)}</div>
- {!!livePlanBasisExplanation?.personalizationSummary && (
- <div style={{ fontSize:"0.46rem", color:"#94a3b8", marginTop:"0.12rem", lineHeight:1.5 }}>
- {compressCoachCopy(livePlanBasisExplanation.personalizationSummary, 140)}
- </div>
- )}
- {!!livePlanningBasis?.adherence?.summary && (
- <div style={{ fontSize:"0.46rem", color:livePlanningBasis?.adherence?.state === "off_program" ? C.amber : "#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>
- {compressCoachCopy(livePlanningBasis.adherence.summary, 140)}
- </div>
- )}
- </div>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
- <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>LAST ACCEPTED</div>
- <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{acceptedActionHeadline}</div>
- <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{acceptedActionSummary}</div>
- </div>
- </div>
- </div>
-
- <div className="card card-action" style={{ borderColor:C.green+"30" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:"0.32rem" }}>TAKE ACTION</div>
- <div style={{ display:"grid", gap:"0.38rem" }}>
- <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
- {coachDecision.options.slice(0, 2).map((opt, i) => (
- <button key={`${opt.label}_${i}`} className={`btn ${opt.primary ? "btn-primary" : ""}`} onClick={()=>applyDecisionOption(opt)} style={{ fontSize:"0.56rem" }}>
- {opt.label}
- </button>
- ))}
- </div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{boundaryLine}</div>
- <details>
- <summary style={{ cursor:"pointer", fontSize:"0.53rem", color:"#8fa5c8" }}>Latest output</summary>
- <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.44rem 0.48rem", marginTop:"0.32rem" }}>
- <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>
- {latestNoteMatchesSummary ? "Latest output already matches the current coach summary." : latestAssistantSummary}
- </div>
- {latestAssistantMessage?.source && <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.14rem" }}>Source: {formatCoachResponseSource(latestAssistantMessage.source)}</div>}
- </div>
- </details>
- </div>
- </div>
-
- <details className="card" style={{ borderColor:C.amber+"26" }}>
- <summary style={{ cursor:"pointer", display:"flex", justifyContent:"space-between", gap:"0.35rem", flexWrap:"wrap", alignItems:"center", listStyle:"none" }}>
- <div>
- <div className="sect-title" style={{ color:C.amber, marginBottom:"0.14rem" }}>SUPPORT SIGNALS</div>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
- Nutrition: {supportNutritionLine} - Recovery: {supportRecoveryLine}
- </div>
- </div>
- <span style={{ fontSize:"0.48rem", color:"#fbbf24", background:"#2b2007", padding:"0.16rem 0.42rem", borderRadius:999 }}>
- {sanitizeStatusLabel(weeklyNutritionReview?.adaptation?.mode, "hold")}
- </span>
- </summary>
- <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.42rem" }}>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{compressCoachCopy(weeklyNutritionCoachLine, 160)}</div>
- <div style={{ fontSize:"0.51rem", color:"#c7d5ea", lineHeight:1.5 }}>Nutrition move: {supportNutritionLine}</div>
- <div style={{ fontSize:"0.51rem", color:"#dbe7f6", lineHeight:1.5 }}>Recovery move: {supportRecoveryLine}</div>
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>Supplements: {supportSupplementLine}</div>
- </div>
- </details>
-
- <div className="card" style={{ marginBottom:"0.05rem" }}>
- <div className="sect-title" style={{ color:C.amber, marginBottom:"0.32rem" }}>COACH INPUT</div>
- <div style={{ display:"grid", gap:"0.38rem" }}>
- <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Ask for a decision, or use a quick prompt.</div>
- <div style={{ display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem" }}>
- {quickPrompts.slice(0, 6).map(q => (
- <button key={q} className="btn" onClick={()=>send(q)} style={{ whiteSpace:"nowrap", fontSize:"0.55rem" }}>{q}</button>
- ))}
- </div>
- <div style={{ display:"flex", gap:"0.5rem" }}>
- <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()} placeholder="Ask coach for a decision" style={{ flex:1 }} disabled={loading} />
- <button className="btn btn-primary" onClick={()=>send()} disabled={loading} style={{ opacity:loading?0.5:1 }}>Send</button>
- </div>
- <details>
- <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#8fa5c8" }}>Conversation history</summary>
- <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.38rem" }}>
- {messages.slice(-20).map((m, idx) => (
- <div key={`${idx}_${m.role}`} className={m.role === "assistant" ? "coach-fade" : ""} style={{ justifySelf:m.role==="user"?"end":"start", maxWidth:"92%", background:m.role==="user"?"#15263f":"#101b2d", border:m.role==="user"?"1px solid #325178":"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}>
- {m.role === "assistant" ? (
- <div>
- <div className="coach-copy" style={{ fontSize:"0.56rem", whiteSpace:"pre-wrap" }}>
- {m.text || "Coach update ready."}
- </div>
- <div style={{ marginTop:"0.25rem", display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.4rem" }}>
- <div style={{ display:"grid", gap:"0.08rem" }}>
- <div style={{ fontSize:"0.48rem", color:"#64748b" }}>{m.ts ? new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</div>
- {m.source && <div style={{ fontSize:"0.44rem", color:"#8fa5c8" }}>Source: {formatCoachResponseSource(m.source)}</div>}
- </div>
- <div style={{ display:"flex", alignItems:"center", gap:"0.25rem" }}>
- <span style={{ fontSize:"0.46rem", color:"#8fa5c8" }}>Helpful?</span>
- <button className="btn" onClick={()=>setMessages(prev => prev.map((x, i) => i === idx ? { ...x, helpful: true } : x))} style={{ fontSize:"0.46rem", padding:"0.12rem 0.3rem", borderColor:m.helpful===true?C.green+"35":"#2a3f5f", color:m.helpful===true?C.green:"#8fa5c8" }}>Yes</button>
- <button className="btn" onClick={()=>{
- setMessages(prev => prev.map((x, i) => i === idx ? { ...x, helpful: false } : x));
- setFeedbackLog(prev => [{ ts: Date.now(), response: m.text || "" }, ...prev].slice(0, 100));
- }} style={{ fontSize:"0.46rem", padding:"0.12rem 0.3rem", borderColor:m.helpful===false?C.red+"35":"#2a3f5f", color:m.helpful===false?C.red:"#8fa5c8" }}>No</button>
- </div>
- </div>
- </div>
- ) : (
- <div>
- <div style={{ fontSize:"0.56rem", color:"#a9bddc" }}>{m.text}</div>
- <div style={{ marginTop:"0.2rem", fontSize:"0.48rem", color:"#64748b" }}>{m.ts ? new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</div>
- </div>
- )}
- </div>
- ))}
- {loading && (
- <div className="coach-fade" style={{ justifySelf:"start", maxWidth:"92%", background:"#101b2d", border:"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}>
- <div className="coach-copy" style={{ fontSize:"0.56rem", whiteSpace:"pre-wrap" }}>
- Coach is drafting a response...
- </div>
- </div>
- )}
- </div>
- </details>
- </div>
- </div>
-
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))", gap:"0.75rem" }}>
- <details className="card card-subtle">
- <summary style={{ cursor:"pointer", fontSize:"0.62rem", color:C.blue }}>MEMORY / SETTINGS</summary>
- <div style={{ paddingTop:"0.55rem", display:"grid", gap:"0.45rem" }}>
- <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.55 }}>Coach memory and environment presets shape recommendations, but they do not mutate plan state until you accept an action.</div>
- <div style={{ background:"#0f172a", border:"1px solid #20314a", borderRadius:9, padding:"0.45rem 0.5rem" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:"0.24rem" }}>ENVIRONMENT PRESETS</div>
- {["Home","Gym","Travel"].map((mode) => (
- <div key={mode} style={{ display:"grid", gridTemplateColumns:"58px 1fr 74px", gap:"0.3rem", alignItems:"center", marginBottom:"0.25rem" }}>
- <div className="mono" style={{ fontSize:"0.52rem", color:"#9fb2d2" }}>{mode}</div>
- <input value={presetDraft[mode].equipment} onChange={e=>setPresetDraft(prev=>({ ...prev, [mode]: { ...prev[mode], equipment:e.target.value } }))} placeholder="equipment list" />
- <select value={presetDraft[mode].time} onChange={e=>setPresetDraft(prev=>({ ...prev, [mode]: { ...prev[mode], time:e.target.value } }))} style={{ fontSize:"0.55rem" }}>
- {["20","30","45+"].map(t => <option key={t} value={t}>{t}</option>)}
- </select>
- </div>
- ))}
- <button className="btn" onClick={async ()=>{
- const nextPresets = Object.fromEntries(["Home","Gym","Travel"].map((mode) => [mode, {
- equipment: presetDraft[mode].equipment.split(",").map(x => x.trim()).filter(Boolean),
- time: presetDraft[mode].time || "30",
- }]));
- const updated = mergePersonalization(personalization, { environmentConfig: { ...personalization.environmentConfig, presets: nextPresets } });
- setPersonalization(updated);
- await onPersist(updated, coachActions, coachPlanAdjustments, weekNotes, planAlerts);
- }} style={{ fontSize:"0.53rem", color:C.green, borderColor:C.green+"35" }}>Save presets</button>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
- <select value={coachMode} onChange={e=>setCoachMode(e.target.value)} style={{ fontSize:"0.7rem" }}>
-<option value="auto">Let Coach decide</option><option value="deterministic">Built-in coach</option>
- </select>
- {allowClientSuppliedAiKey && <input value={apiKey} onChange={e=>{ setApiKey(e.target.value); if (typeof window !== "undefined") safeStorageSet(localStorage, "coach_api_key", e.target.value); }} placeholder="Anthropic key (optional)" style={{ fontSize:"0.68rem" }} />}
- </div>
- <input value={memoryDraft.failurePatterns} onChange={e=>setMemoryDraft({ ...memoryDraft, failurePatterns:e.target.value })} placeholder="Failure patterns" style={{ fontSize:"0.68rem" }} />
- <input value={memoryDraft.commonBarriers} onChange={e=>setMemoryDraft({ ...memoryDraft, commonBarriers:e.target.value })} placeholder="Common barriers" style={{ fontSize:"0.68rem" }} />
- <input value={memoryDraft.preferredFoodPatterns} onChange={e=>setMemoryDraft({ ...memoryDraft, preferredFoodPatterns:e.target.value })} placeholder="Food patterns" style={{ fontSize:"0.68rem" }} />
- <button className="btn" onClick={async ()=>{
- const updated = mergePersonalization(personalization, { coachMemory: { ...personalization.coachMemory, failurePatterns: memoryDraft.failurePatterns.split(",").map(x=>x.trim()).filter(Boolean), commonBarriers: memoryDraft.commonBarriers.split(",").map(x=>x.trim()).filter(Boolean), preferredFoodPatterns: memoryDraft.preferredFoodPatterns.split(",").map(x=>x.trim()).filter(Boolean), simplicityVsVariety: memoryDraft.simplicityVsVariety } });
- setPersonalization(updated);
- await onPersist(updated, coachActions, coachPlanAdjustments, weekNotes, planAlerts);
- }} style={{ color:C.green, borderColor:C.green+"35" }}>Save memory</button>
- </div>
- </details>
-
- <details className="card card-subtle">
- <summary style={{ cursor:"pointer", fontSize:"0.62rem", color:C.purple }}>WEEKLY CONTEXT</summary>
- <div style={{ paddingTop:"0.55rem", display:"grid", gap:"0.38rem" }}>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.6 }}>
- {latestWeeklyReviewLine || "This section auto-generates on Sundays and archives each weekly review."}
- </div>
- {sundayArchive.length > 0 && (
- <div style={{ maxHeight:170, overflowY:"auto", border:"1px solid #23344e", borderRadius:9, padding:"0.35rem 0.45rem", display:"grid", gap:"0.28rem", background:"#0f172a" }}>
- {sundayArchive.map((r, idx) => (
- <div key={`${r.date}_${idx}`} style={{ fontSize:"0.54rem", color:"#9fb2d2", lineHeight:1.55 }}>
- <span className="mono" style={{ color:"#64748b" }}>{r.date}</span> - {compressCoachCopy(r.paragraph, 180)}
- </div>
- ))}
- </div>
- )}
- </div>
- </details>
- </div>
-
- <style>{`@keyframes pulse{0%,100%{opacity:0.3}50%{opacity:1}}`}</style>
- </div>
- );
-}
-
-function CoachTab({
- planDay = null,
- surfaceModel = null,
- logs,
- dailyCheckins,
- currentWeek,
- todayWorkout: legacyTodayWorkout,
- bodyweights,
- personalization,
- athleteProfile = null,
- goals: explicitGoals = [],
- momentum,
- arbitration,
- expectations,
- memoryInsights,
- compoundingCoachMemory,
- recalibration,
- strengthLayer,
- patterns,
- proactiveTriggers,
- onApplyTrigger,
- learningLayer,
- salvageLayer,
- validationLayer,
- optimizationLayer,
- failureMode,
- planComposer,
- nutritionLayer: legacyNutritionLayer,
- realWorldNutrition: legacyRealWorldNutrition,
- nutritionActualLogs = {},
- weeklyNutritionReview = null,
- setPersonalization,
- coachActions,
- setCoachActions,
- coachPlanAdjustments,
- setCoachPlanAdjustments,
- weekNotes,
- setWeekNotes,
- planAlerts,
- setPlanAlerts,
- onOpenSettings = () => {},
- onTrackFrictionEvent = () => {},
- onRecordAdaptiveLearningEvent = () => {},
- syncStateModel = null,
- syncSurfaceModel = null,
- onPersist,
-}) {
- const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
- const goals = explicitGoals?.length ? explicitGoals : (athleteProfile?.goals || []);
- const goalState = athleteProfile?.goalState || {};
- const userProfile = athleteProfile?.userProfile || {};
- const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
- const realWorldNutrition = planDay?.resolved?.nutrition?.reality || legacyRealWorldNutrition;
- const planDayWeek = planDay?.week || null;
- const livePlanningBasis = planDayWeek?.planningBasis || planComposer?.planningBasis || null;
- const livePlanBasisExplanation = livePlanningBasis?.planBasisExplanation || null;
- const canonicalCoachRecovery = planDay?.resolved?.recovery || null;
- const canonicalCoachSupplements = planDay?.resolved?.supplements || null;
- const todayKey = new Date().toISOString().split("T")[0];
- const nutritionActual = planDay?.resolved?.nutrition?.actual || nutritionActualLogs?.[todayKey] || normalizeActualNutritionLog({ dateKey: todayKey, feedback: {} });
- const nutritionComparison = planDay?.resolved?.nutrition?.comparison || compareNutritionPrescriptionToActual({
- nutritionPrescription: nutritionLayer,
- actualNutritionLog: nutritionActual,
- });
- const coachPhase = planDayWeek?.phase || todayWorkout?.week?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
- const coachWeekFocus = planDayWeek?.weeklyIntent?.focus || planDayWeek?.planWeek?.weeklyIntent?.focus || "";
- const coachWeekSummary = planDayWeek?.summary || planDayWeek?.planWeek?.summary || "";
- const activeGoalsOrdered = [...(goals || [])]
- .filter((goal) => goal?.active)
- .sort((a, b) => (a?.priority || 99) - (b?.priority || 99));
- const currentPrimaryGoal = activeGoalsOrdered[0]?.name || arbitration?.priorityStack?.primary || "Consistency";
- const coachPrioritySummary = buildGoalPrioritySummaryLine(activeGoalsOrdered, { maxVisible: 3 });
- const currentBlockLabel = sanitizeDisplayText(
- planDayWeek?.programBlock?.label
- || planDayWeek?.label
- || `${coachPhase} block`
- );
- const currentPlanFocus = sanitizeDisplayText(
- livePlanBasisExplanation?.coachLine
- || planDayWeek?.weeklyIntent?.focus
- || planDayWeek?.successDefinition
- || coachWeekFocus
- || coachWeekSummary
- || planDayWeek?.programBlock?.summary
- || "Current week plan"
- );
- const coachPlanLine = joinDisplayParts([
- coachPrioritySummary ? `Goals: ${coachPrioritySummary}` : (currentPrimaryGoal ? `Goal: ${currentPrimaryGoal}` : ""),
- livePlanningBasis?.activeProgramName ? `Plan: ${livePlanningBasis.activeProgramName}` : "",
- livePlanningBasis?.activeStyleName ? `Bias: ${livePlanningBasis.activeStyleName}` : "",
- currentBlockLabel ? `This block: ${currentBlockLabel}` : "",
- ]);
-const liveFidelityLabel = livePlanBasisExplanation?.effectiveFidelityMode === "strict"
-? "Structured plan"
-: livePlanBasisExplanation?.effectiveFidelityMode === "style_only"
-? "Use for feel"
-: livePlanBasisExplanation?.effectiveFidelityMode === "adapted"
-? "Fit to you"
-: "";
- const coachDebugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
- const coachOperatorHostname = typeof window !== "undefined" ? window.location.hostname : "";
-
- const [coachSurfaceMode, setCoachSurfaceMode] = useState(COACH_SURFACE_MODES.todayWeek);
- const [selectedTodayPrompt, setSelectedTodayPrompt] = useState("status");
- const [messages, setMessages] = useState([]);
- const [askInput, setAskInput] = useState("");
- const [askLoading, setAskLoading] = useState(false);
- const [actionLoading, setActionLoading] = useState(false);
- const [coachPreviewState, setCoachPreviewState] = useState(null);
- const acceptCoachActionInFlightRef = useRef(false);
- const [apiKey] = useState(() => (typeof window !== "undefined"
- ? resolveStoredAiApiKey({ safeStorageGet, storageLike: localStorage, debugMode: coachDebugMode, hostname: coachOperatorHostname })
- : ""));
- useEffect(() => {
- onTrackFrictionEvent({
- flow: "coach",
- action: "surface_view",
- outcome: "viewed",
- props: {
- surface: coachSurfaceMode,
- },
- });
- }, [coachSurfaceMode, onTrackFrictionEvent]);
-const [coachNotice, setCoachNotice] = useState("");
-const [coachError, setCoachError] = useState("");
-const [coachSavePhase, setCoachSavePhase] = useState(SAVE_FEEDBACK_PHASES.idle);
-const [coachSaveDetail, setCoachSaveDetail] = useState("");
-const [coachSaveError, setCoachSaveError] = useState("");
-const [coachSavedAtLabel, setCoachSavedAtLabel] = useState("");
-const clearCoachSaveFeedback = () => {
-setCoachSavePhase(SAVE_FEEDBACK_PHASES.idle);
-setCoachSaveDetail("");
-setCoachSaveError("");
-setCoachSavedAtLabel("");
-};
-const beginCoachSave = (detail = "Saving this change.") => {
-setCoachSavePhase(SAVE_FEEDBACK_PHASES.saving);
-setCoachSaveDetail(detail);
-setCoachSaveError("");
-};
-const finishCoachSave = (detail = "Future workouts will follow this update.") => {
-const stamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-setCoachSavedAtLabel(stamp);
-setCoachSaveDetail(detail);
-setCoachSaveError("");
-setCoachSavePhase(SAVE_FEEDBACK_PHASES.saved);
-};
-const failCoachSave = (message = "Change did not save. Try again.") => {
-setCoachSaveError(message);
-setCoachSavePhase(SAVE_FEEDBACK_PHASES.error);
-};
-const clearCoachPreview = () => {
-setCoachPreviewState(null);
-};
-const coachSaveFeedbackModel = buildSaveFeedbackModel({
-phase: coachSavePhase,
-syncState: syncStateModel,
-savedAtLabel: coachSavedAtLabel,
-successMessage: coachSaveDetail,
-savingMessage: coachSaveDetail,
-errorMessage: coachSaveError,
-});
-const coachFeedbackModel = coachError
-? {
-tone: "critical",
-chipLabel: "Coach",
-title: "Coach could not finish that",
-detail: coachError,
-support: "",
-liveMode: "assertive",
-}
-: coachSaveFeedbackModel.show
-? coachSaveFeedbackModel
-: coachNotice
-? {
-tone: "info",
-chipLabel: "Coach",
-title: coachNotice,
-detail: "",
-support: "",
-liveMode: "polite",
-}
-: null;
-const showCoachQuietSyncChip = Boolean(syncSurfaceModel?.showCompactChip && syncSurfaceModel?.tone !== "healthy");
-
- const toCoachTestId = (value = "") => String(value || "")
- .trim()
- .toLowerCase()
- .replace(/[^a-z0-9]+/g, "-")
- .replace(/^-+|-+$/g, "")
- .slice(0, 80);
-
- const buildQuickPromptMessage = (label) => {
- const dated = Object.entries(logs || {}).sort((a, b) => a[0].localeCompare(b[0]));
- const yesterday = new Date();
- yesterday.setDate(yesterday.getDate() - 1);
- const yKey = yesterday.toISOString().split("T")[0];
- const y = logs?.[yKey];
- const last3 = dated.slice(-3).map(([dateKey, log]) => `${dateKey}: ${log?.type || "session"} feel ${log?.feel || 3}`).join(" | ");
- const completion14 = dated.slice(-14).filter(([, log]) => ["completed_as_planned", "completed_modified", "partial_completed"].includes(log?.checkin?.status)).length;
- const total14 = Math.max(1, dated.slice(-14).length);
- const map = {
- "My Achilles feels tight": `${label}. Include today's session type (${todayWorkout?.type || "unknown"}) and injury history (${(compoundingCoachMemory?.injuryHistory || []).slice(0, 2).join("; ") || "none"}).`,
- "I missed yesterday": `${label}. Yesterday was ${y?.type || "unknown"} on ${yKey}. Current week completion: ${completion14}/${total14}.`,
- "I'm traveling today": `${label}. Travel preset is active when needed. Today's prescription: ${todayWorkout?.label || "session"}.`,
- "I feel amazing this week": `${label}. Last 3 sessions: ${last3 || "none"}. Current phase: ${coachPhase}.`,
- "I slept badly": `${label}. Today's session type: ${todayWorkout?.type || "unknown"}. Readiness context: energy ${personalization?.trainingState?.fatigueScore || "n/a"}.`,
- "I want to push harder": `${label}. Current block: ${currentBlockLabel}. Primary goal: ${currentPrimaryGoal}. Last feels ${(dated.slice(-5).map(([, log]) => log?.feel || 3).join(", ") || "none")}.`,
- };
- return map[label] || label;
- };
-
- const stripCoachRecommendationTone = (text = "") => String(text || "")
- .replace(/^[^:]+:\s*/i, "")
- .replace(/\s*\[[^\]]+\]\s*$/i, "")
- .replace(/\s+/g, " ")
- .trim();
-
- const buildCompactCoachFallbackText = (packet = null) => {
- const summary = packet?.summary || {};
- const recommendation = stripCoachRecommendationTone(packet?.recommendations?.[0] || "");
- const actionLabel = buildCoachActionLabel(packet?.actions?.[0]?.type || "");
- return [
- summary?.headline || recommendation || sanitizeDisplayText(packet?.notices?.[0] || "Coach update ready."),
- summary?.recommendedAction ? `Recommendation: ${summary.recommendedAction}` : null,
- summary?.whyNow ? `Why: ${summary.whyNow}` : sanitizeDisplayText(packet?.effects?.[0] || packet?.notices?.[0] || ""),
- summary?.watchFor ? `Likely effect: ${summary.watchFor}` : null,
- actionLabel ? `Accept change: ${actionLabel}.` : null,
- ]
- .filter(Boolean)
- .join("\n");
- };
-
- const commitAction = async (action) => {
- const commitResult = coordinateCoachActionCommit({
- action,
- runtime: { adjustments: coachPlanAdjustments, weekNotes, planAlerts, personalization },
- currentWeek,
- todayWorkout,
- mergePersonalization,
- buildInjuryRuleResult,
-existingCoachActions: coachActions,
-});
-if (!commitResult.ok) {
-clearCoachSaveFeedback();
-setCoachError(commitResult.ui.message);
-setCoachNotice("");
-return commitResult;
-}
-const mutation = commitResult.mutation;
-const nextActions = commitResult.nextActions;
-setCoachActions(nextActions);
-setCoachPlanAdjustments(mutation.adjustments);
-setWeekNotes(mutation.weekNotes);
-setPlanAlerts(mutation.planAlerts);
-setPersonalization(mutation.personalization);
-beginCoachSave("Saving this change.");
-try {
-await onPersist(mutation.personalization, nextActions, mutation.adjustments, mutation.weekNotes, mutation.planAlerts);
-setCoachError("");
-setCoachNotice("");
-finishCoachSave("Future workouts will follow this update.");
-return commitResult;
-} catch (error) {
-setCoachNotice("");
-setCoachError("");
-failCoachSave(error?.message || "Change did not save. Try again.");
-return {
-...commitResult,
-ok: false,
-error: error?.message || "coach_persist_failed",
-};
-}
-};
-
- const streamCoachResponse = async ({ userMsg, history }) => {
- const deterministic = deterministicCoachPacket({
- input: userMsg,
- todayWorkout,
- currentWeek,
- logs,
- bodyweights,
- personalization,
- learning: learningLayer,
- salvage: salvageLayer,
- planComposer,
- optimizationLayer,
- failureMode,
- momentum,
- strengthLayer,
- nutritionLayer,
- nutritionActual,
- nutritionComparison,
- arbitration,
- expectations,
- memoryInsights,
- coachMemoryContext: compoundingCoachMemory,
- realWorldNutrition,
- recalibration,
- });
- validateDeterministicCoachPacketInvariant(deterministic, "deterministicCoachPacket.chat");
- const coachPacketArgs = {
- dateKey: todayKey,
- currentWeek,
- canonicalGoalState: goalState,
- canonicalUserProfile: userProfile,
- goals,
- planDay,
- planWeek: planDayWeek?.planWeek || null,
- logs,
- dailyCheckins,
- nutritionActualLogs,
- bodyweights,
- momentum,
- expectations,
- strengthLayer,
- optimizationLayer,
- failureMode,
- readiness: canonicalCoachRecovery,
- nutritionComparison,
- arbitration,
- memoryInsights,
- coachMemoryContext: compoundingCoachMemory,
- weekNotes,
- planAlerts,
- };
- validateAiPacketInvariant(coachPacketArgs, "runCoachChatRuntime");
- return runCoachChatRuntime({
- apiKey,
- userMsg,
- history,
- deterministicText: buildCompactCoachFallbackText(deterministic),
- packetArgs: coachPacketArgs,
- fetchImpl: fetch,
- onText: () => {},
- }).then((result) => ({ ...result, deterministicPacket: deterministic }));
- };
-
-const sendAdvisoryQuestion = async (preset = "") => {
-const prepared = preset || askInput;
-const userMsg = (prepared || "").trim();
-if (!userMsg || askLoading) return;
-const startedAt = Date.now();
- setAskInput("");
- setAskLoading(true);
- clearCoachPreview();
- clearCoachSaveFeedback();
- setCoachError("");
- setCoachNotice("");
- const ts = Date.now();
- const nextHistory = [...messages, { role: "user", text: userMsg, ts }].slice(-12);
- setMessages(nextHistory);
- const historyForModel = nextHistory.map((message) => ({
- role: message.role === "assistant" ? "assistant" : "user",
- content: message.text || "",
- }));
- try {
- const streamed = await streamCoachResponse({ userMsg, history: historyForModel });
- setMessages((prev) => [...prev, {
- role: "assistant",
- text: streamed.text || "Coach update ready.",
- packet: streamed.deterministicPacket || null,
- source: streamed.source,
- ts: Date.now(),
- }].slice(-12));
- onTrackFrictionEvent({
- flow: "coach",
- action: "advisory_question",
- outcome: "success",
- props: {
- duration_ms: Date.now() - startedAt,
- input_mode: preset ? "preset" : "manual",
- history_count: historyForModel.length,
- },
- });
- } catch (error) {
- setCoachError(error?.message || "Coach could not answer that right now.");
- onTrackFrictionEvent({
- flow: "coach",
- action: "advisory_question",
- outcome: "error",
- props: {
- duration_ms: Date.now() - startedAt,
- input_mode: preset ? "preset" : "manual",
- history_count: historyForModel.length,
- error_code: String(error?.message || "coach_question_failed").toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60),
- },
- });
- } finally {
- setAskLoading(false);
- }
- };
-
- const todayPromptOptions = [
- { id: "status", label: "Normal day" },
- { id: "I missed yesterday", label: "Missed yesterday" },
- { id: "I'm traveling today", label: "Travel today" },
- { id: "I slept badly", label: "Slept badly" },
- { id: "My Achilles feels tight", label: "Pain flare" },
- { id: "I want to push harder", label: "Can I push?" },
- ];
- const askAnythingExamples = [
- "Should I protect today or keep it?",
- "What is the smartest call for this week?",
- "What matters most for recovery tonight?",
- ];
- const sundayArchive = personalization?.coachMemory?.sundayReviews || [];
- const readinessPromptSignal = coachPlanAdjustments?.extra?.readinessSignals?.[todayKey] || null;
- const coachReadiness = canonicalCoachRecovery || deriveDeterministicReadinessState({
- todayKey,
- checkin: dailyCheckins?.[todayKey] || logs?.[todayKey]?.checkin || {},
- promptSignal: readinessPromptSignal,
- workout: todayWorkout,
- logs,
- dailyCheckins,
- personalization,
- momentum,
- userProfile: userProfile || {},
- });
- const readinessMetrics = coachReadiness?.metrics || {};
- const env = resolveEnvironmentSelection({ personalization, todayKey, currentWeek });
- const dayTypeMap = { "long-run": "long", long: "long", "hard-run": "tempo", hard: "tempo", "easy-run": "easy", easy: "easy", "strength+prehab": "strength", strength: "strength", "run+strength": "hybrid", conditioning: "hybrid", otf: "hybrid", recovery: "recovery", rest: "recovery" };
- const dayType = dayTypeMap[todayWorkout?.type] || "hybrid";
- const calibrationState = deriveCalibrationState({ logs, dailyCheckins });
- const isCalibration = Boolean(momentum?.isCalibration || calibrationState.isCalibration);
- const weekState = failureMode?.mode === "chaotic" ? "chaotic" : momentum?.fatigueNotes >= 2 ? "fatigued" : "normal";
- const adherenceTrend = isCalibration ? "calibrating" : momentum?.completionRate >= 0.72 ? "stable" : momentum?.completionRate >= 0.5 ? "mixed" : "slipping";
- const fatigueSignal = (personalization?.trainingState?.fatigueScore || 1) >= 4 || momentum?.fatigueNotes >= 2;
- const injuryFlag = personalization?.injuryPainState?.level || "none";
- const recoveryAdjustedToday = coachReadiness?.state === "recovery" || todayWorkout?.type === "rest" || todayWorkout?.type === "recovery" || /recovery/i.test(String(todayWorkout?.label || ""));
- const reducedLoadToday = coachReadiness?.state === "reduced_load" || Boolean(todayWorkout?.minDay);
- const progressionReadyToday = coachReadiness?.state === "progression" || /progression-ready/i.test(String(todayWorkout?.label || ""));
- const goalPriority = currentPrimaryGoal;
- const recentEntries = Array.from(new Set([...(Object.keys(logs || {})), ...(Object.keys(dailyCheckins || {}))]))
- .sort((a, b) => a.localeCompare(b))
- .slice(-7)
- .map((dateKey) => {
- const log = logs?.[dateKey] || {};
- return [dateKey, { ...log, checkin: { ...(log?.checkin || {}), ...(dailyCheckins?.[dateKey] || {}) } }];
- });
- const recentLogCount = recentEntries.length;
- const completedStatuses = new Set(["completed_as_planned", "completed_modified", "partial_completed"]);
- const recentSessionLabels = recentEntries
- .map(([, entry]) => entry?.type || entry?.label || "")
- .filter(Boolean)
- .slice(-3);
- const recentCountableStatuses = recentEntries
- .map(([dateKey, entry]) => resolveEffectiveStatus(entry?.checkin, dateKey))
- .filter((status) => status !== "not_logged" && status !== "not_logged_grace");
- const recentCompletedCount = recentCountableStatuses.filter((status) => completedStatuses.has(status)).length;
- const recentSkippedCount = recentCountableStatuses.filter((status) => status === "skipped").length;
- const recentModifiedCount = recentCountableStatuses.filter((status) => status === "completed_modified" || status === "partial_completed").length;
- const recentAdherence = readinessMetrics.countableCount
- ? (Number(readinessMetrics.completedCount || 0) / Math.max(1, Number(readinessMetrics.countableCount || 0)))
- : recentCountableStatuses.length
- ? (recentCompletedCount / recentCountableStatuses.length)
- : 0;
- const latestCompletedEntry = [...recentEntries].reverse().find(([dateKey, entry]) => completedStatuses.has(resolveEffectiveStatus(entry?.checkin, dateKey)));
- const latestCheckinEntry = [...recentEntries].reverse().find(([, entry]) => hasReadinessInputs(entry?.checkin) || entry?.checkin?.status && entry?.checkin?.status !== "not_logged");
- const latestCheckin = latestCheckinEntry?.[1]?.checkin || {};
- const latestFeel = String(latestCheckin?.sessionFeel || latestCheckinEntry?.[1]?.feel || "").toLowerCase();
- const latestSleep = Number(latestCheckin?.readiness?.sleep || 0);
- const latestStress = Number(latestCheckin?.readiness?.stress || 0);
- const latestSoreness = Number(latestCheckin?.readiness?.soreness || 0);
- const lowRecoverySignal = (latestSleep > 0 && latestSleep <= 2) || latestStress >= 4 || latestSoreness >= 4 || latestFeel === "harder_than_expected";
- const highRecoverySignal = latestSleep >= 4 && latestStress > 0 && latestStress <= 2 && latestSoreness > 0 && latestSoreness <= 2 && latestFeel !== "harder_than_expected";
- const latestCompletedLabel = latestCompletedEntry?.[1]?.type || latestCompletedEntry?.[1]?.label || "recent session";
- const todaySessionLabel = todayWorkout?.label || todayWorkout?.type || "today's session";
- const readinessEvidence = joinHumanList((coachReadiness?.factors || []).slice(0, 2));
- const veryLowConsistency = (Number(readinessMetrics.consistencyRatio || 0) > 0 && Number(readinessMetrics.consistencyRatio || 0) < 0.45) || recentSkippedCount >= 3;
- const feelDescriptor = latestFeel === "easier_than_expected"
- ? "easier than expected"
- : latestFeel === "harder_than_expected"
- ? "harder than expected"
- : latestFeel
- ? "steady"
- : "not recently logged";
-
- const coachDecisionMode = (() => {
- if (isCalibration) return "Hold";
- if (coachReadiness?.state === "recovery" || recoveryAdjustedToday) return "Protect";
- if (injuryFlag !== "none" || fatigueSignal) return "Protect";
- if (coachReadiness?.state === "reduced_load" || reducedLoadToday) return veryLowConsistency ? "Rebuild" : "Simplify";
- if (weekState === "chaotic" || env.time === "20" || adherenceTrend === "slipping") return "Simplify";
- if (momentum?.logGapDays >= 4 || recentLogCount <= 2 || recentAdherence < 0.55) return "Rebuild";
- if (coachReadiness?.state === "progression" || (progressionReadyToday && (momentum?.score || 0) >= 60 && weekState === "normal" && env.time !== "20")) return "Push";
- if ((momentum?.score || 0) >= 74 && weekState === "normal" && env.time !== "20") return "Push";
- return "Hold";
- })();
-
- const coachDecision = (() => {
- const dayLabel = dayType === "tempo" ? "quality run" : dayType === "long" ? "long-run" : dayType === "easy" ? "easy run" : dayType === "strength" ? "strength" : dayType === "recovery" ? "recovery" : "hybrid";
- if (coachDecisionMode === "Protect") return {
- stance: `Do the condensed ${dayLabel} version today and keep intensity controlled.`,
- why: `Recovery signals are elevated${readinessEvidence ? ` because ${readinessEvidence}` : ""}, so we protect consistency while keeping ${goalPriority} on track.`,
- watch: "I am watching pain and session feel after this workout.",
- options: [
- { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 10, reason: "protect_mode" } }, primary: true },
- { label: "Move to tomorrow", action: { type: COACH_TOOL_ACTIONS.MOVE_LONG_RUN, payload: { days: 1, reason: "protect_shift" } } },
- ],
- };
- if (coachDecisionMode === "Simplify") return {
- stance: `Keep this simple: complete the short ${dayLabel} version.`,
- why: coachReadiness?.state === "reduced_load"
- ? `Readiness says control the day${readinessEvidence ? ` because ${readinessEvidence}` : ""}.`
- : "Time and adherence say simplify now, then rebuild consistency.",
- watch: "I am watching completion rate over the next 3 days.",
- options: [
- { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 12, reason: "simplify_mode" } }, primary: true },
- { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "simplify_week" } } },
- ],
- };
- if (coachDecisionMode === "Rebuild") return {
- stance: `Take the short version of the ${dayLabel} session and rebuild rhythm first.`,
- why: `Recent execution dipped, so we rebuild frequency before adding load${readinessEvidence ? ` while respecting ${readinessEvidence}` : ""}.`,
- watch: "I am watching whether you can stack 2-3 clean sessions.",
- options: [
- { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "rebuild_mode" } }, primary: true },
- { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 18, reason: "rebuild_week" } } },
- ],
- };
- if (coachDecisionMode === "Push") return {
- stance: `Keep the full ${dayLabel} session and add one small progression.`,
- why: `Stability is strong enough to push while still protecting recovery${readinessEvidence ? ` because ${readinessEvidence}` : ""}.`,
- watch: "I am watching session quality and next-day fatigue.",
- options: [
- { label: "Keep full session", action: null, primary: true },
- { label: "Push slightly", action: { type: COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS, payload: { weeks: 1, reason: "push_mode" } } },
- ],
- };
- return {
- stance: `Keep the full ${dayLabel} session as written.`,
- why: `Current signals support staying steady and executing cleanly${readinessEvidence ? ` because ${readinessEvidence}` : ""}.`,
- watch: "I am watching consistency and workout quality this week.",
- options: [
- { label: "Keep full session", action: null, primary: true },
- { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 8, reason: "hold_condense" } } },
- ],
- };
- })();
-
- const coachSnapshot = (() => {
- const recentNames = recentSessionLabels.length ? recentSessionLabels.join(", ") : "no recent workouts logged";
- const adherenceLine = recentCountableStatuses.length
- ? `${recentCompletedCount}/${recentCountableStatuses.length} recent logged sessions were completed`
- : "recent adherence data is limited";
- const recoveryLine = coachReadiness?.recoveryLine
- ? coachReadiness.recoveryLine.replace(/^Recovery recommendation:\s*/i, "").trim()
- : lowRecoverySignal
- ? `latest recovery check-in is strained (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
- : highRecoverySignal
- ? `latest recovery check-in looked supportive (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
- : `latest session felt ${feelDescriptor}`;
-
- let watching = "";
- let doToday = "";
- let noticed = "";
-
- if (coachDecisionMode === "Protect") {
- watching = `Watching recovery after ${latestCompletedLabel}: ${recoveryLine}.`;
- doToday = `Do the shortest controlled version of ${todaySessionLabel}; stop the moment pain or session feel worsens.`;
- noticed = coachReadiness?.userVisibleLine || (recentModifiedCount > 0
- ? `You kept training alive with ${recentModifiedCount} modified session${recentModifiedCount > 1 ? "s" : ""}, but recovery is the limiter right now.`
- : `Recent work (${recentNames}) stacked stress faster than recovery caught up.`);
- } else if (coachDecisionMode === "Simplify") {
- watching = `Watching whether the next 72 hours turn ${adherenceLine} into a cleaner rhythm.`;
- doToday = `Strip ${todaySessionLabel} down to the first meaningful block and log it immediately when finished.`;
- noticed = coachReadiness?.userVisibleLine || (recentSkippedCount > 0
- ? `You skipped ${recentSkippedCount} recent session${recentSkippedCount > 1 ? "s" : ""}; simplicity is more useful than adding load.`
- : "Execution has been mixed, so reducing friction matters more than perfect programming this week.");
- } else if (coachDecisionMode === "Rebuild") {
- watching = `Watching whether you can stack the next 2 sessions after ${recentNames}.`;
- doToday = `Treat ${todaySessionLabel} as a rebuild rep: show up, finish the first block, and bank momentum.`;
- noticed = `Recent adherence is ${Math.round(recentAdherence * 100)}%, so the priority is rebuilding frequency before intensity.`;
- } else if (coachDecisionMode === "Push") {
- watching = `Watching whether today's quality stays smooth and tomorrow's recovery still looks normal after ${latestCompletedLabel}.`;
- doToday = `Keep the full ${todaySessionLabel} and add one small progression only if the first half feels controlled.`;
- noticed = coachReadiness?.userVisibleLine || `You are coming in off ${adherenceLine}, and the last session felt ${feelDescriptor}.`;
- } else {
- watching = `Watching for stable recovery and clean execution across ${recentNames}.`;
- doToday = `Run ${todaySessionLabel} as written and keep the effort boringly consistent.`;
- noticed = isCalibration
-? `This is your getting-started week. Log ${calibrationState.minHistoryCount} meaningful sessions and the plan will start fitting you more closely.`
- : coachReadiness?.userVisibleLine || (lowRecoverySignal
- ? "You are still carrying some recovery drag, but not enough to force a full pullback."
- : `This week looks steady: ${adherenceLine}, with no strong signal to either push or cut back.`);
- }
-
- return { watch: watching, doToday, noticed };
- })();
-
- useEffect(() => {
- const isSunday = new Date().getDay() === 0;
- if (!isSunday) return;
- if (sundayArchive.some((review) => review?.date === todayKey)) return;
- const review = buildSundayWeekInReview({ logs, momentum, patterns, recalibration, currentWeek });
- const nextReviews = [review, ...sundayArchive].slice(0, 26);
- const updated = mergePersonalization(personalization, { coachMemory: { ...personalization.coachMemory, sundayReviews: nextReviews } });
- setPersonalization(updated);
- onPersist(updated, coachActions, coachPlanAdjustments, weekNotes, planAlerts);
- }, [todayKey, currentWeek]);
-
- const weeklyNotice = sundayArchive[0]?.paragraph
- || patterns?.observations?.[0]?.msg
- || (isCalibration ? `Starting week: log ${calibrationState.minHistoryCount} sessions so next week's read gets sharper.` : momentum?.completionRate >= 0.72 ? "Consistency is trending up this week." : "Execution has been mixed this week.");
- const coachProvenance = buildProvenanceText({
- inputs: [
- goalPriority ? "your current goal priority" : null,
- recentEntries.length ? "recent workout logs" : null,
- recentCountableStatuses.length ? "adherence trend" : null,
- readinessMetrics?.hardSessions7d ? "recent intensity load" : null,
- latestCheckinEntry ? "latest recovery check-in" : null,
- ],
- limitation: latestCheckinEntry ? "" : "Recovery input is limited right now.",
- });
- const coachTrust = buildTrustSummary({
- explicitUserInput: Boolean(latestCheckinEntry || readinessPromptSignal),
- loggedActuals: Boolean(recentCountableStatuses.length || Object.keys(nutritionActualLogs || {}).length),
- deviceData: Boolean((Number(latestSleep) > 0) || (Number(personalization?.connectedDevices?.garmin?.trainingReadinessScore || 0) > 0)),
- inferredHeuristics: true,
- limitation: latestCheckinEntry ? "" : "Recovery input is limited right now.",
- stale: Boolean(!latestCheckinEntry && recentCountableStatuses.length === 0),
- });
- const decisionTone = buildReviewBadgeTone(
- coachDecisionMode === "Protect"
- ? "recovery"
- : coachDecisionMode === "Simplify" || coachDecisionMode === "Rebuild"
- ? "changed"
- : coachDecisionMode === "Push"
- ? "progression"
- : "match",
- C
- );
- const coachTrustTone = buildReviewBadgeTone(
- coachTrust.level === "grounded" ? "match" : coachTrust.level === "partial" ? "changed" : "recovery",
- C
- );
- const weeklyNutritionCoachLine = weeklyNutritionReview?.coaching?.coachLine || "Meal guidance gets sharper once a few real days are logged.";
- const weeklyNutritionActionLine = weeklyNutritionReview?.adaptation?.actions?.[0] || "Keep meals and hydration steady so next week's guidance can get more specific.";
- const recoveryPrescriptionLine = canonicalCoachRecovery?.prescription?.summary || canonicalCoachRecovery?.recoveryLine || "Recovery guidance is connected to today's plan.";
- const supplementCoachLine = Array.isArray(canonicalCoachSupplements?.plan?.items) && canonicalCoachSupplements.plan.items.length
- ? canonicalCoachSupplements.plan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" - ")
- : "No explicit supplement plan stored for today.";
-
- const compressCoachCopy = (text = "", maxLen = 180) => {
- const normalized = String(text || "").replace(/\s+/g, " ").trim();
- if (!normalized) return "";
- if (normalized.length <= maxLen) return normalized;
- return `${normalized.slice(0, Math.max(0, maxLen - 1)).trim()}...`;
- };
-
- const coachRecommendationCardShellStyle = {
- background: "#0f172a",
- border: "1px solid #20314a",
- borderRadius: 14,
- padding: "0.72rem 0.75rem",
- display: "grid",
- gap: "0.5rem",
- };
- const coachRecommendationPartStyle = { display: "grid", gap: "0.14rem" };
- const coachRecommendationLabelStyle = { fontSize: "0.45rem", color: "#64748b", letterSpacing: "0.08em", textTransform: "uppercase" };
- const coachRecommendationHeadlineStyle = { fontSize: "0.62rem", color: "#f8fbff", lineHeight: 1.45 };
- const coachRecommendationCopyStyle = { fontSize: "0.5rem", color: "#cbd5e1", lineHeight: 1.45 };
- const coachRecommendationDiffStyle = { fontSize: "0.47rem", color: "#8fa5c8", lineHeight: 1.45 };
-
- const buildCoachDiffLines = (previewModel = null, maxItems = 3) => (
- (previewModel?.diffLines || previewModel?.effectLines || [])
- .filter(Boolean)
- .map((line) => compressCoachCopy(line, 140))
- .slice(0, maxItems)
- );
-
- const renderCoachRecommendationCard = ({
- testId,
- headlineTestId,
- recommendation = "",
- why = "",
- likelyEffect = "",
- diffLines = [],
- actionSectionLabel = "Accept",
- actionLabel = "Accept change",
- actionTestId,
- onAction = null,
- actionDisabled = false,
- actionLoadingState = false,
- actionLoadingLabel = "Working...",
- emptyRecommendation = "No recommendation is ready yet.",
- emptyWhy = "Coach is waiting on a clearer signal.",
- emptyLikelyEffect = "Nothing changes right now.",
- accentColor = C.blue,
- }) => {
- return (
- <SurfaceRecommendationCard
- testId={testId}
- headlineTestId={headlineTestId}
- recommendation={recommendation}
- why={why}
- likelyEffect={likelyEffect}
- diffLines={diffLines}
- actionSectionLabel={actionSectionLabel}
- actionLabel={actionLabel}
- actionTestId={actionTestId}
- onAction={onAction}
- actionDisabled={actionDisabled}
- actionLoadingState={actionLoadingState}
- actionLoadingLabel={actionLoadingLabel}
- emptyRecommendation={emptyRecommendation}
- emptyWhy={emptyWhy}
- emptyLikelyEffect={emptyLikelyEffect}
- accentColor={accentColor}
- />
- );
- };
-
- const coachRecommendationLine = compressCoachCopy(coachDecision.stance, 140);
- const coachWhyLine = compressCoachCopy(coachDecision.why, 170);
- const coachNextLine = compressCoachCopy(coachSnapshot.doToday, 150);
- const coachWatchLine = compressCoachCopy(coachSnapshot.watch, 120);
- const coachNoticedLine = compressCoachCopy(coachSnapshot.noticed, 145);
- const supportNutritionLine = compressCoachCopy(weeklyNutritionActionLine, 140);
- const supportRecoveryLine = compressCoachCopy(recoveryPrescriptionLine, 140);
- const supportSupplementLine = compressCoachCopy(supplementCoachLine, 120);
- const latestWeeklyReviewLine = compressCoachCopy(sundayArchive[0]?.paragraph || weeklyNotice, 180);
- const canonicalCoachLabel = compressCoachCopy(
- surfaceModel?.display?.sessionLabel
- || todayWorkout?.label
- || "Today's session",
- 140
- );
- const canonicalCoachReason = compressCoachCopy(
- surfaceModel?.canonicalReasonLine
- || surfaceModel?.preferenceAndAdaptationLine
- || coachWhyLine,
- 170
- );
-
- const todayPromptInput = selectedTodayPrompt === "status"
- ? "status"
- : buildQuickPromptMessage(selectedTodayPrompt);
- const todayScenarioPacket = deterministicCoachPacket({
- input: todayPromptInput,
- todayWorkout,
- currentWeek,
- logs,
- bodyweights,
- personalization,
- learning: learningLayer,
- salvage: salvageLayer,
- planComposer,
- optimizationLayer,
- failureMode,
- momentum,
- strengthLayer,
- nutritionLayer,
- nutritionActual,
- nutritionComparison,
- arbitration,
- expectations,
- memoryInsights,
- coachMemoryContext: compoundingCoachMemory,
- realWorldNutrition,
- recalibration,
- });
- validateDeterministicCoachPacketInvariant(todayScenarioPacket, "deterministicCoachPacket.surface");
- const scenarioSummary = todayScenarioPacket?.summary || {};
- const todayHeadline = compressCoachCopy(
- selectedTodayPrompt === "status"
- ? coachRecommendationLine
- : scenarioSummary.headline || coachRecommendationLine,
- 150
- );
- const todayWhy = compressCoachCopy(
- selectedTodayPrompt === "status"
- ? coachWhyLine
- : scenarioSummary.whyNow || coachWhyLine,
- 170
- );
- const todayNextMove = compressCoachCopy(
- selectedTodayPrompt === "status"
- ? coachNextLine
- : scenarioSummary.recommendedAction || coachNextLine,
- 160
- );
- const todayWatch = compressCoachCopy(
- selectedTodayPrompt === "status"
- ? coachWatchLine
- : scenarioSummary.watchFor || coachWatchLine,
- 130
- );
-
- const actionHistory = buildCoachActionHistoryModel({ coachActions });
- const latestAcceptedAction = actionHistory[0] || null;
- const askAnythingState = buildCoachAskAnythingStateModel({ apiKey });
- const coachModeCards = buildCoachModeCards({ activeMode: coachSurfaceMode });
- const recentQuestionHistory = buildCoachRecentQuestionModel({ messages });
- const compactCoachReason = canonicalCoachReason;
- const compactCoachPlanLine = compressCoachCopy(coachPlanLine || currentPlanFocus, 92);
- const compactSavedChangeDetail = compressCoachCopy(latestAcceptedAction?.detail || "", 88);
- const changePlanActions = buildCoachQuickChangeActions({
- currentWeek,
- todayWorkout,
- injuryArea: personalization?.injuryPainState?.area || "Achilles",
- });
-
- const todaySuggestedActions = (() => {
- const entries = [];
- const seen = new Set();
- const pushEntry = (action, description = "", scopeLabel = "Today") => {
- const type = String(action?.type || "");
- if (!type || seen.has(type)) return;
- seen.add(type);
- entries.push({
- id: `${type.toLowerCase()}_${entries.length}`,
- label: buildCoachActionLabel(type),
- description: description || "Look over this change before you use it.",
- scopeLabel,
- action,
- });
- };
- (coachDecision.options || []).forEach((option) => {
- if (!option?.action) return;
- pushEntry(
- option.action,
- option.label === "Move to tomorrow"
- ? "Keep the week intact by shifting the key session one day."
- : option.label === "Simplify week"
- ? "Pull workload down to preserve completion this week."
- : "Lighten today's stress without abandoning the week.",
- option.label === "Simplify week" ? "This week" : "Today"
- );
- });
- (todayScenarioPacket?.actions || []).slice(0, 4).forEach((action) => {
- pushEntry(action, scenarioSummary.recommendedAction || "Review the change Coach is recommending right now.", "Preview");
- });
- return entries.slice(0, 4);
- })();
-
- const selectCoachPrimaryAction = (entries = [], scopePriority = []) => {
- const normalizedEntries = Array.isArray(entries) ? entries.filter(Boolean) : [];
- for (const scope of scopePriority) {
- const match = normalizedEntries.find((entry) => String(entry?.scopeLabel || "").toLowerCase() === String(scope || "").toLowerCase());
- if (match) return match;
- }
- return normalizedEntries[0] || null;
- };
-
- const buildCoachPreviewState = (action = null, { proposalSource = "coach_change_plan", displaySource = "Coach" } = {}) => {
- if (!action?.type) return null;
- const proposedAction = {
- ...action,
- proposalSource,
- source: proposalSource,
- };
- const commitResult = coordinateCoachActionCommit({
- action: proposedAction,
- runtime: { adjustments: coachPlanAdjustments, weekNotes, planAlerts, personalization },
- currentWeek,
- todayWorkout,
- mergePersonalization,
- buildInjuryRuleResult,
- existingCoachActions: coachActions,
- });
- const previewModel = buildCoachActionPreviewModel({
- action: proposedAction,
- commitResult,
- currentWeek,
- todayKey,
- todayWorkout,
- });
- return {
- action: proposedAction,
- commitResult,
- previewModel,
- displaySource,
- };
- };
-
- const buildCoachJobRecommendation = (entry = null, { proposalSource = "coach_change_plan", displaySource = "Coach" } = {}) => {
- if (!entry?.action?.type) return null;
- const previewState = buildCoachPreviewState(entry.action, { proposalSource, displaySource });
- if (!previewState) return null;
- const diffLines = buildCoachDiffLines(previewState.previewModel);
- return {
- entry,
- ...previewState,
- recommendation: compressCoachCopy(previewState.previewModel.headline || entry.label, 120),
- why: compressCoachCopy(entry.description || previewState.previewModel.summary || "Coach has a clean next move ready.", 130),
- likelyEffect: compressCoachCopy(previewState.previewModel.likelyEffect || diffLines[0] || "The next stretch gets easier to execute.", 120),
- diffLines,
- };
- };
-
- const primaryTodayAction = buildCoachJobRecommendation(
- selectCoachPrimaryAction(todaySuggestedActions, ["Today", "Pain-aware", "Preview", "Nutrition", "This week"]),
- { proposalSource: "coach_adjust_today", displaySource: "Adjust today" }
- );
- const primaryWeekAction = buildCoachJobRecommendation(
- selectCoachPrimaryAction(changePlanActions, ["This week", "Next week", "Schedule", "Nutrition", "Pain-aware", "Today"]),
- { proposalSource: "coach_adjust_week", displaySource: "Adjust this week" }
- );
- const otherWeekActions = (changePlanActions || []).filter((entry) => entry?.id !== primaryWeekAction?.entry?.id);
- const latestAskAnswer = [...messages].reverse().find((message) => message?.role === "assistant") || null;
- const latestAskSummary = latestAskAnswer?.packet?.summary || null;
- const latestAskAction = latestAskAnswer?.packet?.actions?.[0] || null;
- const askPreviewState = buildCoachPreviewState(latestAskAction, { proposalSource: "coach_ask_coach", displaySource: "Ask coach" });
- const askDiffLines = buildCoachDiffLines(askPreviewState?.previewModel);
- const askRecommendation = latestAskAnswer ? {
- recommendation: compressCoachCopy(latestAskSummary?.recommendedAction || latestAskSummary?.headline || latestAskAnswer.text || "Coach update ready.", 150),
- why: compressCoachCopy(latestAskSummary?.whyNow || askPreviewState?.previewModel?.summary || "Coach is using your current training context.", 130),
- likelyEffect: compressCoachCopy(askPreviewState?.previewModel?.likelyEffect || latestAskSummary?.watchFor || "The next best move becomes easier to see.", 120),
- diffLines: askDiffLines,
- action: askPreviewState?.action || null,
- } : null;
- const todayRecommendation = {
- recommendation: todayNextMove,
- why: todayWhy,
- likelyEffect: compressCoachCopy(primaryTodayAction?.previewModel?.likelyEffect || todayWatch, 120),
- diffLines: buildCoachDiffLines(primaryTodayAction?.previewModel),
- action: primaryTodayAction?.action || null,
- };
- const weekRecommendation = {
- recommendation: primaryWeekAction?.recommendation || "Hold the week steady.",
- why: primaryWeekAction?.why || latestWeeklyReviewLine,
- likelyEffect: primaryWeekAction?.likelyEffect || currentPlanFocus,
- diffLines: primaryWeekAction?.diffLines || [],
- action: primaryWeekAction?.action || null,
- };
- const openCoachPreview = ({
- action = null,
- previewModel = null,
- displaySource = "Coach",
- recommendation = "",
- why = "",
- likelyEffect = "",
- diffLines = [],
- } = {}) => {
- if (!action?.type || !previewModel) return;
- clearCoachSaveFeedback();
- setCoachError("");
- setCoachNotice("");
- setCoachPreviewState({
- action,
- displaySource,
- recommendation: compressCoachCopy(recommendation || previewModel.headline || buildCoachActionLabel(action?.type), 140),
- why: compressCoachCopy(why || previewModel.summary || "Coach has a clear next move ready.", 150),
- likelyEffect: compressCoachCopy(likelyEffect || previewModel.likelyEffect || "The next stretch gets easier to execute.", 130),
- diffLines: (Array.isArray(diffLines) && diffLines.length ? diffLines : buildCoachDiffLines(previewModel, 4)),
- auditLine: previewModel.auditLine || "Nothing changes until you accept this preview.",
- });
- };
- const acceptPreviewedCoachChange = async () => {
- if (!coachPreviewState?.action?.type) return;
- await acceptCoachRecommendation(coachPreviewState.action, {
- proposalSource: coachPreviewState.action.proposalSource || coachPreviewState.action.source || "coach_change_plan",
- });
- };
- const buildCoachAdaptiveRecommendationPayload = (recommendation = null, displaySource = "Coach") => {
- if (!recommendation?.action?.type) return null;
- return buildCoachSuggestionRecommendationEventInput({
- goals,
- action: recommendation.action,
- planDay,
- displaySource,
- recommendation: recommendation.recommendation,
- why: recommendation.why,
- likelyEffect: recommendation.likelyEffect,
- });
- };
- const getActiveCoachAdaptiveRecommendation = (mode = coachSurfaceMode) => {
- if (mode === COACH_SURFACE_MODES.todayWeek) {
- return {
- payload: buildCoachAdaptiveRecommendationPayload(todayRecommendation, "Adjust today"),
- recommendation: todayRecommendation,
- };
- }
- if (mode === COACH_SURFACE_MODES.changePlan) {
- return {
- payload: buildCoachAdaptiveRecommendationPayload(weekRecommendation, "Adjust this week"),
- recommendation: weekRecommendation,
- };
- }
- if (mode === COACH_SURFACE_MODES.askAnything) {
- return {
- payload: buildCoachAdaptiveRecommendationPayload(askRecommendation, "Ask coach"),
- recommendation: askRecommendation,
- };
- }
- return {
- payload: null,
- recommendation: null,
- };
- };
- useEffect(() => {
- const activeAdaptiveRecommendation = getActiveCoachAdaptiveRecommendation(coachSurfaceMode);
- if (!activeAdaptiveRecommendation?.payload) return;
- onRecordAdaptiveLearningEvent({
- eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationGenerated,
- payload: activeAdaptiveRecommendation.payload,
- dedupeKey: `coach_shown_${activeAdaptiveRecommendation.payload.recommendationJoinKey}_${coachSurfaceMode}`,
- });
- }, [askRecommendation, coachSurfaceMode, onRecordAdaptiveLearningEvent, todayRecommendation, weekRecommendation]);
-
- const acceptCoachRecommendation = async (action, { proposalSource = "coach_change_plan" } = {}) => {
- if (!action?.type || actionLoading || acceptCoachActionInFlightRef.current) return;
- const startedAt = Date.now();
- acceptCoachActionInFlightRef.current = true;
- setActionLoading(true);
- clearCoachSaveFeedback();
- setCoachNotice("");
- setCoachError("");
- const acceptedAction = {
- ...action,
- proposalSource: action?.proposalSource || proposalSource,
- source: action?.source || action?.proposalSource || proposalSource,
- };
- const acceptedRecommendationPayload = buildCoachSuggestionRecommendationEventInput({
- goals,
- action: acceptedAction,
- planDay,
- displaySource: proposalSource,
- recommendation: acceptedAction?.type || "Coach suggestion",
- why: "",
- likelyEffect: "",
- });
- try {
- const result = await commitAction(acceptedAction);
- if (result?.ok) {
- setCoachPreviewState(null);
- onRecordAdaptiveLearningEvent({
- eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationOutcomeRecorded,
- payload: buildCoachOutcomeEventInput({
- recommendationJoinKey: acceptedRecommendationPayload?.recommendationJoinKey || `coach_${acceptedAction?.type || "action"}`,
- decisionId: `decision_${acceptedRecommendationPayload?.recommendationJoinKey || acceptedAction?.type || "coach_action"}`,
- outcomeKind: ADAPTIVE_OUTCOME_KINDS.coachAccepted,
- action: acceptedAction,
- status: "accepted",
- detail: "Coach suggestion accepted and persisted.",
- sourceSurface: "coach",
- }),
- dedupeKey: `coach_accept_${acceptedRecommendationPayload?.recommendationJoinKey || acceptedAction?.type || "action"}_${Math.floor(Date.now() / 1000)}`,
- });
- onTrackFrictionEvent({
- flow: "coach",
- action: "plan_accept",
- outcome: "success",
- props: {
- action_type: acceptedAction?.type || "unknown",
- duration_ms: Date.now() - startedAt,
- },
- });
- } else {
- onRecordAdaptiveLearningEvent({
- eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationOutcomeRecorded,
- payload: buildCoachOutcomeEventInput({
- recommendationJoinKey: acceptedRecommendationPayload?.recommendationJoinKey || `coach_${acceptedAction?.type || "action"}`,
- decisionId: `decision_${acceptedRecommendationPayload?.recommendationJoinKey || acceptedAction?.type || "coach_action"}`,
- outcomeKind: ADAPTIVE_OUTCOME_KINDS.coachIgnored,
- action: acceptedAction,
- status: "ignored",
- detail: "Coach suggestion could not be applied.",
- sourceSurface: "coach",
- }),
- dedupeKey: `coach_accept_error_${acceptedRecommendationPayload?.recommendationJoinKey || acceptedAction?.type || "action"}_${Math.floor(Date.now() / 1000)}`,
- });
- onTrackFrictionEvent({
- flow: "coach",
- action: "plan_accept",
- outcome: "error",
- props: {
- action_type: acceptedAction?.type || "unknown",
- duration_ms: Date.now() - startedAt,
- },
- });
- }
- } finally {
- setActionLoading(false);
- acceptCoachActionInFlightRef.current = false;
- }
- };
- return (
- <div className="fi" data-testid="coach-tab" style={{ display: "grid", gap: "0.75rem" }}>
- {syncSurfaceModel?.showFullCard && (
- <SyncStateCallout
- model={syncSurfaceModel}
- dataTestId="coach-sync-status"
- compact
- style={{ background:"rgba(11, 20, 32, 0.76)" }}
- />
- )}
- <SurfaceHero accentColor={C.blue}>
- <SurfaceStack gap="0.45rem">
- <SurfaceHeroHeader>
- <SurfaceHeroCopy>
- <SurfaceHeading
- eyebrow="Coach"
- title="Three jobs, one clear boundary."
- supporting="Adjust today, adjust this week, or ask coach."
- eyebrowColor={C.blue}
- titleSize="hero"
- />
- </SurfaceHeroCopy>
- <SurfaceMetaRow style={{ justifyContent: "flex-end" }}>
- {showCoachQuietSyncChip && (
- <div style={{ minWidth:210 }}>
- <CompactSyncStatus
- model={syncSurfaceModel}
- dataTestId="coach-sync-status"
- style={{
- background:"rgba(11, 20, 32, 0.32)",
- opacity:0.88,
- }}
- />
- </div>
- )}
- </SurfaceMetaRow>
- </SurfaceHeroHeader>
-
- <SurfaceQuietPanel style={{ display:"grid", gap:"0.35rem" }}>
- {!!surfaceModel?.explanationSourceLabel && <div style={{ fontSize: "0.44rem", color: "var(--consumer-text-muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>{surfaceModel.explanationSourceLabel}</div>}
- <div data-testid="coach-canonical-session-label" style={{ fontSize: "0.56rem", color: "var(--consumer-text)", lineHeight: 1.45 }}>{canonicalCoachLabel}</div>
- {!!compactCoachReason && <div data-testid="coach-canonical-reason" style={{ fontSize: "0.49rem", color: "var(--consumer-text-soft)", lineHeight: 1.45 }}>{compactCoachReason}</div>}
- <SurfaceMetaRow>
- <SurfacePill strong>Adjust today</SurfacePill>
- <SurfacePill>Adjust this week</SurfacePill>
- <SurfacePill>Ask coach</SurfacePill>
- {!!latestAcceptedAction?.headline && (
- <SurfacePill data-testid="coach-latest-accepted-change" style={{ color:C.green, background:`${C.green}14`, borderColor:`${C.green}24` }}>
- Latest change: {latestAcceptedAction.headline}
- </SurfacePill>
- )}
- </SurfaceMetaRow>
- {!!compactSavedChangeDetail && (
- <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- {compactSavedChangeDetail}
- </div>
- )}
- </SurfaceQuietPanel>
-
- <div data-testid="coach-mode-switcher" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "0.45rem" }}>
- {coachModeCards.map((mode) => (
- <button
- key={mode.id}
- type="button"
- className={`btn ${coachSurfaceMode === mode.id ? "btn-selected" : ""}`}
- data-testid={`coach-mode-button-${mode.id}`}
- onClick={() => {
- const activeAdaptiveRecommendation = getActiveCoachAdaptiveRecommendation(coachSurfaceMode);
- if (coachSurfaceMode !== mode.id && activeAdaptiveRecommendation?.payload?.recommendationJoinKey && activeAdaptiveRecommendation?.recommendation?.action?.type) {
- onRecordAdaptiveLearningEvent({
- eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationOutcomeRecorded,
- payload: buildCoachOutcomeEventInput({
- recommendationJoinKey: activeAdaptiveRecommendation.payload.recommendationJoinKey,
- decisionId: `decision_${activeAdaptiveRecommendation.payload.recommendationJoinKey}`,
- outcomeKind: ADAPTIVE_OUTCOME_KINDS.coachIgnored,
- action: activeAdaptiveRecommendation.recommendation.action,
- status: "ignored",
- detail: "Coach suggestion was left without being accepted.",
- sourceSurface: "coach",
- }),
- dedupeKey: `coach_ignore_${activeAdaptiveRecommendation.payload.recommendationJoinKey}_${mode.id}`,
- });
- }
- setCoachSurfaceMode(mode.id);
- clearCoachPreview();
- clearCoachSaveFeedback();
- setCoachError("");
- setCoachNotice("");
- }}
- style={{
- display:"grid",
- gap:"0.14rem",
- textAlign:"left",
- justifyItems:"start",
- minHeight:72,
- padding:"0.72rem 0.82rem",
- borderRadius:18,
- fontSize: "0.53rem",
- color: coachSurfaceMode === mode.id ? "var(--consumer-text)" : "var(--consumer-text-muted)",
- borderColor: coachSurfaceMode === mode.id
- ? mode.emphasis === "secondary" ? `${C.purple}45` : `${C.blue}38`
- : "var(--consumer-border)",
- background: coachSurfaceMode === mode.id
- ? mode.emphasis === "secondary" ? "rgba(168, 85, 247, 0.12)" : "rgba(59, 130, 246, 0.1)"
- : "var(--consumer-panel)",
- }}
- >
- <span style={{ fontSize:"0.58rem", fontWeight:700, color:"var(--consumer-text)" }}>{mode.label}</span>
- <span style={{ fontSize:"0.48rem", lineHeight:1.45 }}>{mode.description}</span>
- </button>
- ))}
- </div>
- </SurfaceStack>
- </SurfaceHero>
-
- {coachFeedbackModel && (
- <StateFeedbackBanner
- model={coachFeedbackModel}
- dataTestId="coach-feedback-status"
- compact
- />
- )}
-
- {coachSurfaceMode === COACH_SURFACE_MODES.todayWeek && (
- <div data-testid="coach-mode-panel-adjust_today" style={{ display: "grid", gap: "0.75rem" }}>
- <SurfaceCard variant="action" accentColor={C.green} style={{ display: "grid", gap: "0.45rem" }}>
- <SurfaceHeading eyebrow="Adjust today" title="Make the clearest call for right now" supporting="Pick the situation. Coach gives one move, why it matters, and what changes if you use it." eyebrowColor={C.green} />
-
- <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- Common situations
- </div>
- <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
- {todayPromptOptions.map((prompt) => (
- <button
- key={prompt.id}
- type="button"
- className={`btn ${selectedTodayPrompt === prompt.id ? "btn-selected" : ""}`}
- data-testid={`coach-today-prompt-${toCoachTestId(prompt.id)}`}
- onClick={() => {
- setSelectedTodayPrompt(prompt.id);
- clearCoachPreview();
- clearCoachSaveFeedback();
- setCoachNotice("");
- setCoachError("");
- }}
- style={{ fontSize: "0.5rem" }}
- >
- {prompt.label}
- </button>
- ))}
- </div>
-
- {renderCoachRecommendationCard({
- testId: "coach-job-card-adjust-today",
- headlineTestId: "coach-today-headline",
- recommendation: todayRecommendation.recommendation,
- why: todayRecommendation.why,
- likelyEffect: todayRecommendation.likelyEffect,
- diffLines: todayRecommendation.diffLines,
- actionSectionLabel: "Preview",
- actionLabel: "Preview today's change",
- actionTestId: "coach-preview-adjust-today",
- onAction: todayRecommendation.action ? () => openCoachPreview({
- ...primaryTodayAction,
- recommendation: todayRecommendation.recommendation,
- why: todayRecommendation.why,
- likelyEffect: todayRecommendation.likelyEffect,
- diffLines: todayRecommendation.diffLines,
- }) : null,
- actionDisabled: actionLoading || !todayRecommendation.action?.type,
- actionLoadingState: actionLoading,
- actionLoadingLabel: "Opening...",
- accentColor: C.green,
- })}
- </SurfaceCard>
- </div>
- )}
-
- {coachPreviewState && (
- <SurfaceCard data-testid="coach-preview-card" variant="strong" accentColor={C.blue} style={{ display:"grid", gap:"0.55rem" }}>
- <SurfaceHeading
- eyebrow="Preview"
- title={coachPreviewState.recommendation}
- supporting={coachPreviewState.displaySource}
- eyebrowColor={C.blue}
- />
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>Why</div>
- <div style={{ fontSize:"0.54rem", color:"var(--consumer-text)", lineHeight:1.5 }}>{coachPreviewState.why}</div>
- </div>
- <div style={{ display:"grid", gap:"0.35rem" }}>
- <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>Likely effect</div>
- <div style={{ fontSize:"0.54rem", color:"var(--consumer-text)", lineHeight:1.5 }}>{coachPreviewState.likelyEffect}</div>
- </div>
- {!!coachPreviewState.auditLine && (
- <div data-testid="coach-preview-audit" style={{ fontSize:"0.49rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- {coachPreviewState.auditLine}
- </div>
- )}
- {!!coachPreviewState.diffLines?.length && (
- <SurfaceDisclosure data-testid="coach-preview-details" summary="More detail">
- <div style={{ display:"grid", gap:"0.24rem" }}>
- {coachPreviewState.diffLines.map((line, index) => (
- <div key={`${index}_${line}`} style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- + {line}
- </div>
- ))}
- </div>
- </SurfaceDisclosure>
- )}
- <SurfaceActions>
- <button
- type="button"
- className="btn btn-primary"
- data-testid="coach-preview-accept"
- onClick={acceptPreviewedCoachChange}
- disabled={actionLoading || !coachPreviewState?.action?.type}
- style={{ opacity: actionLoading ? 0.6 : 1 }}
- >
- {actionLoading ? "Applying..." : "Accept change"}
- </button>
- <button
- type="button"
- className="btn"
- data-testid="coach-preview-cancel"
- onClick={clearCoachPreview}
- disabled={actionLoading}
- >
- Cancel
- </button>
- </SurfaceActions>
- </SurfaceCard>
- )}
-
- {coachSurfaceMode === COACH_SURFACE_MODES.changePlan && (
- <div data-testid="coach-mode-panel-adjust_week" style={{ display: "grid", gap: "0.75rem" }}>
- <SurfaceCard variant="action" accentColor={C.amber} style={{ display: "grid", gap: "0.45rem" }}>
- <SurfaceHeading eyebrow="Adjust this week" title="Change one thing, keep the week coherent" supporting="Coach recommends one weekly move first. Nothing changes until you accept the preview." eyebrowColor={C.amber} />
-
- {renderCoachRecommendationCard({
- testId: "coach-job-card-adjust-week",
- recommendation: weekRecommendation.recommendation,
- why: weekRecommendation.why,
- likelyEffect: weekRecommendation.likelyEffect,
- diffLines: weekRecommendation.diffLines,
- actionSectionLabel: "Preview",
- actionLabel: "Preview weekly change",
- actionTestId: "coach-preview-adjust-week",
- onAction: weekRecommendation.action ? () => openCoachPreview({
- ...primaryWeekAction,
- recommendation: weekRecommendation.recommendation,
- why: weekRecommendation.why,
- likelyEffect: weekRecommendation.likelyEffect,
- diffLines: weekRecommendation.diffLines,
- }) : null,
- actionDisabled: actionLoading || !weekRecommendation.action?.type,
- actionLoadingState: actionLoading,
- actionLoadingLabel: "Opening...",
- accentColor: C.amber,
- })}
-
- {otherWeekActions.length > 0 && (
- <SurfaceDisclosure data-testid="coach-week-options-disclosure" summary="More weekly options">
- <div style={{ display:"grid", gap:"0.4rem" }}>
- {otherWeekActions.slice(0, 3).map((entry) => {
- const previewState = buildCoachJobRecommendation(entry, { proposalSource: "coach_adjust_week", displaySource: "Adjust this week" });
- return (
- <button
- key={entry.id}
- type="button"
- className="btn"
- data-testid={`coach-week-option-${toCoachTestId(entry.id)}`}
- onClick={() => previewState && openCoachPreview({
- ...previewState,
- recommendation: previewState.recommendation,
- why: previewState.why,
- likelyEffect: previewState.likelyEffect,
- diffLines: previewState.diffLines,
- })}
- style={{ minHeight:56, borderRadius:16, justifyContent:"space-between", display:"grid", gap:"0.16rem", textAlign:"left" }}
- >
- <span style={{ fontSize:"0.54rem", color:"var(--consumer-text)", fontWeight:700 }}>{entry.label}</span>
- <span style={{ fontSize:"0.47rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>{entry.description}</span>
- </button>
- );
- })}
- </div>
- </SurfaceDisclosure>
- )}
- </SurfaceCard>
-
- </div>
- )}
-
- {coachSurfaceMode === COACH_SURFACE_MODES.askAnything && (
- <div data-testid="coach-mode-panel-ask_coach" style={{ display: "grid", gap: "0.75rem" }}>
- <SurfaceCard variant="subtle" accentColor={C.purple} style={{ display: "grid", gap: "0.45rem" }}>
- <SurfaceHeading
- eyebrow="Ask coach"
- title="Ask for a call, tradeoff, or next step"
- supporting={askAnythingState.headline}
- eyebrowColor={C.purple}
- />
- <div data-testid="coach-advisory-boundary" style={{ fontSize: "0.52rem", color: "var(--consumer-text-soft)", lineHeight: 1.45 }}>{askAnythingState.detail}</div>
- <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
- {askAnythingExamples.map((prompt) => (
- <button
- key={prompt}
- type="button"
- className="btn"
- data-testid={`coach-ask-example-${toCoachTestId(prompt)}`}
- onClick={() => sendAdvisoryQuestion(prompt)}
- disabled={askLoading}
- style={{ fontSize: "0.5rem" }}
- >
- {prompt}
- </button>
- ))}
- </div>
- <div style={{ display: "flex", gap: "0.45rem" }}>
- <input value={askInput} onChange={(e) => setAskInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendAdvisoryQuestion()} placeholder="Ask coach about training, recovery, or nutrition" data-testid="coach-ask-input" style={{ flex: 1 }} disabled={askLoading} />
- <button type="button" className="btn btn-primary" data-testid="coach-ask-send" onClick={() => sendAdvisoryQuestion()} disabled={askLoading} style={{ opacity: askLoading ? 0.6 : 1 }}>{askLoading ? "Thinking..." : "Ask"}</button>
- </div>
- </SurfaceCard>
-
- <SurfaceCard data-testid="coach-ask-answer-card" style={{ display: "grid", gap: "0.35rem" }}>
-{!latestAskAnswer && <div style={{ fontSize: "0.54rem", color: "#dbe7f6", lineHeight: 1.45 }}>Ask a question to get one clear next move.</div>}
- {!!latestAskAnswer && (
- <>
- <div style={{ fontSize: "0.47rem", color: "#64748b", letterSpacing: "0.08em" }}>LATEST ANSWER</div>
- {renderCoachRecommendationCard({
- testId: "coach-ask-message",
- recommendation: askRecommendation?.recommendation,
- why: askRecommendation?.why,
- likelyEffect: askRecommendation?.likelyEffect,
- diffLines: askRecommendation?.diffLines,
- actionSectionLabel: "Preview",
- actionLabel: "Preview suggested change",
- actionTestId: "coach-ask-preview-action",
- onAction: askRecommendation?.action ? () => openCoachPreview({
- ...askPreviewState,
- displaySource: "Ask coach",
- recommendation: askRecommendation?.recommendation,
- why: askRecommendation?.why,
- likelyEffect: askRecommendation?.likelyEffect,
- diffLines: askRecommendation?.diffLines,
- }) : null,
- actionDisabled: actionLoading || !askRecommendation?.action?.type,
- actionLoadingState: actionLoading,
- actionLoadingLabel: "Opening...",
- accentColor: C.purple,
- })}
- </>
- )}
- </SurfaceCard>
-
- <SurfaceDisclosure data-testid="coach-recent-questions-disclosure" summary={recentQuestionHistory.summary}>
- <div style={{ display:"grid", gap:"0.35rem" }}>
- {!recentQuestionHistory.entries.length && (
- <div style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- Keep this space for quick decisions, not a long transcript.
- </div>
- )}
- {recentQuestionHistory.entries.map((entry) => (
- <div key={entry.id} style={{ display:"grid", gap:"0.12rem", border:"1px solid var(--consumer-border)", borderRadius:14, padding:"0.55rem 0.62rem", background:"var(--consumer-panel)" }}>
- <div style={{ fontSize:"0.53rem", color:"var(--consumer-text)", lineHeight:1.45 }}>{entry.question}</div>
- {!!entry.timestampLabel && <div style={{ fontSize:"0.46rem", color:"var(--consumer-text-muted)", lineHeight:1.4 }}>{entry.timestampLabel}</div>}
- </div>
- ))}
- </div>
- </SurfaceDisclosure>
- </div>
- )}
-
- </div>
- );
-}
-
-function CoachSection({ title, items, color }) {
- return (
- <div style={{ background:"#0f172a", borderRadius:8, padding:"8px 12px", border:`1px solid ${color}20` }}>
- <div style={{ fontSize:"0.7rem", color, fontWeight:600, marginBottom:"0.25rem" }}>{title}</div>
- {(items?.length ? items : ["No issues detected."]).map((item, idx) => (
- <div key={idx} style={{ fontSize:"0.78rem", color:"#cbd5e1", lineHeight:1.6 }}>- {item}</div>
- ))}
- </div>
- );
-}
 
 

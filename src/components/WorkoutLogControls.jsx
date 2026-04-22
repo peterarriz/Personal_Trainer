@@ -1,9 +1,9 @@
 import React, { useState } from "react";
 import {
   SurfaceCard,
-  SurfaceMetaRow,
   SurfacePill,
 } from "./SurfaceSystem.jsx";
+import { ExerciseHowDisclosure } from "./ExerciseHowDisclosure.jsx";
 
 const clampNumber = (value, min = 0, max = null) => {
   const numeric = Number(value);
@@ -33,8 +33,8 @@ const formatDisplayValue = (value = "", suffix = "") => {
 const LARGE_BUTTON_STYLE = {
   minHeight: 52,
   minWidth: 52,
-  borderRadius: 16,
-  fontSize: "0.72rem",
+  borderRadius: 18,
+  fontSize: "0.68rem",
   fontWeight: 700,
   lineHeight: 1,
   display: "inline-flex",
@@ -45,16 +45,40 @@ const LARGE_BUTTON_STYLE = {
 
 const LARGE_INPUT_STYLE = {
   minHeight: 56,
-  borderRadius: 18,
-  border: "1px solid var(--consumer-border-strong)",
-  background: "var(--consumer-subpanel)",
+  borderRadius: 20,
+  border: "1px solid color-mix(in srgb, var(--consumer-border-strong) 90%, rgba(255,255,255,0.05))",
+  background: "linear-gradient(180deg, color-mix(in srgb, var(--consumer-subpanel) 96%, transparent) 0%, color-mix(in srgb, var(--consumer-panel) 94%, transparent) 100%)",
   color: "var(--consumer-text)",
-  fontSize: "1rem",
+  fontSize: "0.96rem",
   fontWeight: 700,
   textAlign: "center",
   padding: "0.65rem 0.7rem",
   width: "100%",
   fontVariantNumeric: "tabular-nums",
+  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
+};
+
+const LOG_CONTROL_CARD_STYLE = {
+  display: "grid",
+  gap: "0.52rem",
+  padding: "0.76rem",
+  borderRadius: 20,
+  background: "linear-gradient(180deg, color-mix(in srgb, var(--consumer-panel) 98%, transparent) 0%, color-mix(in srgb, var(--consumer-subpanel) 94%, transparent) 100%)",
+  borderColor: "color-mix(in srgb, var(--consumer-border) 90%, rgba(255,255,255,0.04))",
+  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
+};
+
+const LOG_CONTROL_LABEL_STYLE = {
+  fontSize: "0.47rem",
+  color: "var(--consumer-text-muted)",
+  letterSpacing: "0.1em",
+  textTransform: "uppercase",
+};
+
+const LOG_CONTROL_HELPER_STYLE = {
+  fontSize: "0.49rem",
+  color: "var(--consumer-text-muted)",
+  lineHeight: 1.5,
 };
 
 export function LogValueStepper({
@@ -92,21 +116,14 @@ export function LogValueStepper({
     <SurfaceCard
       data-testid={dataTestId || undefined}
       variant="subtle"
-      style={{
-        display: "grid",
-        gap: "0.45rem",
-        padding: "0.65rem",
-        borderRadius: 18,
-        background: "var(--consumer-panel)",
-        borderColor: "var(--consumer-border)",
-      }}
+      style={LOG_CONTROL_CARD_STYLE}
     >
       <div style={{ display: "grid", gap: "0.16rem" }}>
-        <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-muted)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+        <div style={LOG_CONTROL_LABEL_STYLE}>
           {label}
         </div>
         {!!helper && (
-          <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-muted)", lineHeight: 1.45 }}>
+          <div style={LOG_CONTROL_HELPER_STYLE}>
             {helper}
           </div>
         )}
@@ -138,7 +155,7 @@ export function LogValueStepper({
           +{Math.abs(Number(incrementAmount) || 1)}
         </button>
       </div>
-      <div style={{ fontSize: "0.56rem", color: "var(--consumer-text)", fontWeight: 700, lineHeight: 1.3 }}>
+      <div style={{ fontSize: "0.58rem", color: "var(--consumer-text)", fontWeight: 700, lineHeight: 1.3 }}>
         {formatDisplayValue(value, suffix)}
       </div>
     </SurfaceCard>
@@ -157,20 +174,13 @@ export function LogFeelStrip({
       role="group"
       aria-label="How the session felt"
       variant="subtle"
-      style={{
-        display: "grid",
-        gap: "0.5rem",
-        padding: "0.7rem",
-        borderRadius: 18,
-        background: "var(--consumer-panel)",
-        borderColor: "var(--consumer-border)",
-      }}
+      style={LOG_CONTROL_CARD_STYLE}
     >
       <div style={{ display: "grid", gap: "0.16rem" }}>
-        <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-muted)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+        <div style={LOG_CONTROL_LABEL_STYLE}>
           Session feel
         </div>
-        <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-muted)", lineHeight: 1.45 }}>
+        <div style={LOG_CONTROL_HELPER_STYLE}>
           One tap and go.
         </div>
       </div>
@@ -187,7 +197,7 @@ export function LogFeelStrip({
               onClick={() => onChange(optionKey)}
               style={{
                 minHeight: 56,
-                borderRadius: 16,
+                borderRadius: 18,
                 display: "grid",
                 gap: "0.08rem",
                 justifyItems: "center",
@@ -195,6 +205,7 @@ export function LogFeelStrip({
                 textAlign: "center",
                 padding: "0.4rem 0.3rem",
                 touchAction: "manipulation",
+                boxShadow: isActive ? "var(--shadow-1)" : "none",
               }}
             >
               <span style={{ fontSize: "0.7rem", fontWeight: 800, lineHeight: 1 }}>{optionKey}</span>
@@ -207,47 +218,78 @@ export function LogFeelStrip({
   );
 }
 
-export function RestTimerStrip({
-  timer = null,
-  onClear = () => {},
-  onAddThirty = () => {},
+export function LogChoiceStrip({
+  label = "",
+  helper = "",
+  value = "",
+  options = [],
+  onChange = () => {},
+  dataTestId = "",
+  optionTestIdPrefix = "",
 }) {
-  if (!timer?.active) return null;
   return (
     <SurfaceCard
-      data-testid="log-rest-timer"
-      variant="action"
-      style={{
-        display: "grid",
-        gap: "0.45rem",
-        padding: "0.7rem",
-        borderRadius: 18,
-        background: "rgba(9, 16, 27, 0.86)",
-        borderColor: "rgba(255, 201, 119, 0.26)",
-      }}
+      data-testid={dataTestId || undefined}
+      variant="subtle"
+      style={LOG_CONTROL_CARD_STYLE}
     >
-      <div style={{ display: "grid", gap: "0.18rem" }}>
-        <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-muted)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
-          Rest timer
+      <div style={{ display: "grid", gap: "0.16rem" }}>
+        <div style={LOG_CONTROL_LABEL_STYLE}>
+          {label}
         </div>
-        <div style={{ fontSize: "0.72rem", color: "var(--consumer-text)", fontWeight: 700, lineHeight: 1.25 }}>
-          {timer.label || "Current set"}
-        </div>
+        {!!helper && (
+          <div style={LOG_CONTROL_HELPER_STYLE}>
+            {helper}
+          </div>
+        )}
       </div>
-      <SurfaceMetaRow>
-        <SurfacePill strong style={{ background: "rgba(255, 201, 119, 0.12)", borderColor: "rgba(255, 201, 119, 0.26)", color: "#ffd7a6" }}>
-          {timer.display}
-        </SurfacePill>
-      </SurfaceMetaRow>
-      <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-        <button type="button" className="btn" onClick={onAddThirty} style={{ minHeight: 48, borderRadius: 14 }}>
-          +30 sec
-        </button>
-        <button type="button" className="btn" onClick={onClear} style={{ minHeight: 48, borderRadius: 14 }}>
-          Clear
-        </button>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(88px, 1fr))", gap: "0.35rem" }}>
+        {(options || []).map((option) => {
+          const isActive = String(value || "") === String(option?.key || "");
+          return (
+            <button
+              key={option?.key || option?.label}
+              type="button"
+              data-testid={optionTestIdPrefix ? `${optionTestIdPrefix}${option?.key || ""}` : undefined}
+              className={isActive ? "btn btn-primary" : "btn"}
+              onClick={() => onChange(option?.key || "")}
+              style={{
+                minHeight: 50,
+                borderRadius: 16,
+                justifyContent: "center",
+                fontSize: "0.48rem",
+                fontWeight: 700,
+                lineHeight: 1.2,
+                padding: "0.42rem 0.35rem",
+                touchAction: "manipulation",
+              }}
+            >
+              {option?.label || option?.key || ""}
+            </button>
+          );
+        })}
       </div>
     </SurfaceCard>
+  );
+}
+
+export function LogCompletionSelector({
+  value = "",
+  options = [],
+  onChange = () => {},
+  helper = "",
+  dataTestId = "log-completion-selector",
+}) {
+  return (
+    <LogChoiceStrip
+      label="Session outcome"
+      helper={helper}
+      value={value}
+      options={options}
+      onChange={onChange}
+      dataTestId={dataTestId}
+      optionTestIdPrefix="log-completion-"
+    />
   );
 }
 
@@ -256,7 +298,6 @@ export function StrengthExecutionCard({
   index = 0,
   onStepField = () => {},
   onChangeField = () => {},
-  onStartRest = () => {},
   onUsePlannedExercise = () => {},
   bandTensionLevels = [],
 }) {
@@ -273,23 +314,23 @@ export function StrengthExecutionCard({
       data-testid={`log-strength-execution-card-${index}`}
       variant="subtle"
       style={{
-        display: "grid",
-        gap: "0.55rem",
-        padding: "0.75rem",
-        borderRadius: 20,
-        background: "var(--consumer-panel)",
-        borderColor: "var(--consumer-border)",
+        ...LOG_CONTROL_CARD_STYLE,
+        gap: "0.58rem",
       }}
     >
       <div style={{ display: "grid", gap: "0.2rem" }}>
-        <div style={{ fontSize: "0.62rem", color: "var(--consumer-text)", fontWeight: 700, lineHeight: 1.3 }}>
+        <div style={{ fontSize: "0.64rem", color: "var(--consumer-text)", fontWeight: 700, lineHeight: 1.28 }}>
           {row?.exercise || row?.prescribedExercise || `Exercise ${index + 1}`}
         </div>
-        <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-muted)", lineHeight: 1.45 }}>
+        <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-muted)", lineHeight: 1.5 }}>
           {row?.prescribedExercise
             ? `Planned ${row.prescribedSetsText || row.prescribedSets || ""} sets${row?.prescribedRepsText ? `, ${row.prescribedRepsText}` : ""}${row?.prescribedWeight ? `, ${row.prescribedWeight} lb` : row?.bodyweightOnly ? ", bodyweight" : ""}`
             : "Extra movement"}
         </div>
+        <ExerciseHowDisclosure
+          dataTestId={`log-strength-help-${index}`}
+          label={row?.exercise || row?.prescribedExercise || ""}
+        />
       </div>
 
       <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", alignItems: "center" }}>
@@ -351,26 +392,17 @@ export function StrengthExecutionCard({
           data-testid={`log-strength-complete-set-${index}`}
           className="btn"
           onClick={() => onStepField(index, "actualSets", 1, { min: 0, max: Math.max(plannedSets || 0, 12), precision: 0 })}
-          style={{
-            minHeight: 50,
-            borderRadius: 16,
-            flex: "1 1 160px",
-            justifyContent: "center",
-            borderColor: "rgba(94, 234, 212, 0.28)",
-            color: "var(--consumer-text)",
-            background: "rgba(15, 23, 42, 0.72)",
-          }}
-        >
+            style={{
+              minHeight: 50,
+              borderRadius: 18,
+              flex: "1 1 160px",
+              justifyContent: "center",
+              borderColor: "rgba(94, 234, 212, 0.22)",
+              color: "var(--consumer-text)",
+              background: "linear-gradient(180deg, rgba(15, 23, 42, 0.74) 0%, rgba(8, 14, 25, 0.92) 100%)",
+            }}
+          >
           +1 set
-        </button>
-        <button
-          type="button"
-          data-testid={`log-rest-start-${index}`}
-          className="btn"
-          onClick={() => onStartRest(row, index)}
-          style={{ minHeight: 50, borderRadius: 16, flex: "1 1 120px", justifyContent: "center" }}
-        >
-          Rest 90s
         </button>
       </div>
 
@@ -381,7 +413,7 @@ export function StrengthExecutionCard({
         style={{ borderTop: "1px solid var(--consumer-border)", paddingTop: "0.5rem" }}
       >
         <summary style={{ cursor: "pointer", fontSize: "0.5rem", color: "var(--consumer-text-muted)" }}>
-          Exercise details
+          Swap or rename
         </summary>
         <div style={{ display: "grid", gap: "0.45rem", marginTop: "0.45rem" }}>
           <input

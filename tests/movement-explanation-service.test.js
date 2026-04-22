@@ -46,6 +46,24 @@ test("conditioning and run templates resolve with rep guidance", () => {
   assert.match(prehab.cautionNotes, /not a conditioning test/i);
 });
 
+test("common gym lifts resolve with real setup cues and a demo search link", () => {
+  const bench = getMovementExplanation("Barbell Bench Press");
+  const incline = getMovementExplanation("Incline DB Press");
+  const carry = getMovementExplanation("Farmer Carry");
+
+  assert.equal(bench.found, true);
+  assert.match(bench.whatItIs, /horizontal press/i);
+  assert.match(bench.setupNotes, /feet planted|upper back/i);
+  assert.match(bench.demoSearchUrl, /youtube\.com\/results\?search_query=/i);
+
+  assert.equal(incline.found, true);
+  assert.match(incline.whatItIs, /angled press/i);
+  assert.match(incline.howToDoIt, /low incline/i);
+
+  assert.equal(carry.found, true);
+  assert.match(carry.repCountsAs, /distance or time/i);
+});
+
 test("unknown labels return a safe empty explanation object", () => {
   const explanation = getMovementExplanation("Sunday Reset");
 
@@ -53,4 +71,5 @@ test("unknown labels return a safe empty explanation object", () => {
   assert.equal(explanation.label, "Sunday Reset");
   assert.equal(explanation.whatItIs, "");
   assert.deepEqual(explanation.commonSubstitutions, []);
+  assert.equal(explanation.demoSearchUrl, "");
 });

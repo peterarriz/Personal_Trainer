@@ -91,6 +91,7 @@ export const assembleCanonicalPlanDay = ({
   });
   const realWorldNutrition = deriveRealWorldNutritionEngine({
     location: resolvePlanDayLocation(personalization),
+    dateKey,
     dayType: nutritionLayer?.dayType,
     goalContext: getGoalContext(goals),
     nutritionLayer,

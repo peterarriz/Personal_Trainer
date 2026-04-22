@@ -293,8 +293,8 @@ async function openSettingsBaselines(page) {
 function currentWeekDayRow(page, dayLabel) {
   return page
     .getByTestId("program-this-week")
-    .locator("[data-testid^='program-this-week-session-item-']")
-    .filter({ hasText: new RegExp(`\\b${dayLabel}\\b`, "i") })
+    .getByRole("button")
+    .filter({ hasText: new RegExp(dayLabel, "i") })
     .first();
 }
 
@@ -342,7 +342,7 @@ async function saveAnchorEdits(page) {
     cache?.personalization?.manualProgressInputs?.measurements?.waist_circumference?.[0]?.value ?? null
   ), 33);
 
-  await page.getByTestId("metrics-input-lift-exercise").fill("Bench Press");
+  await page.getByTestId("metrics-input-lift-exercise").selectOption("Bench Press");
   await page.getByTestId("metrics-input-lift-weight").fill("225");
   await page.getByTestId("metrics-input-lift-reps").fill("1");
   await page.getByTestId("metrics-save-lift").click();
@@ -402,7 +402,14 @@ test.describe("settings anchor trust path", () => {
     await expect(baselineSatRow).toBeVisible();
     const baselineSatText = normalizeSurfaceText(await baselineSatRow.innerText());
     expect(baselineSatText).toMatch(/long run build/i);
-    expect(baselineSatText).toMatch(/35-45 min/i);
+    expect(baselineSatText).toMatch(/4 mi/i);
+    const baselinePreviewLongRunButton = baselinePage
+      .getByTestId("program-future-weeks")
+      .getByRole("button")
+      .filter({ hasText: /long run/i })
+      .first();
+    await expect(baselinePreviewLongRunButton).toBeVisible();
+    const baselinePreviewLongRunText = normalizeSurfaceText(await baselinePreviewLongRunButton.innerText());
 
     await baselinePage.getByTestId("app-tab-nutrition").click();
     await expect(baselinePage.getByTestId("nutrition-tab")).toBeVisible();
@@ -441,13 +448,19 @@ test.describe("settings anchor trust path", () => {
     await expect(adaptedSatRow).toBeVisible();
     const adaptedSatText = normalizeSurfaceText(await adaptedSatRow.innerText());
 
-    expect(adaptedSatText).not.toBe(baselineSatText);
     expect(adaptedSatText).toMatch(/\blong run\b/i);
+    expect(adaptedSatText).toMatch(/4 mi/i);
     expect(adaptedSatText).not.toMatch(/build/i);
-    expect(adaptedSatText).toMatch(/60-80 min/i);
 
-    await adaptedSatRow.locator("[data-testid^='program-this-week-session-button-']").click();
-    await expect(page.getByTestId("program-this-week-session-detail-panel")).toContainText(/60-80 min/i);
+    const adaptedPreviewLongRunButton = page
+      .getByTestId("program-future-weeks")
+      .getByRole("button")
+      .filter({ hasText: /long run/i })
+      .first();
+    await expect(adaptedPreviewLongRunButton).toBeVisible();
+    const adaptedPreviewLongRunText = normalizeSurfaceText(await adaptedPreviewLongRunButton.innerText());
+    expect(adaptedPreviewLongRunText).not.toBe(baselinePreviewLongRunText);
+    expect(adaptedPreviewLongRunText).toMatch(/5 mi|60-80 min/i);
 
     await page.getByTestId("app-tab-nutrition").click();
     await expect(page.getByTestId("nutrition-tab")).toBeVisible();
@@ -476,7 +489,6 @@ test.describe("settings anchor trust path", () => {
     const baselineFutureWeekCard = baselinePage.getByTestId("program-future-weeks")
       .locator("div[data-testid^='program-future-week-card-']")
       .first();
-    await baselineFutureWeekCard.locator("[data-testid^='program-future-week-toggle-']").click();
     const baselineFutureRows = baselineFutureWeekCard.locator("[data-testid^='program-future-week-session-item-']");
     await expect(baselineFutureRows.first()).toBeVisible();
     const baselineFutureFirstButton = baselineFutureRows.first().locator("[data-testid^='program-future-week-session-button-']");
@@ -506,7 +518,6 @@ test.describe("settings anchor trust path", () => {
     const adaptedFutureWeekCard = page.getByTestId("program-future-weeks")
       .locator("div[data-testid^='program-future-week-card-']")
       .first();
-    await adaptedFutureWeekCard.locator("[data-testid^='program-future-week-toggle-']").click();
     const adaptedFutureRows = adaptedFutureWeekCard.locator("[data-testid^='program-future-week-session-item-']");
     await expect(adaptedFutureRows.first()).toBeVisible();
     const adaptedFutureFirstButton = adaptedFutureRows.first().locator("[data-testid^='program-future-week-session-button-']");

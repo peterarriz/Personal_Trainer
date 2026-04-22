@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   applyIntakeStarterMetrics,
+  buildIntakeGoalCaptureModel,
   INTAKE_COPY_DECK,
   INTAKE_STAGE_CONTRACT,
   buildIntakeStarterMetricDraft,
@@ -142,7 +143,26 @@ test("structured running starter metrics convert split baseline inputs into cano
   assert.equal(outcome.answers.intake_completeness.fields.longest_recent_run.raw, "8 miles");
 });
 
-test("pending-goal save now requires the full goal detail set before saving", () => {
+test("goal capture model keeps template goals structured-first and custom goals as a secondary fallback", () => {
+  const structured = buildIntakeGoalCaptureModel({
+    goalTypeId: "strength",
+    selection: buildGoalTemplateSelection({ templateId: "improve_big_lifts" }),
+  });
+  const custom = buildIntakeGoalCaptureModel({
+    goalTypeId: "custom",
+    selection: buildGoalTemplateSelection({ customGoalText: "Train around low-back flareups" }),
+  });
+
+  assert.equal(structured.entryMode, "preset");
+  assert.equal(structured.supportsMetricEditing, true);
+  assert.equal(structured.allowsFuzzyMetrics, true);
+  assert.match(structured.helper, /leave the rest blank/i);
+  assert.equal(custom.entryMode, "custom");
+  assert.equal(custom.supportsMetricEditing, false);
+  assert.equal(custom.commitLabel, "Save custom goal");
+});
+
+test("pending-goal save can keep a structured goal intentionally fuzzy when exact metrics are still unknown", () => {
   const outcome = applyIntakeStarterMetrics({
     answers: {},
     goalTypeId: "endurance",
@@ -151,11 +171,12 @@ test("pending-goal save now requires the full goal detail set before saving", ()
       event_distance: "half_marathon",
       target_timeline: "October",
     },
-    requireAll: true,
   });
 
-  assert.equal(outcome.isValid, false);
-  assert.match(outcome.fieldErrors.current_run_frequency || "", /runs you do in a normal week/i);
+  assert.equal(outcome.isValid, true);
+  assert.equal(outcome.answers.intake_completeness.fields.event_distance.value, "half_marathon");
+  assert.equal(outcome.answers.intake_completeness.fields.target_timeline.raw, "October");
+  assert.equal(outcome.answers.intake_completeness.fields.current_run_frequency, undefined);
 });
 
 test("full pending-goal details can be validated and stored before the goal is saved", () => {

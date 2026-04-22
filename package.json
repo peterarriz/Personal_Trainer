@@ -26,6 +26,7 @@
     "qa:launch-simulation:deployed": "node -r sucrase/register scripts/run-launch-simulation.js --mode deployed",
     "qa:launch-simulation:report": "node -r sucrase/register scripts/run-launch-simulation.js --mode report",
     "qa:launch-simulation:browser:chunk": "node scripts/run-launch-browser-chunk.js",
+    "qa:launch-gate": "node scripts/run-launch-gate.cjs",
     "qa:peter-proof-gate": "node scripts/run-peter-proof-gate.cjs",
     "qa:manual-pack": "node scripts/run-manual-qa-pack.cjs",
     "qa:release-gate": "node scripts/run-manual-qa-pack.cjs",
@@ -52,6 +53,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
-    "serve": "^14.2.6"
+    "serve": "^14.2.6",
+    "terser": "^5.46.1"
   }
 }

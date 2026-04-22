@@ -1087,19 +1087,19 @@ const detectSystemDark = () => (
 );
 
 const DEFAULT_THEME_CHROME = {
-  radiusSm: "10px",
-  radiusMd: "14px",
-  radiusLg: "18px",
-  cardTopLight: "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0))",
-  cardBloom: "radial-gradient(circle, var(--brand-accent-soft) 0%, rgba(0,0,0,0) 68%)",
-  buttonShadowRest: "0 0 0 rgba(0,0,0,0)",
+  radiusSm: "12px",
+  radiusMd: "18px",
+  radiusLg: "24px",
+  cardTopLight: "linear-gradient(180deg, rgba(255,255,255,0.1), rgba(255,255,255,0.03) 26%, rgba(255,255,255,0) 100%)",
+  cardBloom: "radial-gradient(circle, color-mix(in srgb, var(--brand-accent-soft) 88%, transparent) 0%, rgba(0,0,0,0) 72%)",
+  buttonShadowRest: "0 10px 22px rgba(5, 12, 22, 0.08)",
 };
 
 const THEME_CHROME = {
   Atlas: {
-    radiusSm: "10px",
-    radiusMd: "16px",
-    radiusLg: "22px",
+    radiusSm: "12px",
+    radiusMd: "18px",
+    radiusLg: "24px",
     buttonShadowHover: "0 18px 34px rgba(8, 18, 34, 0.24)",
   },
   Maison: {
@@ -1111,9 +1111,9 @@ const THEME_CHROME = {
     buttonShadowHover: "0 18px 34px rgba(40, 18, 18, 0.28)",
   },
   Circuit: {
-    radiusSm: "8px",
-    radiusMd: "12px",
-    radiusLg: "18px",
+    radiusSm: "10px",
+    radiusMd: "14px",
+    radiusLg: "20px",
     cardTopLight: "linear-gradient(180deg, rgba(184,220,255,0.1), rgba(255,255,255,0))",
     buttonShadowHover: "0 18px 34px rgba(7, 16, 26, 0.24)",
   },
@@ -1139,9 +1139,9 @@ const THEME_CHROME = {
     cardBloom: "radial-gradient(circle, rgba(136,176,221,0.18) 0%, rgba(0,0,0,0) 70%)",
   },
   Fieldhouse: {
-    radiusSm: "8px",
-    radiusMd: "12px",
-    radiusLg: "18px",
+    radiusSm: "10px",
+    radiusMd: "14px",
+    radiusLg: "20px",
     cardTopLight: "linear-gradient(180deg, rgba(231,244,195,0.12), rgba(255,255,255,0))",
     cardBloom: "radial-gradient(circle, rgba(158,207,86,0.18) 0%, rgba(0,0,0,0) 70%)",
   },

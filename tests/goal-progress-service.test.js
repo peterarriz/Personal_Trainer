@@ -52,6 +52,20 @@ const buildBenchLog = ({ weight, reps, sets }) => ({
   ],
 });
 
+const buildAccessoryLog = (records = []) => ({
+  checkin: { status: "completed_as_planned" },
+  performanceRecords: records.map((record) => ({
+    scope: "exercise",
+    exercise: record.exercise,
+    actualWeight: record.weight,
+    actualReps: record.reps,
+    actualSets: record.sets,
+    prescribedWeight: record.weight,
+    prescribedReps: record.reps,
+    prescribedSets: record.sets,
+  })),
+});
+
 test("event goals track pace, run volume, and workout progression from resolved goal structure", () => {
   const goals = normalizeGoals([{
     id: "goal_1",
@@ -117,6 +131,53 @@ test("strength goals track working sets, performance records, and projected dist
   assert.match(itemsByKey.performance_record.currentDisplay, /Best logged top set 195 lb/i);
   assert.match(itemsByKey.projected_goal_progress.currentDisplay, /30 lb remaining to 225 lb/i);
   assert.equal(result.goalCards[0].status, GOAL_PROGRESS_STATUSES.onTrack);
+  assert.equal(result.goalCards[0].progressAnchor.kind, "exact_metric");
+  assert.match(result.goalCards[0].progressAnchor.distanceLabel, /30 lb to goal/i);
+  assert.equal(result.goalCards[0].progressAnchor.currentLabel, "195 lb current");
+});
+
+test("strength goals can surface accessory support evidence without pretending it is the main lift", () => {
+  const result = buildGoalProgressTracking({
+    resolvedGoals: [
+      buildResolvedGoal({
+        summary: "Bench 225",
+        planningCategory: "strength",
+        goalFamily: "strength",
+        primaryMetric: { key: "bench_press_weight", label: "Bench press", unit: "lb", targetValue: "225" },
+        driverProfile: {
+          version: "2026-04-goal-driver-graph-v1",
+          primaryDomain: "strength_hypertrophy",
+          primaryOutcomeId: "bench_press_strength",
+          primaryOutcomeLabel: "Bench press strength",
+          focusLabel: "Bench support graph",
+          directDrivers: [{ id: "horizontal_press_strength", label: "Horizontal pressing strength", weight: 0.4 }],
+          supportDrivers: [
+            { id: "anterior_delt_strength", label: "Shoulder pressing support", weight: 0.18 },
+            { id: "triceps_strength", label: "Triceps strength", weight: 0.18 },
+            { id: "upper_back_stability", label: "Upper-back stability", weight: 0.14 },
+          ],
+          protectiveDrivers: [{ id: "shoulder_tolerance", label: "Shoulder tolerance", weight: 0.1 }],
+          transferNotes: [],
+        },
+      }),
+    ],
+    logs: {
+      "2026-04-02": buildAccessoryLog([
+        { exercise: "Incline DB Press", weight: 135, reps: 8, sets: 3 },
+        { exercise: "Lateral Raise", weight: 20, reps: 15, sets: 3 },
+      ]),
+      "2026-04-09": buildAccessoryLog([
+        { exercise: "Chest-Supported Row", weight: 90, reps: 10, sets: 3 },
+      ]),
+    },
+    now: "2026-04-10",
+  });
+
+  const itemsByKey = Object.fromEntries(result.goalCards[0].trackedItems.map((item) => [item.key, item]));
+  assert.ok(itemsByKey.support_work_coverage);
+  assert.match(itemsByKey.support_work_coverage.currentDisplay, /support drivers/i);
+  assert.match(itemsByKey.support_work_coverage.trendDisplay, /Incline DB Press|Lateral Raise|Chest-Supported Row/i);
+  assert.match(itemsByKey.projected_goal_progress.currentDisplay, /still needs to be logged/i);
 });
 
 test("body-composition goals use live proxy trends like bodyweight, waist, and consistency", () => {
@@ -188,6 +249,8 @@ test("appearance goals stay review-based and avoid fake exact precision", () => 
   assert.ok(checklist);
   assert.match(checklist.currentDisplay, /\d\/3 review anchors updated this cycle/i);
   assert.match(card.honestyNote, /never get a fake exact completion score/i);
+  assert.equal(card.progressAnchor.kind, "status");
+  assert.match(card.progressAnchor.headline, /Building through proxies/i);
 });
 
 test("swim speed goals track benchmark retests, swim reality, and consistency without pretending they are generic cardio", () => {

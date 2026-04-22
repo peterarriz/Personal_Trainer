@@ -105,6 +105,8 @@ const mockSupabaseRuntime = async (page, {
   signUpStatus = 200,
   signUpBody = null,
   trainerDataRows = null,
+  trainerDataGetDelayMs = 0,
+  trainerDataPostDelayMs = 0,
   logoutDelayMs = 0,
   deleteDiagnosticsStatus = 200,
   deleteDiagnosticsBody = null,
@@ -115,6 +117,8 @@ const mockSupabaseRuntime = async (page, {
     deleteGetRequests: 0,
     deletePostRequests: 0,
     logoutRequests: 0,
+    trainerDataGetRequests: 0,
+    trainerDataPostRequests: 0,
     recoverRequests: 0,
     lastRecoverBody: null,
     resendConfirmationRequests: 0,
@@ -243,6 +247,10 @@ const mockSupabaseRuntime = async (page, {
     const url = route.request().url();
     if (url.includes("/rest/v1/trainer_data")) {
       if (route.request().method() === "GET") {
+        stats.trainerDataGetRequests += 1;
+        if (trainerDataGetDelayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, trainerDataGetDelayMs));
+        }
         const rows = Array.isArray(trainerDataRows)
           ? trainerDataRows
           : [{ id: "trainer_v1_user", user_id: session.user.id, data: payload }];
@@ -252,6 +260,10 @@ const mockSupabaseRuntime = async (page, {
           body: JSON.stringify(rows),
         });
         return;
+      }
+      stats.trainerDataPostRequests += 1;
+      if (trainerDataPostDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, trainerDataPostDelayMs));
       }
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
       return;

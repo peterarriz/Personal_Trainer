@@ -220,7 +220,7 @@ test("Today keeps one workout surface and Log keeps detailed entry inside Log wo
 
   const todayTab = page.getByTestId("today-tab");
   await expect(todayTab).toBeVisible();
-  await expect(todayTab.getByTestId("planned-session-plan")).toHaveCount(1);
+  await expect(todayTab.getByTestId("today-session-plan")).toHaveCount(1);
   await expect(todayTab.getByTestId("today-primary-cta")).toBeVisible();
   await expect(todayTab.getByTestId("today-quick-log")).toHaveCount(0);
 

@@ -107,7 +107,7 @@ const resolveAthleteProfile = ({
   };
 };
 
-const buildEquipmentProfile = (athleteProfile = {}, personalization = {}) => {
+export const buildEquipmentProfile = (athleteProfile = {}, personalization = {}) => {
   const trainingContext = athleteProfile?.trainingContext || athleteProfile?.userProfile?.trainingContext || deriveTrainingContextFromPersonalization({ personalization });
   const bucket = String(trainingContext?.equipmentAccess?.value || "").trim().toLowerCase();
   const items = Array.isArray(trainingContext?.equipmentAccess?.items) ? trainingContext.equipmentAccess.items.map((item) => String(item || "").trim()).filter(Boolean) : [];
@@ -124,7 +124,7 @@ const buildEquipmentProfile = (athleteProfile = {}, personalization = {}) => {
   };
 };
 
-const buildExercise = (ex, sets, reps, note = "") => ({
+export const buildExercise = (ex, sets, reps, note = "") => ({
   ex: sanitizeText(ex, 120),
   sets: sanitizeText(sets, 40),
   reps: sanitizeText(reps, 40),
@@ -240,7 +240,7 @@ const applyAvailabilityTrim = ({
   return next;
 };
 
-const buildFoundationStrengthA = (equipment = {}) => ([
+export const buildFoundationStrengthA = (equipment = {}) => ([
   buildExercise(equipment.hasFullGym ? "Back squat" : "Goblet squat", "3-4 sets", "5-8 reps", "Start with a repeatable squat pattern."),
   buildExercise(equipment.hasBench ? "Bench press" : "DB bench press", "3-4 sets", "6-8 reps", "Pressing stays crisp, not grindy."),
   buildExercise(equipment.hasCable || equipment.hasPullup ? "Row or pull-down" : "One-arm DB row", "3 sets", "8-10 reps", "Match pressing volume with clean pulling."),
@@ -248,7 +248,7 @@ const buildFoundationStrengthA = (equipment = {}) => ([
   buildExercise("Loaded carry or plank", "2-3 sets", "30-45 sec", "Finish with trunk control."),
 ]);
 
-const buildFoundationStrengthB = (equipment = {}) => ([
+export const buildFoundationStrengthB = (equipment = {}) => ([
   buildExercise(equipment.hasFullGym ? "Front squat or split squat" : "Rear-foot-elevated split squat", "3 sets", "6-8 reps", "Single-leg control keeps the session athletic."),
   buildExercise(equipment.hasFullGym ? "Overhead press" : "DB overhead press", "3-4 sets", "6-8 reps", "Keep the press crisp."),
   buildExercise(equipment.hasCable ? "Cable row" : "Single-arm row", "3 sets", "8-12 reps", "Repeatable pulling volume."),
@@ -256,49 +256,49 @@ const buildFoundationStrengthB = (equipment = {}) => ([
   buildExercise("Carry or trunk finisher", "2-3 sets", "30-45 sec", "Leave feeling athletic, not smoked."),
 ]);
 
-const buildStrengthFoundationA = (equipment = {}) => ([
+export const buildStrengthFoundationA = (equipment = {}) => ([
   buildExercise(equipment.hasFullGym ? "Back squat" : "Goblet squat", "4 sets", "5 reps", "This is the main lower-body practice."),
   buildExercise(equipment.hasBench ? "Bench press" : "DB bench press", "4 sets", "5 reps", "Keep the press repeatable."),
   buildExercise(equipment.hasCable || equipment.hasPullup ? "Pull-up or pull-down" : "One-arm DB row", "3 sets", "6-8 reps", "Strong upper-back support."),
   buildExercise(equipment.hasFullGym ? "Romanian deadlift" : "DB Romanian deadlift", "3 sets", "6 reps", "Own the hinge pattern."),
 ]);
 
-const buildStrengthFoundationB = (equipment = {}) => ([
+export const buildStrengthFoundationB = (equipment = {}) => ([
   buildExercise(equipment.hasFullGym ? "Deadlift or trap-bar deadlift" : "DB Romanian deadlift", "4 sets", "4-6 reps", "This is the heavy hinge exposure."),
   buildExercise(equipment.hasFullGym ? "Overhead press" : "DB overhead press", "4 sets", "5 reps", "Press with full-body tension."),
   buildExercise(equipment.hasCable || equipment.hasPullup ? "Row or pull-down" : "Chest-supported DB row", "3 sets", "8 reps", "Keep pulling volume honest."),
   buildExercise("Split squat or step-up", "3 sets", "8 reps", "Single-leg stability keeps the week balanced."),
 ]);
 
-const buildPowerbuildingLowerStrength = (equipment = {}) => ([
+export const buildPowerbuildingLowerStrength = (equipment = {}) => ([
   buildExercise(equipment.hasFullGym ? "Top squat set" : "Heavy goblet squat", "1 top set + 3 backoff sets", "4-6 reps", "Numbers matter, but bar speed still matters."),
   buildExercise(equipment.hasFullGym ? "Romanian deadlift" : "DB Romanian deadlift", "3 sets", "6-8 reps", "Keep hinge volume honest."),
   buildExercise(equipment.hasFullGym ? "Leg press or hack squat" : "Split squat", "3 sets", "8-12 reps", "Hypertrophy support for lower body."),
   buildExercise("Calves or trunk", "2-3 sets", "10-15 reps", "Finish with low-drama support work."),
 ]);
 
-const buildPowerbuildingUpperStrength = (equipment = {}) => ([
+export const buildPowerbuildingUpperStrength = (equipment = {}) => ([
   buildExercise(equipment.hasBench ? "Bench press top set" : "DB bench press", "1 top set + 3 backoff sets", "4-6 reps", "Heavy press stays central."),
   buildExercise(equipment.hasCable || equipment.hasPullup ? "Weighted pull-up or pull-down" : "One-arm DB row", "4 sets", "6-8 reps", "Pair heavy pressing with heavy pulling."),
   buildExercise(equipment.hasFullGym ? "Incline press" : "Incline DB press", "3 sets", "8-10 reps", "Upper-body volume supports physique goals."),
   buildExercise("Arms or rear delts", "2-3 sets", "10-15 reps", "Keep the bodybuilding layer visible."),
 ]);
 
-const buildPowerbuildingLowerHypertrophy = (equipment = {}) => ([
+export const buildPowerbuildingLowerHypertrophy = (equipment = {}) => ([
   buildExercise(equipment.hasFullGym ? "Leg press or front squat" : "DB split squat", "4 sets", "8-12 reps", "Lower-body size work without maxing out strain."),
   buildExercise(equipment.hasFullGym ? "Romanian deadlift" : "DB Romanian deadlift", "3 sets", "8-10 reps", "Posterior-chain hypertrophy."),
   buildExercise("Hamstring curl or hinge accessory", "3 sets", "10-12 reps", "Controlled accessory volume."),
   buildExercise("Calves", "3 sets", "12-15 reps", "Simple finisher volume."),
 ]);
 
-const buildPowerbuildingUpperHypertrophy = (equipment = {}) => ([
+export const buildPowerbuildingUpperHypertrophy = (equipment = {}) => ([
   buildExercise(equipment.hasBench ? "Incline bench or DB incline press" : "DB incline press", "4 sets", "8-12 reps", "Upper chest and shoulder volume."),
   buildExercise(equipment.hasCable ? "Cable row" : "Chest-supported row", "4 sets", "8-12 reps", "Stable back volume."),
   buildExercise("Lateral raise", "3 sets", "12-15 reps", "Keep shoulders looking trained."),
   buildExercise("Curls + triceps", "3 rounds", "10-15 reps", "Arm volume stays visible."),
 ]);
 
-const buildTravelStrengthA = () => ([
+export const buildTravelStrengthA = () => ([
   buildExercise("Goblet squat", "3-4 sets", "8 reps", "Choose the heaviest hotel-friendly loading option."),
   buildExercise("DB bench press", "3-4 sets", "8-10 reps", "Controlled pressing with minimal setup."),
   buildExercise("One-arm row", "3 sets", "10 reps", "Pair every press with pulling."),
@@ -306,7 +306,7 @@ const buildTravelStrengthA = () => ([
   buildExercise("Plank or hollow hold", "2-3 sets", "30-45 sec", "Finish compactly."),
 ]);
 
-const buildTravelStrengthB = () => ([
+export const buildTravelStrengthB = () => ([
   buildExercise("DB Romanian deadlift", "3-4 sets", "8 reps", "Posterior chain without complex setup."),
   buildExercise("DB overhead press", "3 sets", "8 reps", "Press with control."),
   buildExercise("Walking lunge", "3 sets", "10 reps/side", "Keep the legs honest."),
@@ -314,7 +314,7 @@ const buildTravelStrengthB = () => ([
   buildExercise("Carry or trunk circuit", "2-3 rounds", "30-45 sec", "Leave feeling switched on."),
 ]);
 
-const buildMinimalEquipmentStrength = () => ([
+export const buildMinimalEquipmentStrength = () => ([
   buildExercise("Split squat", "3-4 sets", "8-12 reps", "Use tempo if load is limited."),
   buildExercise("Push-up or floor press", "3-4 sets", "8-15 reps", "Keep upper-body pushing honest."),
   buildExercise("Single-arm row", "3 sets", "10-12 reps", "Simple pulling volume."),

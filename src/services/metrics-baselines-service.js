@@ -19,6 +19,8 @@ const clonePlainValue = (value) => {
   }
 };
 
+const isDistancePrescription = (value = "") => /\b(mi|mile|miles|km|kilometer|kilometers|k)\b/i.test(String(value || ""));
+
 const getLatestDateValue = (rows = []) => [...(Array.isArray(rows) ? rows : [])]
   .filter((row) => String(row?.date || "").trim())
   .sort((a, b) => String(b?.date || "").localeCompare(String(a?.date || "")))[0] || null;
@@ -619,22 +621,22 @@ export const applyPlanningBaselineInfluence = ({
     if (String(session?.type || "").toLowerCase() === "easy-run" && influence?.running?.level) {
       if (influence.running.level === "foundation") {
         session.label = /run\/walk/i.test(String(session.label || "")) ? session.label : "Easy Run / Walk";
-        session.run = { ...(session.run || {}), d: "20-30 min", t: session.run?.t || "Easy" };
+        session.run = { ...(session.run || {}), d: isDistancePrescription(session.run?.d) ? session.run?.d : "20-30 min", t: session.run?.t || "Easy" };
       } else if (influence.running.level === "build") {
-        session.run = { ...(session.run || {}), d: "25-35 min", t: session.run?.t || "Easy" };
+        session.run = { ...(session.run || {}), d: isDistancePrescription(session.run?.d) ? session.run?.d : "25-35 min", t: session.run?.t || "Easy" };
       } else if (influence.running.level === "established") {
-        session.run = { ...(session.run || {}), d: "35-45 min", t: session.run?.t || "Easy" };
+        session.run = { ...(session.run || {}), d: isDistancePrescription(session.run?.d) ? session.run?.d : "35-45 min", t: session.run?.t || "Easy" };
       }
     }
 
     if (String(session?.type || "").toLowerCase() === "long-run" && influence?.running?.level) {
       if (influence.running.level === "foundation") {
         session.label = "Long Run Build";
-        session.run = { ...(session.run || {}), d: "35-45 min", t: "Long easy" };
+        session.run = { ...(session.run || {}), d: isDistancePrescription(session.run?.d) ? session.run?.d : "35-45 min", t: "Long easy" };
       } else if (influence.running.level === "build") {
-        session.run = { ...(session.run || {}), d: "45-60 min", t: session.run?.t || "Long" };
+        session.run = { ...(session.run || {}), d: isDistancePrescription(session.run?.d) ? session.run?.d : "45-60 min", t: session.run?.t || "Long" };
       } else if (influence.running.level === "established") {
-        session.run = { ...(session.run || {}), d: "60-80 min", t: session.run?.t || "Long" };
+        session.run = { ...(session.run || {}), d: isDistancePrescription(session.run?.d) ? session.run?.d : "60-80 min", t: session.run?.t || "Long" };
       }
     }
 

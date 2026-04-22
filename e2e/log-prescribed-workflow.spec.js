@@ -146,9 +146,15 @@ async function openSeededLog(page, { mode = "run" } = {}) {
     window.__SUPABASE_ANON_KEY = supabaseKey;
 
     try {
-      window.localStorage.setItem("trainer_auth_session_v1", JSON.stringify(sessionSeed));
-      window.localStorage.setItem(localCacheKey, JSON.stringify(seedPayload));
-      window.localStorage.setItem(logOverrideKey, JSON.stringify(todayOverride));
+      if (!window.localStorage.getItem("trainer_auth_session_v1")) {
+        window.localStorage.setItem("trainer_auth_session_v1", JSON.stringify(sessionSeed));
+      }
+      if (!window.localStorage.getItem(localCacheKey)) {
+        window.localStorage.setItem(localCacheKey, JSON.stringify(seedPayload));
+      }
+      if (!window.localStorage.getItem(logOverrideKey)) {
+        window.localStorage.setItem(logOverrideKey, JSON.stringify(todayOverride));
+      }
     } catch {}
   }, {
     fixedIsoString: FIXED_ISO,
@@ -188,6 +194,16 @@ async function readSavedLog(page) {
   }, LOCAL_CACHE_KEY);
 }
 
+async function readSavedTrainerCache(page) {
+  return page.evaluate((localCacheKey) => {
+    try {
+      return JSON.parse(window.localStorage.getItem(localCacheKey) || "{}") || {};
+    } catch {
+      return {};
+    }
+  }, LOCAL_CACHE_KEY);
+}
+
 async function domClick(locator) {
   await expect(locator).toBeVisible();
   await locator.evaluate((node) => node.click());
@@ -200,14 +216,19 @@ async function expectMinTouchHeight(locator, minimumHeight = 48) {
 }
 
 test.describe("log prescribed workflow", () => {
-  test("quick log keeps one planned workout card and one obvious save path", async ({ page }) => {
+  test("baseline log rendering keeps one prescribed card, one completion selector, and one save path", async ({ page }) => {
     await openSeededLog(page, { mode: "run" });
 
     const logTab = page.getByTestId("log-tab");
     await expect(logTab.getByRole("button", { name: /open full detail entry/i })).toHaveCount(0);
     await expect(logTab.getByTestId("planned-session-plan")).toHaveCount(1);
+    await expect(logTab.getByTestId("log-trust-row")).toContainText(/Prescribed loaded/i);
+    await expect(logTab.getByTestId("log-trust-row")).toContainText(/Used later/i);
     await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
-    await expect(page.getByTestId("log-save-support-line")).toContainText(/matches (today's |the )?plan/i);
+    await expect(page.getByTestId("log-completion-selector")).toBeVisible();
+    await expect(page.getByTestId("log-completion-completed")).toBeVisible();
+    await expect(page.getByTestId("log-save-support-line")).toContainText(/loaded/i);
+    await expect(page.getByTestId("log-run-modality")).toHaveValue("run");
     await expect(page.getByTestId("log-run-duration")).toBeVisible();
     await expect(page.getByTestId("log-run-duration")).toHaveValue("40");
     await expect(page.getByTestId("log-extra-exercises")).toHaveCount(0);
@@ -215,7 +236,7 @@ test.describe("log prescribed workflow", () => {
     await expect(page.getByTestId("log-day-review-disclosure")).toHaveJSProperty("open", false);
     await expect(page.getByTestId("log-recent-history-disclosure")).toHaveJSProperty("open", false);
     await expect(page.getByTestId("log-save-quick")).toBeEnabled();
-    await expect(page.getByTestId("log-save-detailed")).toBeVisible();
+    await expect(page.getByTestId("log-save-detailed")).toHaveCount(0);
     await expectMinTouchHeight(page.getByTestId("log-save-quick"));
     await expectMinTouchHeight(page.getByTestId("log-feel-chip-3"));
     await expectMinTouchHeight(page.getByTestId("log-run-duration-stepper"));
@@ -224,39 +245,43 @@ test.describe("log prescribed workflow", () => {
     await expect(page.getByTestId("log-save-status")).toContainText(/saved/i);
     await expect(page.getByTestId("log-save-support-line")).toContainText(/saved/i);
 
-    const logs = await readSavedLog(page);
-    expect(logs["2026-04-17"]?.checkin?.status).toBe("completed_as_planned");
+    const cache = await readSavedTrainerCache(page);
+    expect(cache?.logs?.["2026-04-17"]?.checkin?.status).toBe("completed_as_planned");
+    expect(cache?.dailyCheckins?.["2026-04-17"]?.status).toBe("completed_as_planned");
   });
 
-  test("full detail log saves the prefilled planned lifts without duplicate workout cards", async ({ page }) => {
+  test("logging a fully completed strength workout preserves prescribed lift actuals", async ({ page }) => {
     await openSeededLog(page, { mode: "strength" });
 
     const logTab = page.getByTestId("log-tab");
     await expect(logTab.getByRole("button", { name: /open full detail entry/i })).toHaveCount(0);
     await expect(logTab.getByTestId("planned-session-plan")).toHaveCount(1);
     await expect(page.getByTestId("log-strength-execution-card-0")).toBeVisible();
+    await expect(page.getByTestId("log-strength-help-0")).toBeVisible();
+    await page.getByTestId("log-strength-help-0").locator("summary").click();
+    await expect(page.getByTestId("log-strength-help-0-link")).toBeVisible();
     await expect(page.getByTestId("log-strength-row-sets-0")).toHaveValue("4");
     await expect(page.getByTestId("log-strength-row-reps-0")).toHaveValue("6");
     await expect(page.getByTestId("log-strength-row-weight-0")).toHaveValue("185");
     await expect(page.getByTestId("log-advanced-fields")).toHaveJSProperty("open", false);
     await expect(page.getByTestId("log-day-review-disclosure")).toHaveJSProperty("open", false);
     await expect(page.getByTestId("log-recent-history-disclosure")).toHaveJSProperty("open", false);
-    await expect(page.getByTestId("log-save-detailed")).toBeVisible();
+    await expect(page.getByTestId("log-save-detailed")).toHaveCount(0);
     await expect(page.getByTestId("log-extra-exercises")).toBeVisible();
     await expect(page.getByTestId("log-extra-exercises")).toHaveJSProperty("open", false);
     await expectMinTouchHeight(page.getByTestId("log-strength-complete-set-0"));
-    await expectMinTouchHeight(page.getByTestId("log-rest-start-0"));
 
-    await domClick(page.getByTestId("log-save-detailed"));
+    await domClick(page.getByTestId("log-save-quick"));
     await expect(page.getByTestId("log-save-status")).toContainText(/saved/i);
 
-    const logs = await readSavedLog(page);
-    expect(logs["2026-04-17"]?.strengthPerformance?.[0]?.actualSets).toBe(4);
-    expect(logs["2026-04-17"]?.strengthPerformance?.[0]?.actualReps).toBe(6);
-    expect(logs["2026-04-17"]?.strengthPerformance?.[0]?.actualWeight).toBe(185);
+    const cache = await readSavedTrainerCache(page);
+    expect(cache?.logs?.["2026-04-17"]?.strengthPerformance?.[0]?.actualSets).toBe(4);
+    expect(cache?.logs?.["2026-04-17"]?.strengthPerformance?.[0]?.actualReps).toBe(6);
+    expect(cache?.logs?.["2026-04-17"]?.strengthPerformance?.[0]?.actualWeight).toBe(185);
+    expect(cache?.dailyCheckins?.["2026-04-17"]?.status).toBe("completed_as_planned");
   });
 
-  test("modified workout log saves changed run and strength details from the same screen", async ({ page }) => {
+  test("logging a shortened modified workout keeps prescribed and actual separate", async ({ page }) => {
     await openSeededLog(page, { mode: "mixed" });
 
     const logTab = page.getByTestId("log-tab");
@@ -269,8 +294,6 @@ test.describe("log prescribed workflow", () => {
     await expect(page.getByTestId("log-day-review-disclosure")).toHaveJSProperty("open", false);
     await expect(page.getByTestId("log-recent-history-disclosure")).toHaveJSProperty("open", false);
     await expect(page.getByTestId("log-extra-exercises")).toBeVisible();
-    await page.getByTestId("log-rest-start-0").click();
-    await expect(page.getByTestId("log-rest-timer")).toBeVisible();
 
     await page.getByTestId("log-run-duration").fill("42");
     await page.getByTestId("log-strength-row-reps-0-stepper").getByRole("button", { name: "-1" }).click();
@@ -280,19 +303,54 @@ test.describe("log prescribed workflow", () => {
     await page.getByTestId("log-run-duration").press("Tab");
     await domClick(page.getByTestId("log-save-quick"));
     await expect(page.getByTestId("log-save-status")).toContainText(/saved/i);
+    await expect(logTab.getByText(/planned time 35 min/i)).toBeVisible();
+    await expect(page.getByTestId("log-run-duration")).toHaveValue("42");
+    await expect(page.getByTestId("log-strength-row-sets-0")).toHaveValue("3");
+    await expect(page.getByTestId("log-strength-row-reps-0")).toHaveValue("8");
+  });
 
-    await expect.poll(async () => {
-      const logs = await readSavedLog(page);
-      const strengthRecords = getExercisePerformanceRecordsForLog(logs["2026-04-17"] || {}, { dateKey: "2026-04-17" });
-      return {
-        runTime: logs["2026-04-17"]?.runTime || "",
-        actualSets: strengthRecords[0]?.actual?.sets ?? strengthRecords[0]?.actualSets ?? null,
-        actualReps: strengthRecords[0]?.actual?.reps ?? strengthRecords[0]?.actualReps ?? null,
-      };
-    }).toEqual({
-      runTime: "42",
-      actualSets: 3,
-      actualReps: 8,
-    });
+  test("logging a cardio substitute marks the day as swapped instead of faking a run", async ({ page }) => {
+    await openSeededLog(page, { mode: "run" });
+
+    await page.getByTestId("log-completion-swapped").click();
+    await expect(page.getByTestId("log-swap-card")).toBeVisible();
+    await page.getByTestId("log-swap-modality").selectOption("bike");
+    await page.getByTestId("log-swap-label").fill("Bike substitute");
+    await page.getByTestId("log-run-duration").fill("45");
+    await page.getByTestId("log-run-distance").fill("14");
+
+    await domClick(page.getByTestId("log-save-quick"));
+    await expect(page.getByTestId("log-save-status")).toContainText(/saved/i);
+
+    const cache = await readSavedTrainerCache(page);
+    expect(cache?.logs?.["2026-04-17"]?.actualSession?.swapFromPlan).toBe(true);
+    expect(cache?.logs?.["2026-04-17"]?.actualSession?.modality).toBe("bike");
+    expect(cache?.logs?.["2026-04-17"]?.actualSession?.completionKind).toBe("custom_session");
+    expect(cache?.logs?.["2026-04-17"]?.checkin?.status).toBe("completed_modified");
+    expect(cache?.dailyCheckins?.["2026-04-17"]?.status).toBe("completed_modified");
+  });
+
+  test("reopening the day keeps the saved log state intact", async ({ page }) => {
+    await openSeededLog(page, { mode: "run" });
+
+    await page.getByTestId("log-run-duration").fill("44");
+    await page.getByTestId("log-advanced-fields").locator("summary").click();
+    await page.getByTestId("log-body-status").selectOption("legs_sore");
+    await page.getByTestId("log-recovery-state").selectOption("low");
+    await page.getByTestId("log-blocker").selectOption("fatigue");
+    await page.getByLabel("Session note").fill("Shortened after work ran late.");
+    await domClick(page.getByTestId("log-save-quick"));
+    await expect(page.getByTestId("log-save-status")).toContainText(/saved/i);
+
+    await page.reload();
+    await page.getByTestId("app-tab-log").click();
+    await expect(page.getByTestId("log-tab")).toBeVisible();
+    await expect(page.getByTestId("log-run-duration")).toHaveValue("44");
+    await expect(page.getByTestId("log-advanced-fields")).toHaveJSProperty("open", false);
+    await page.getByTestId("log-advanced-fields").locator("summary").click();
+    await expect(page.getByTestId("log-body-status")).toHaveValue("legs_sore");
+    await expect(page.getByTestId("log-recovery-state")).toHaveValue("low");
+    await expect(page.getByTestId("log-blocker")).toHaveValue("fatigue");
+    await expect(page.getByLabel("Session note")).toHaveValue("Shortened after work ran late.");
   });
 });

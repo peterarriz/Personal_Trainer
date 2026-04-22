@@ -100,6 +100,7 @@ test("delete diagnostics helper starts empty and keeps fallback help consumer-fr
   assert.deepEqual(initialState, {
     loading: false,
     checked: false,
+    checkedAt: 0,
     configured: null,
     message: "",
     detail: "",

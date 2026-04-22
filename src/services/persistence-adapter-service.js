@@ -23,6 +23,17 @@ export const DEFAULT_NUTRITION_FAVORITES = {
   safeMeals: [],
   travelMeals: [],
   defaultMeals: [],
+  mealAnchors: {
+    breakfast: "",
+    lunch: "",
+    travelFallback: "",
+    emergencyOrder: "",
+  },
+  supplementStack: [],
+  likedMealPatterns: {},
+  dislikedMealPatterns: {},
+  mealPatternFeedback: {},
+  mealCalendarOverrides: {},
 };
 
 const clonePersistenceValue = (value) => {

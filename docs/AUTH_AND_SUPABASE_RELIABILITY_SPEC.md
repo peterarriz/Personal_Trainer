@@ -68,6 +68,29 @@ The app uses stable storage-status objects instead of noisy banners.
 - Repeated identical status writes are deduped.
 - Cloud recovery should settle back to `SYNCED` without replay noise.
 
+## Persistence Lifecycle Guardrails
+
+The auth-storage boundary owns lifecycle invalidation for cloud loads and saves.
+
+- In-flight `persistAll` and `sbLoad` work is invalidated when:
+  - sign-out starts
+  - delete-account starts
+  - the signed-in user changes
+- Stale operations are ignored instead of being allowed to overwrite:
+  - signed-out status
+  - account-deleted cleanup
+  - cleared local cache
+- Same-user cloud reloads are single-flight:
+  - repeated `Refresh from account` requests share one underlying `trainer_data` load
+  - realtime resync attempts do not stack parallel identical cloud loads
+- Local cache writes are fence-guarded so old async completions cannot repopulate cleared device state after delete-account or device reset.
+
+### UI contract
+
+- The UI may show `saved locally`, `synced`, `retrying`, or `needs attention`, but it must never claim `synced` from a stale operation that finished after the auth lifecycle already moved on.
+- Sign-out should feel immediate because local auth state clears first; remote logout is best-effort follow-through.
+- Delete-account should not leave ghost local data behind if an older save finishes late.
+
 ## Supabase Policy Hardening
 
 Migration: `supabase/migrations/20260413_policy_perf_hardening.sql`
@@ -109,12 +132,15 @@ If the stable fingerprint has not changed, the shadow sync is skipped. This redu
 Automated verification includes:
 
 - `tests/goals-sync-contract.test.js`
+- `tests/auth-storage-local-authority.test.js`
 - `e2e/auth-and-management.spec.js`
+- `e2e/account-lifecycle.spec.js`
 
 The browser suite verifies:
 
 - signup -> profile setup
 - logout
 - delete account
+- repeated refresh taps coalesce into one reload
 - post-delete sign-in failure path
 - local auth/cache clearing

@@ -12,6 +12,7 @@ export const WORKOUT_LOG_FAMILIES = {
   run: "run",
   strength: "strength",
   mixed: "mixed",
+  recovery: "recovery",
   generic: "generic",
 };
 
@@ -19,8 +20,53 @@ export const WORKOUT_LOG_MODES = {
   running: WORKOUT_LOG_FAMILIES.run,
   strength: WORKOUT_LOG_FAMILIES.strength,
   mixed: WORKOUT_LOG_FAMILIES.mixed,
+  recovery: WORKOUT_LOG_FAMILIES.recovery,
   generic: WORKOUT_LOG_FAMILIES.generic,
 };
+
+export const WORKOUT_LOG_COMPLETION_SELECTIONS = Object.freeze([
+  { key: "completed", label: "Completed" },
+  { key: "partial", label: "Partial" },
+  { key: "skipped", label: "Skipped" },
+  { key: "swapped", label: "Swapped" },
+]);
+
+export const WORKOUT_LOG_MODALITY_OPTIONS = Object.freeze([
+  { key: "run", label: "Run" },
+  { key: "treadmill", label: "Treadmill" },
+  { key: "bike", label: "Bike" },
+  { key: "elliptical", label: "Elliptical" },
+  { key: "walk", label: "Walk" },
+  { key: "rower", label: "Rower" },
+  { key: "swim", label: "Swim" },
+  { key: "mobility", label: "Mobility" },
+  { key: "strength", label: "Strength" },
+  { key: "other", label: "Other" },
+]);
+
+export const WORKOUT_LOG_BODY_STATUS_OPTIONS = Object.freeze([
+  { key: "fresh", label: "Fresh" },
+  { key: "normal", label: "Normal" },
+  { key: "legs_sore", label: "Legs sore" },
+  { key: "upper_sore", label: "Upper sore" },
+  { key: "beat_up", label: "Beat up" },
+]);
+
+export const WORKOUT_LOG_RECOVERY_STATE_OPTIONS = Object.freeze([
+  { key: "low", label: "Low" },
+  { key: "okay", label: "Okay" },
+  { key: "good", label: "Good" },
+]);
+
+export const WORKOUT_LOG_BLOCKER_OPTIONS = Object.freeze([
+  { key: "", label: "None" },
+  { key: "time", label: "Time" },
+  { key: "fatigue", label: "Fatigue" },
+  { key: "pain", label: "Pain" },
+  { key: "equipment", label: "Equipment" },
+  { key: "travel", label: "Travel" },
+  { key: "other", label: "Other" },
+]);
 
 const sanitizeText = (value = "") => sanitizeDisplayCopy(String(value || "")).trim();
 
@@ -74,7 +120,130 @@ const normalizeNumericText = (value = "") => {
   return String(value).trim();
 };
 
+const normalizeEnumKey = (value = "") => String(value || "")
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "_")
+  .replace(/^_+|_+$/g, "");
+
 const joinQuickParts = (parts = []) => parts.filter(Boolean).join(" - ");
+
+const findOptionLabel = (options = [], key = "", fallback = "") => (
+  options.find((option) => option.key === key)?.label || fallback || key
+);
+
+const CARDIO_MODALITY_KEYS = new Set(["run", "treadmill", "bike", "elliptical", "walk", "rower", "swim"]);
+const RUN_EQUIVALENT_MODALITY_KEYS = new Set(["run", "treadmill"]);
+const STRENGTH_MODALITY_KEYS = new Set(["strength"]);
+
+const isCardioModality = (value = "") => CARDIO_MODALITY_KEYS.has(normalizeEnumKey(value));
+const isStrengthModality = (value = "") => STRENGTH_MODALITY_KEYS.has(normalizeEnumKey(value));
+const isRunEquivalentModality = (value = "") => RUN_EQUIVALENT_MODALITY_KEYS.has(normalizeEnumKey(value));
+
+const resolvePlannedSessionModality = ({ training = null, family = WORKOUT_LOG_FAMILIES.generic } = {}) => {
+  const raw = `${training?.type || ""} ${training?.label || ""} ${training?.run?.t || ""}`.toLowerCase();
+  if (/treadmill/.test(raw)) return "treadmill";
+  if (/bike|cycle|spin/.test(raw)) return "bike";
+  if (/elliptical/.test(raw)) return "elliptical";
+  if (/row|erg/.test(raw)) return "rower";
+  if (/swim/.test(raw)) return "swim";
+  if (/mobility|stretch|reset|activation/.test(raw)) return "mobility";
+  if (/walk|hike/.test(raw)) return "walk";
+  if (family === WORKOUT_LOG_FAMILIES.strength || family === WORKOUT_LOG_FAMILIES.mixed) return "strength";
+  if (family === WORKOUT_LOG_FAMILIES.recovery) return "mobility";
+  if (training?.run || family === WORKOUT_LOG_FAMILIES.run) return "run";
+  return "other";
+};
+
+const buildGenericSessionDraft = ({ family = WORKOUT_LOG_FAMILIES.generic, training = null, logEntry = {}, sessionRecord = null } = {}) => {
+  const plannedModality = resolvePlannedSessionModality({ training, family });
+  const actualModality = normalizeEnumKey(
+    sessionRecord?.actual?.modality
+    || logEntry?.actualSession?.modality
+    || plannedModality
+    || (family === WORKOUT_LOG_FAMILIES.recovery ? "mobility" : "other")
+  ) || (family === WORKOUT_LOG_FAMILIES.recovery ? "mobility" : "other");
+  return {
+    visible: family === WORKOUT_LOG_FAMILIES.generic || family === WORKOUT_LOG_FAMILIES.recovery,
+    reps: normalizeNumericText(logEntry?.reps ?? logEntry?.pushups ?? ""),
+    weight: normalizeNumericText(logEntry?.weight ?? ""),
+    duration: normalizeRunField(sessionRecord?.actual?.durationMinutes ?? logEntry?.runTime ?? ""),
+    distance: normalizeRunField(sessionRecord?.actual?.distanceMiles ?? logEntry?.miles ?? ""),
+    modality: actualModality,
+    plannedModality,
+    purpose: sanitizeText(training?.label || training?.type || ""),
+    structure: sanitizeText(training?.fallback || training?.success || training?.recoveryRecommendation || ""),
+  };
+};
+
+const resolveCompletionSelection = (logEntry = {}) => {
+  const status = normalizeEnumKey(logEntry?.actualSession?.status || logEntry?.checkin?.status || "");
+  if (status === "skipped") return "skipped";
+  if (status === "partial_completed") return "partial";
+  if (Boolean(logEntry?.actualSession?.swapFromPlan) || normalizeEnumKey(logEntry?.actualSession?.userSelection || "") === "swapped") return "swapped";
+  return "completed";
+};
+
+const mapFeelToSessionFeel = (feelValue = "3") => {
+  const feel = Math.max(1, Math.min(5, Number(feelValue || 3) || 3));
+  if (feel <= 2) return "harder_than_expected";
+  if (feel >= 4) return "easier_than_expected";
+  return "about_right";
+};
+
+const mapBodyStatusToSorenessScore = (bodyStatus = "") => {
+  switch (normalizeEnumKey(bodyStatus)) {
+    case "fresh": return "1";
+    case "normal": return "2";
+    case "legs_sore":
+    case "upper_sore": return "3";
+    case "beat_up": return "5";
+    default: return "";
+  }
+};
+
+const mapRecoveryStateToReadiness = (recoveryState = "") => {
+  switch (normalizeEnumKey(recoveryState)) {
+    case "good":
+      return { sleep: "4", stress: "2" };
+    case "low":
+      return { sleep: "2", stress: "4" };
+    case "okay":
+      return { sleep: "3", stress: "3" };
+    default:
+      return { sleep: "", stress: "" };
+  }
+};
+
+const mapBlockerSelectionToCheckinBlocker = (blocker = "") => {
+  switch (normalizeEnumKey(blocker)) {
+    case "time": return "time";
+    case "fatigue": return "soreness_fatigue";
+    case "pain": return "pain_injury";
+    case "equipment": return "no_equipment";
+    case "travel": return "schedule_travel";
+    case "other": return "other";
+    default: return "";
+  }
+};
+
+const mapCheckinBlockerToSelection = (blocker = "") => {
+  switch (normalizeEnumKey(blocker)) {
+    case "time": return "time";
+    case "soreness_fatigue": return "fatigue";
+    case "pain_injury": return "pain";
+    case "no_equipment": return "equipment";
+    case "schedule_travel": return "travel";
+    case "other": return "other";
+    default: return "";
+  }
+};
+
+const buildDraftSignals = (logEntry = {}) => ({
+  bodyStatus: normalizeEnumKey(logEntry?.actualSession?.bodyStatus || ""),
+  recoveryState: normalizeEnumKey(logEntry?.actualSession?.recoveryState || ""),
+  blocker: mapCheckinBlockerToSelection(logEntry?.checkin?.blocker || ""),
+});
 
 const buildStrengthSubstitutionMeta = ({ exercise = "", prescribedExercise = "" } = {}) => {
   const actualKey = normalizePerformanceExerciseKey(exercise || "");
@@ -125,6 +294,7 @@ const inferFallbackFamily = ({ training = null, logEntry = {}, exerciseRecords =
     || /strength|push|pull|bench|squat|deadlift|press|row|lift|prehab/.test(raw)
   );
   if (hasRunData && hasStrengthData) return WORKOUT_LOG_FAMILIES.mixed;
+  if (!hasRunData && !hasStrengthData && /rest|recovery|mobility|walk|stretch/.test(raw)) return WORKOUT_LOG_FAMILIES.recovery;
   if (hasRunData) return WORKOUT_LOG_FAMILIES.run;
   if (hasStrengthData) return WORKOUT_LOG_FAMILIES.strength;
   return WORKOUT_LOG_FAMILIES.generic;
@@ -144,6 +314,7 @@ const inferPlannedFamily = ({ training = null, prescribedExercises = [] } = {}) 
     || /strength|push|pull|bench|squat|deadlift|press|row|lift|prehab/.test(raw)
   );
   if (hasRunPlan && hasStrengthPlan) return WORKOUT_LOG_FAMILIES.mixed;
+  if (!hasRunPlan && !hasStrengthPlan && /rest|recovery|mobility|walk|stretch/.test(raw)) return WORKOUT_LOG_FAMILIES.recovery;
   if (hasRunPlan) return WORKOUT_LOG_FAMILIES.run;
   if (hasStrengthPlan) return WORKOUT_LOG_FAMILIES.strength;
   return WORKOUT_LOG_FAMILIES.generic;
@@ -228,16 +399,30 @@ const normalizeRunField = (value = "") => {
 const buildRunDraft = ({ training = null, logEntry = {}, sessionRecord = null } = {}) => ({
   ...(() => {
     const hints = buildRunPrescriptionHints(training);
+    const plannedModality = resolvePlannedSessionModality({
+      training,
+      family: training?.run ? WORKOUT_LOG_FAMILIES.run : inferPlannedFamily({ training }),
+    });
+    const actualModality = normalizeEnumKey(
+      sessionRecord?.actual?.modality
+      || logEntry?.actualSession?.modality
+      || plannedModality
+      || "run"
+    ) || "run";
     const distance = normalizeRunField(sessionRecord?.actual?.distanceMiles ?? logEntry?.miles ?? hints.distanceValue ?? "");
     const duration = normalizeRunField(sessionRecord?.actual?.durationMinutes ?? logEntry?.runTime ?? hints.durationValue ?? "");
     const pace = sanitizeText(sessionRecord?.actual?.paceText || logEntry?.pace || hints.paceValue || "");
     return {
       enabled: Boolean(training?.run)
         || sessionRecord?.sessionFamily === WORKOUT_LOG_FAMILIES.run
+        || isCardioModality(actualModality)
         || Boolean(String(logEntry?.miles || "").trim() || String(logEntry?.pace || "").trim() || String(logEntry?.runTime || "").trim()),
       distance,
       duration,
       pace,
+      modality: actualModality,
+      plannedModality,
+      rpe: normalizeNumericText(sessionRecord?.actual?.rpe ?? logEntry?.actualSession?.rpe ?? ""),
       purpose: buildRunPurpose(training),
       structure: buildRunStructure(training),
       plannedDistanceHint: hints.distanceHint,
@@ -399,9 +584,11 @@ const buildStrengthDraft = ({ family = WORKOUT_LOG_FAMILIES.generic, prescribedE
 };
 
 const buildRunFieldDefinitions = (run = {}) => ([
+  buildFieldDefinition({ id: "modality", label: "Modality", inputType: "select", section: "run", prefilledValue: run?.modality || "" }),
   buildFieldDefinition({ id: "distance", label: "Distance", inputType: "number", section: "run", prefilledValue: run?.distance || "" }),
   buildFieldDefinition({ id: "duration", label: "Time", inputType: "duration", section: "run", prefilledValue: run?.duration || "" }),
   buildFieldDefinition({ id: "pace", label: "Pace", inputType: "pace", section: "run", prefilledValue: run?.pace || "" }),
+  buildFieldDefinition({ id: "rpe", label: "RPE", inputType: "number", section: "run", prefilledValue: run?.rpe || "" }),
   buildFieldDefinition({ id: "feel", label: "Effort", inputType: "rating", section: "run" }),
   buildFieldDefinition({ id: "notes", label: "Note", inputType: "textarea", section: "run" }),
 ]);
@@ -416,6 +603,9 @@ const buildStrengthFieldDefinitions = () => ([
 ]);
 
 const buildGenericFieldDefinitions = (generic = {}) => ([
+  buildFieldDefinition({ id: "modality", label: "Modality", inputType: "select", section: "generic", prefilledValue: generic?.modality || "" }),
+  buildFieldDefinition({ id: "duration", label: "Time", inputType: "duration", section: "generic", prefilledValue: generic?.duration || "" }),
+  buildFieldDefinition({ id: "distance", label: "Distance", inputType: "number", section: "generic", prefilledValue: generic?.distance || "" }),
   buildFieldDefinition({ id: "reps", label: "Reps", inputType: "number", section: "generic", prefilledValue: generic?.reps || "" }),
   buildFieldDefinition({ id: "weight", label: "Weight", inputType: "number", section: "generic", prefilledValue: generic?.weight || "" }),
   buildFieldDefinition({ id: "feel", label: "Effort", inputType: "rating", section: "generic" }),
@@ -459,11 +649,15 @@ export const buildWorkoutLogFormRecommendation = ({
   });
   const run = buildRunDraft({ training, logEntry, sessionRecord });
   const firstStrengthRow = strength.rows[0] || null;
-  const genericVisible = family === WORKOUT_LOG_FAMILIES.generic || (family === WORKOUT_LOG_FAMILIES.strength && !strength.hasPrescribedStructure && strength.rows.length === 0);
+  const genericVisible = family === WORKOUT_LOG_FAMILIES.generic
+    || family === WORKOUT_LOG_FAMILIES.recovery
+    || (family === WORKOUT_LOG_FAMILIES.strength && !strength.hasPrescribedStructure && strength.rows.length === 0);
+  const genericBase = buildGenericSessionDraft({ family, training, logEntry, sessionRecord });
   const generic = {
+    ...genericBase,
     visible: genericVisible,
-    reps: genericVisible ? normalizeNumericText(logEntry?.reps ?? logEntry?.pushups ?? firstStrengthRow?.actualReps ?? "") : "",
-    weight: genericVisible ? normalizeNumericText(logEntry?.weight ?? firstStrengthRow?.actualWeight ?? "") : "",
+    reps: genericVisible ? normalizeNumericText(logEntry?.reps ?? logEntry?.pushups ?? firstStrengthRow?.actualReps ?? genericBase.reps ?? "") : "",
+    weight: genericVisible ? normalizeNumericText(logEntry?.weight ?? firstStrengthRow?.actualWeight ?? genericBase.weight ?? "") : "",
   };
   const plannedSummary = buildCanonicalPlanSurfaceModel({
     surface: "log",
@@ -544,6 +738,17 @@ export const buildWorkoutLogDraft = ({
   return {
     ...recommendation,
     logMode: recommendation.recommendedMode,
+    completion: {
+      selection: resolveCompletionSelection(logEntry),
+    },
+    session: {
+      actualModality: normalizeEnumKey(logEntry?.actualSession?.modality || recommendation?.run?.modality || recommendation?.generic?.modality || resolvePlannedSessionModality({
+        training: plannedDayRecord?.resolved?.training || fallbackTraining || null,
+        family: recommendation.family,
+      })),
+      swapLabel: sanitizeText(logEntry?.actualSession?.swapLabel || ""),
+    },
+    signals: buildDraftSignals(logEntry),
     feel: String(logEntry?.feel || "3"),
     location: sanitizeText(logEntry?.location || "home") || "home",
     notes: sanitizeText(logEntry?.notes || ""),
@@ -567,8 +772,12 @@ const hasValidStrengthQuickRow = (row = {}) => (
 
 const hasRunQuickChange = (draft = {}) => {
   if (!draft?.sections?.run?.enabled) return false;
+  const actualModality = normalizeEnumKey(draft?.session?.actualModality || draft?.run?.modality || "");
+  const plannedModality = normalizeEnumKey(draft?.run?.plannedModality || "");
   return (
-    normalizeRunField(draft?.run?.duration || "") !== normalizeRunField(draft?.run?.plannedDurationValue || "")
+    (actualModality && plannedModality && actualModality !== plannedModality)
+    || normalizeNumericText(draft?.run?.rpe || "") !== ""
+    || normalizeRunField(draft?.run?.duration || "") !== normalizeRunField(draft?.run?.plannedDurationValue || "")
     || normalizeRunField(draft?.run?.distance || "") !== normalizeRunField(draft?.run?.plannedDistanceValue || "")
     || sanitizeText(draft?.run?.pace || "") !== sanitizeText(draft?.run?.plannedPaceValue || "")
   );
@@ -603,7 +812,10 @@ export const hasWorkoutQuickCaptureValues = ({ draft = {} } = {}) => {
   const hasRunValue = hasRunQuickChange(draft);
   const hasStrengthValue = (draft?.strength?.rows || []).some((row) => hasStrengthRowQuickChange(row));
   const hasGenericValue = Boolean(
-    normalizeNumericText(draft?.generic?.reps || "")
+    normalizeEnumKey(draft?.generic?.modality || "") !== normalizeEnumKey(draft?.generic?.plannedModality || "")
+    || normalizeRunField(draft?.generic?.duration || "")
+    || normalizeRunField(draft?.generic?.distance || "")
+    || normalizeNumericText(draft?.generic?.reps || "")
     || normalizeNumericText(draft?.generic?.weight || "")
   );
   return hasRunValue || hasStrengthValue || hasGenericValue;
@@ -719,6 +931,126 @@ const buildStrengthPerformanceFromRows = (rows = [], feel = "3") => (
     .filter(Boolean)
 );
 
+const buildResolvedSessionFamily = ({ draft = {}, actualModality = "" } = {}) => {
+  if (isStrengthModality(actualModality)) return WORKOUT_LOG_FAMILIES.strength;
+  if (normalizeEnumKey(actualModality) === "mobility") return WORKOUT_LOG_FAMILIES.recovery;
+  if (isCardioModality(actualModality)) {
+    return draft?.family === WORKOUT_LOG_FAMILIES.mixed ? WORKOUT_LOG_FAMILIES.mixed : WORKOUT_LOG_FAMILIES.run;
+  }
+  return draft?.family || WORKOUT_LOG_FAMILIES.generic;
+};
+
+const buildCompletionOutcome = ({ draft = {} } = {}) => {
+  const selection = normalizeEnumKey(draft?.completion?.selection || "completed") || "completed";
+  const actualModality = normalizeEnumKey(
+    draft?.session?.actualModality
+    || draft?.run?.modality
+    || draft?.generic?.modality
+    || resolvePlannedSessionModality({ family: draft?.family || WORKOUT_LOG_FAMILIES.generic })
+  ) || "other";
+  const plannedModality = normalizeEnumKey(
+    draft?.run?.plannedModality
+    || draft?.generic?.plannedModality
+    || resolvePlannedSessionModality({ family: draft?.family || WORKOUT_LOG_FAMILIES.generic })
+  ) || "other";
+  const hasSwap = selection === "swapped"
+    || (draft?.family === WORKOUT_LOG_FAMILIES.run && actualModality && plannedModality && !isRunEquivalentModality(actualModality) && actualModality !== plannedModality)
+    || (draft?.family === WORKOUT_LOG_FAMILIES.strength && selection === "swapped");
+  if (selection === "skipped") {
+    return {
+      selection,
+      status: "skipped",
+      completionKind: "skipped",
+      differenceKind: "skipped",
+      modifiedFromPlan: false,
+      swapFromPlan: false,
+      actualModality,
+      actualFamily: buildResolvedSessionFamily({ draft, actualModality }),
+    };
+  }
+  if (selection === "partial") {
+    return {
+      selection,
+      status: "partial_completed",
+      completionKind: "modified",
+      differenceKind: "modified",
+      modifiedFromPlan: true,
+      swapFromPlan: false,
+      actualModality,
+      actualFamily: buildResolvedSessionFamily({ draft, actualModality }),
+    };
+  }
+  if (hasSwap) {
+    return {
+      selection,
+      status: "completed_modified",
+      completionKind: "custom_session",
+      differenceKind: "custom_session",
+      modifiedFromPlan: true,
+      swapFromPlan: true,
+      actualModality,
+      actualFamily: buildResolvedSessionFamily({ draft, actualModality }),
+    };
+  }
+  if (hasWorkoutQuickCaptureValues({ draft })) {
+    return {
+      selection,
+      status: "completed_modified",
+      completionKind: "modified",
+      differenceKind: "modified",
+      modifiedFromPlan: true,
+      swapFromPlan: false,
+      actualModality,
+      actualFamily: buildResolvedSessionFamily({ draft, actualModality }),
+    };
+  }
+  return {
+    selection,
+    status: "completed_as_planned",
+    completionKind: "as_prescribed",
+    differenceKind: "none",
+    modifiedFromPlan: false,
+    swapFromPlan: false,
+    actualModality,
+    actualFamily: buildResolvedSessionFamily({ draft, actualModality }),
+  };
+};
+
+export const buildWorkoutDailyCheckinFromDraft = ({
+  draft = {},
+  todayKey = "",
+} = {}) => {
+  const completion = buildCompletionOutcome({ draft });
+  const readinessHints = mapRecoveryStateToReadiness(draft?.signals?.recoveryState || "");
+  const soreness = mapBodyStatusToSorenessScore(draft?.signals?.bodyStatus || "");
+  const note = sanitizeText(draft?.notes || "");
+  return {
+    status: completion.status,
+    sessionFeel: mapFeelToSessionFeel(draft?.feel || "3"),
+    blocker: mapBlockerSelectionToCheckinBlocker(draft?.signals?.blocker || ""),
+    note,
+    readiness: {
+      sleep: readinessHints.sleep,
+      stress: readinessHints.stress,
+      soreness,
+    },
+    actualRecovery: {
+      status: completion.status,
+      sessionFeel: mapFeelToSessionFeel(draft?.feel || "3"),
+      blocker: mapBlockerSelectionToCheckinBlocker(draft?.signals?.blocker || ""),
+      note,
+      readiness: {
+        sleep: readinessHints.sleep,
+        stress: readinessHints.stress,
+        soreness,
+      },
+      loggedAt: Date.now(),
+    },
+    ts: Date.now(),
+    dateKey: draft?.date || todayKey || "",
+  };
+};
+
 export const buildWorkoutLogEntryFromDraft = ({
   draft = {},
   baseEntry = {},
@@ -726,28 +1058,70 @@ export const buildWorkoutLogEntryFromDraft = ({
 } = {}) => {
   const strengthPerformance = buildStrengthPerformanceFromRows(draft?.strength?.rows || [], draft?.feel || "3");
   const firstStrengthRow = strengthPerformance[0] || null;
-  const hasRunSection = Boolean(draft?.run?.enabled);
-  const type = sanitizeText(draft?.sessionLabel || baseEntry?.type || "Session") || "Session";
-  const sessionType = sanitizeText(draft?.sessionType || baseEntry?.actualSession?.sessionType || draft?.family || "session");
+  const completion = buildCompletionOutcome({ draft });
+  const hasRunSection = Boolean(draft?.run?.enabled || isCardioModality(completion.actualModality));
+  const hasGenericSession = Boolean(
+    draft?.generic?.visible
+    || (!hasRunSection && completion.actualFamily !== WORKOUT_LOG_FAMILIES.strength)
+  );
+  const plannedLabel = sanitizeText(draft?.sessionLabel || baseEntry?.type || "Session") || "Session";
+  const swapLabel = sanitizeText(draft?.session?.swapLabel || "");
+  const modalityLabel = findOptionLabel(WORKOUT_LOG_MODALITY_OPTIONS, completion.actualModality, sanitizeText(completion.actualModality || ""));
+  const type = completion.swapFromPlan
+    ? (swapLabel || (modalityLabel ? `${modalityLabel} substitute` : plannedLabel))
+    : plannedLabel;
+  const sessionType = completion.swapFromPlan
+    ? (completion.actualModality || sanitizeText(draft?.sessionType || baseEntry?.actualSession?.sessionType || draft?.family || "session"))
+    : sanitizeText(draft?.sessionType || baseEntry?.actualSession?.sessionType || draft?.family || "session");
+  const dailyCheckin = buildWorkoutDailyCheckinFromDraft({ draft, todayKey });
   return {
     ...baseEntry,
     date: draft?.date || baseEntry?.date || todayKey,
     type,
-    miles: hasRunSection ? normalizeNumericText(draft?.run?.distance || "") : "",
+    miles: hasRunSection
+      ? normalizeNumericText(draft?.run?.distance || "")
+      : hasGenericSession
+        ? normalizeNumericText(draft?.generic?.distance || "")
+        : "",
     pace: hasRunSection ? sanitizeText(draft?.run?.pace || "") : "",
-    runTime: hasRunSection ? normalizeNumericText(draft?.run?.duration || "") : "",
+    runTime: hasRunSection
+      ? normalizeNumericText(draft?.run?.duration || "")
+      : hasGenericSession
+        ? normalizeNumericText(draft?.generic?.duration || "")
+        : "",
     notes: sanitizeText(draft?.notes || ""),
     feel: String(draft?.feel || "3"),
     location: sanitizeText(draft?.location || "home") || "home",
-    reps: draft?.generic?.visible ? normalizeNumericText(draft?.generic?.reps || "") : normalizeNumericText(firstStrengthRow?.actualReps || ""),
-    pushups: draft?.generic?.visible ? normalizeNumericText(draft?.generic?.reps || "") : normalizeNumericText(firstStrengthRow?.actualReps || ""),
-    weight: draft?.generic?.visible ? normalizeNumericText(draft?.generic?.weight || "") : normalizeNumericText(firstStrengthRow?.actualWeight || ""),
+    reps: hasGenericSession ? normalizeNumericText(draft?.generic?.reps || "") : normalizeNumericText(firstStrengthRow?.actualReps || ""),
+    pushups: hasGenericSession ? normalizeNumericText(draft?.generic?.reps || "") : normalizeNumericText(firstStrengthRow?.actualReps || ""),
+    weight: hasGenericSession ? normalizeNumericText(draft?.generic?.weight || "") : normalizeNumericText(firstStrengthRow?.actualWeight || ""),
     strengthPerformance,
+    checkin: {
+      ...(baseEntry?.checkin || {}),
+      status: completion.status,
+      sessionFeel: dailyCheckin.sessionFeel,
+      blocker: dailyCheckin.blocker,
+      readiness: dailyCheckin.readiness,
+      feelRating: String(draft?.feel || "3"),
+      note: dailyCheckin.note,
+      ts: Date.now(),
+    },
     actualSession: {
       ...(baseEntry?.actualSession || {}),
+      status: completion.status,
+      completionKind: completion.completionKind,
       sessionType,
       sessionLabel: type,
-      sessionFamily: draft?.family || baseEntry?.actualSession?.sessionFamily || "",
+      sessionFamily: completion.actualFamily || draft?.family || baseEntry?.actualSession?.sessionFamily || "",
+      modifiedFromPlan: completion.modifiedFromPlan,
+      swapFromPlan: completion.swapFromPlan,
+      userSelection: completion.selection,
+      modality: completion.actualModality || "",
+      rpe: normalizeNumericText(draft?.run?.rpe || ""),
+      bodyStatus: normalizeEnumKey(draft?.signals?.bodyStatus || ""),
+      recoveryState: normalizeEnumKey(draft?.signals?.recoveryState || ""),
+      swapLabel,
+      loggedAt: Date.now(),
     },
     editedAt: Date.now(),
     retroEdited: Boolean(draft?.date && todayKey && draft.date < todayKey),

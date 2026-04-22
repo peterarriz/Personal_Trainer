@@ -1140,3 +1140,53 @@ test("handleDeleteAccount stops before POST when delete-account diagnostics repo
   assert.match(String(diagnosticsRequest?.headers?.Authorization || ""), /^Bearer /);
   assert.equal(requests.some((request) => request.url === "/api/auth/delete-account" && request.method === "POST"), false);
 });
+
+test("handleDeleteAccount blocks locally before any delete-account network calls when app routes are unavailable", async () => {
+  const requests = [];
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+    location: { hostname: "127.0.0.1" },
+    localStorage,
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async (url, options = {}) => {
+      requests.push({ url, method: options.method || "GET" });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        text: async () => "",
+      };
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  const authSession = {
+    access_token: "header.payload.signature",
+    refresh_token: "refresh-token",
+    user: { id: "00000000-0000-0000-0000-000000000001" },
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+  };
+
+  await assert.rejects(
+    module.handleDeleteAccount({
+      authSession,
+      setAuthSession: noop,
+      setStorageStatus: noop,
+      clearLocalData: async () => {},
+    }),
+    (error) => {
+      assert.equal(error?.code, "delete_account_endpoint_unavailable");
+      assert.match(String(error?.message || ""), /local build|runtime/i);
+      return true;
+    }
+  );
+
+  assert.deepEqual(requests, []);
+});

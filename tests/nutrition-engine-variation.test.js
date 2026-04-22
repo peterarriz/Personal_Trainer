@@ -63,6 +63,7 @@ test("adaptive nutrition changes targets when goal priority changes and still pr
 test("real-world nutrition engine surfaces saved anchors, travel swaps, and goal-biased meal notes", () => {
   const baseArgs = {
     location: "Chicago",
+    dateKey: "2026-04-20",
     dayType: "run_quality",
     nutritionLayer: {
       dayType: "run_quality",
@@ -115,6 +116,7 @@ test("real-world nutrition engine surfaces saved anchors, travel swaps, and goal
   const bodyCompBreakfastNote = bodyCompEngine.mealSlots.find((slot) => slot.key === "breakfast")?.note;
 
   assert.equal(runningEngine.mealSlots.length, 4);
+  assert.equal(runningEngine.executionPlan.sections.length, 4);
   assert.equal(breakfastSlot.savedAnchor, true);
   assert.match(breakfastSlot.primary, /Overnight oats \+ whey/i);
   assert.match(lunchSlot.primary, /Chicken rice bowl/i);
@@ -122,6 +124,9 @@ test("real-world nutrition engine surfaces saved anchors, travel swaps, and goal
   assert.equal(runningEngine.emergencyOrder, "Chipotle double chicken bowl");
   assert.notEqual(runningBreakfastNote, bodyCompBreakfastNote);
   assert.match(runningEngine.dailyRecommendations.join(" "), /carbs|protein|hydration/i);
+  assert.match(runningEngine.executionPlan.title, /Monday/i);
+  assert.ok(runningEngine.executionPlan.catalogStats.uniqueIngredientCount >= 250);
+  assert.ok(runningEngine.executionPlan.catalogStats.estimatedMealVariants >= 5000000);
 });
 
 test("quality-run nutrition exposes explicit fueling, hydration, sodium, and phase context", () => {
@@ -300,4 +305,78 @@ test("preferred cuisines steer meal suggestions without changing the training de
   assert.match(engine.whyToday || "", /cuisine preference: mexican-leaning meal suggestions/i);
   assert.equal(nutritionLayer.dayType, "run_quality");
   assert.equal(nutritionLayer.targets.hydrationTargetOz, 119);
+});
+
+test("favorite store and meal signals quietly bias nutrition plans toward value-sensitive or premium-open proteins", () => {
+  const goals = [
+    { name: "Bench 225", category: "strength", active: true, priority: 1 },
+  ];
+  const nutritionLayer = deriveAdaptiveNutrition({
+    ...buildAdaptiveArgs(goals),
+    todayWorkout: {
+      type: "strength",
+      label: "Upper strength",
+      week: { phase: "BUILDING", cutback: false },
+    },
+    personalization: {
+      environmentConfig: { schedule: [] },
+      travelState: {
+        environmentMode: "home",
+        isTravelWeek: false,
+      },
+      nutritionPreferenceState: {
+        preferredCuisines: ["mediterranean"],
+      },
+    },
+  });
+  const valueEngine = deriveRealWorldNutritionEngine({
+    location: "Chicago",
+    dateKey: "2026-04-21",
+    dayType: nutritionLayer.dayType,
+    goalContext: buildGoalContext(goals),
+    nutritionLayer,
+    momentum: { logGapDays: 0 },
+    favorites: {
+      mealAnchors: {},
+      safeMeals: [{ name: "Ground turkey rice bowl" }],
+      restaurants: [{ name: "Costco food court" }],
+      groceries: [{ name: "Aldi" }],
+    },
+    travelMode: false,
+    learningLayer: { stats: {} },
+    timeOfDay: "evening",
+    loggedIntake: {},
+  });
+  const premiumEngine = deriveRealWorldNutritionEngine({
+    location: "Chicago",
+    dateKey: "2026-04-21",
+    dayType: nutritionLayer.dayType,
+    goalContext: buildGoalContext(goals),
+    nutritionLayer,
+    momentum: { logGapDays: 0 },
+    favorites: {
+      mealAnchors: {},
+      safeMeals: [{ name: "Salmon rice bowl" }],
+      restaurants: [{ name: "Whole Foods hot bar" }],
+      groceries: [{ name: "Whole Foods" }],
+    },
+    travelMode: false,
+    learningLayer: { stats: {} },
+    timeOfDay: "evening",
+    loggedIntake: {},
+  });
+
+  const valueProteinLine = [
+    valueEngine.executionPlan.sections[1]?.buildItems?.[0] || "",
+    valueEngine.executionPlan.sections[2]?.buildItems?.[0] || "",
+  ].join(" | ");
+  const premiumProteinLine = [
+    premiumEngine.executionPlan.sections[1]?.buildItems?.[0] || "",
+    premiumEngine.executionPlan.sections[2]?.buildItems?.[0] || "",
+  ].join(" | ");
+
+  assert.equal(valueEngine.executionPlan.affordabilityProfileKey, "value_sensitive");
+  assert.equal(premiumEngine.executionPlan.affordabilityProfileKey, "premium_open");
+  assert.doesNotMatch(valueProteinLine, /salmon|shrimp|steak|sirloin|bison|mahi/i);
+  assert.match(premiumProteinLine, /salmon|shrimp|sirloin|steak|cod|tilapia|mahi|trout|pork tenderloin|lean ground beef/i);
 });

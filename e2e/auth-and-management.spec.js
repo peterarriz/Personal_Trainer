@@ -122,7 +122,7 @@ test.describe("auth and management hardening", () => {
     await expect(page.getByText(/sign in to reopen your plan/i)).toBeVisible();
   });
 
-  test("delete account clears local identity and a later sign-in attempt fails cleanly", async ({ page }) => {
+  test("delete account stays blocked locally and leaves clear fallback actions", async ({ page }) => {
     const session = makeSession();
     const payload = makeSignedInPayload();
     await mockSupabaseRuntime(page, {
@@ -137,29 +137,25 @@ test.describe("auth and management hardening", () => {
     await page.getByTestId("app-tab-settings").click();
     await page.getByTestId("settings-surface-account").click();
     await page.getByTestId("settings-account-advanced").locator("summary").click();
-    await page.getByTestId("settings-delete-account").click();
-    await page.getByTestId("settings-delete-account-export").click();
-    await page.getByTestId("settings-delete-account-confirm").fill("DELETE");
-    await page.getByTestId("settings-delete-account-submit").click();
-
-    await expect(page.getByTestId("auth-gate")).toBeVisible();
-    await expect.poll(() => page.evaluate(() => ({
-      auth: localStorage.getItem("trainer_auth_session_v1"),
-      cache: localStorage.getItem("trainer_local_cache_v4"),
-    }))).toEqual({ auth: null, cache: null });
-
-    await page.getByTestId("auth-email").fill("athlete@example.com");
-    await page.getByTestId("auth-password").fill("wrong-password");
-    await page.getByTestId("auth-submit").click();
-    await expect(page.getByText(/Sign in failed/i)).toBeVisible();
+    await expect(page.getByTestId("settings-delete-account-status")).toContainText(/local build|not available/i);
+    await expect(page.getByTestId("settings-delete-account-help")).toContainText(/sign out|reset this device/i);
+    await expect(page.getByTestId("settings-delete-account")).toBeDisabled();
+    await expect(page.getByTestId("settings-reset-device")).toBeVisible();
+    await expect(page.getByTestId("settings-logout")).toBeVisible();
   });
 
   test("nutrition stays focused and theme switching changes the real UI tokens", async ({ page }) => {
     await completeRunningOnboarding(page);
 
     await page.getByTestId("app-tab-nutrition").click();
-    await expect(page.getByTestId("nutrition-daily-target")).toBeVisible();
-    await expect(page.getByTestId("nutrition-weekly-planning")).toHaveCount(0);
+    await expect(page.getByTestId("nutrition-execution-plan-header")).toBeVisible();
+    await expect(page.getByTestId("nutrition-execution-plan-meals")).toBeVisible();
+    await expect(page.getByTestId("nutrition-execution-rules")).toBeVisible();
+    const firstMealRecipe = page.locator("[data-testid^='nutrition-meal-recipe-']").first();
+    await expect(firstMealRecipe).toBeVisible();
+    await firstMealRecipe.locator("summary").click();
+    await expect(firstMealRecipe).toContainText(/1\./);
+    await expect(page.getByTestId("nutrition-weekly-grocery-list")).toBeVisible();
     await expect(page.getByTestId("nutrition-performance-guidance")).toBeVisible();
 
     await page.getByTestId("app-tab-settings").click();

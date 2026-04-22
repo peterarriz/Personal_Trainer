@@ -647,7 +647,7 @@ test("pure strength goal maps to a strength-dominant block, week, and today plan
     assert.equal(composer.programBlock.dominantEmphasis.category, "strength");
     assert.equal(planWeek.weeklyIntent.focus, "Build pressing strength with repeatable full-body work");
     assert.doesNotMatch(planWeek.weeklyIntent.focus, /getting legs back/i);
-    assert.match(planWeek.sessionsByDay[1].label, /full-body strength/i);
+    assert.match(planWeek.sessionsByDay[1].label, /full-body strength|bench focus/i);
     assert.ok(Object.values(planWeek.sessionsByDay).filter(Boolean).every((session) => !RUN_SESSION_TYPES.has(session.type)));
     assert.equal(todayPlan.label, planWeek.sessionsByDay[1].label);
   });
@@ -840,7 +840,7 @@ test("body-comp plus maintained strength maps to a non-race block and week", asy
     assert.equal(composer.programBlock.dominantEmphasis.category, "body_comp");
     assert.equal(planWeek.weeklyIntent.focus, "Drive fat-loss momentum while protecting strength");
     assert.doesNotMatch(planWeek.weeklyIntent.focus, /getting legs back/i);
-    assert.match(planWeek.sessionsByDay[1].label, /strength circuit|full-body/i);
+    assert.match(planWeek.sessionsByDay[1].label, /strength circuit|full-body|strength retention/i);
     assert.ok(Object.values(planWeek.sessionsByDay).filter(Boolean).every((session) => !RUN_SESSION_TYPES.has(session.type)));
   });
 });

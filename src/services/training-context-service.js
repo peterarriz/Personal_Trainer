@@ -38,6 +38,16 @@ export const TRAINING_INTENSITY_VALUES = Object.freeze({
   unknown: "unknown",
 });
 
+export const TRAINING_WEEKDAY_OPTIONS = Object.freeze([
+  Object.freeze({ value: "mon", label: "Mon", plannerDayKey: 1 }),
+  Object.freeze({ value: "tue", label: "Tue", plannerDayKey: 2 }),
+  Object.freeze({ value: "wed", label: "Wed", plannerDayKey: 3 }),
+  Object.freeze({ value: "thu", label: "Thu", plannerDayKey: 4 }),
+  Object.freeze({ value: "fri", label: "Fri", plannerDayKey: 5 }),
+  Object.freeze({ value: "sat", label: "Sat", plannerDayKey: 6 }),
+  Object.freeze({ value: "sun", label: "Sun", plannerDayKey: 0 }),
+]);
+
 export const TRAINING_CONTEXT_SOURCES = Object.freeze({
   onboardingAnswers: "onboarding_answers",
   environmentEditor: "environment_editor",
@@ -62,9 +72,39 @@ export const createEmptyTrainingContext = () => ({
   },
   sessionDuration: makeField({ value: TRAINING_SESSION_DURATION_VALUES.unknown }),
   intensityPosture: makeField({ value: TRAINING_INTENSITY_VALUES.unknown }),
+  weekdayAvailability: makeField({ value: [] }),
 });
 
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+
+export const normalizeTrainingWeekdayKey = (value = "") => {
+  const text = String(value || "").trim().toLowerCase();
+  if (["mon", "monday"].includes(text)) return "mon";
+  if (["tue", "tues", "tuesday"].includes(text)) return "tue";
+  if (["wed", "weds", "wednesday"].includes(text)) return "wed";
+  if (["thu", "thur", "thurs", "thursday"].includes(text)) return "thu";
+  if (["fri", "friday"].includes(text)) return "fri";
+  if (["sat", "saturday"].includes(text)) return "sat";
+  if (["sun", "sunday"].includes(text)) return "sun";
+  return "";
+};
+
+export const normalizeTrainingWeekdayAvailability = (values = []) => {
+  const ordered = [];
+  const seen = new Set();
+  (Array.isArray(values) ? values : [values]).forEach((value) => {
+    const normalized = normalizeTrainingWeekdayKey(value);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    ordered.push(normalized);
+  });
+  return TRAINING_WEEKDAY_OPTIONS.map((option) => option.value).filter((value) => ordered.includes(value));
+};
+
+export const formatTrainingWeekdayAvailability = (values = []) => (
+  normalizeTrainingWeekdayAvailability(values)
+    .map((value) => TRAINING_WEEKDAY_OPTIONS.find((option) => option.value === value)?.label || value)
+);
 
 export const normalizeTrainingEnvironment = (value = "") => {
   const text = String(value || "").trim().toLowerCase();
@@ -138,6 +178,9 @@ export const buildTrainingContextFromAnswers = ({ answers = {} } = {}) => {
   ].filter((item) => item && item !== "Other"));
   const sessionDurationValue = normalizeTrainingSessionDuration(answers.session_length || "");
   const intensityValue = normalizeTrainingIntensity(answers.coaching_style || "");
+  const weekdayAvailability = normalizeTrainingWeekdayAvailability(
+    answers.available_training_days || answers.available_days || []
+  );
   const equipmentValue = deriveEquipmentAccessValue({
     items: equipmentItems,
     environmentValue,
@@ -169,6 +212,11 @@ export const buildTrainingContextFromAnswers = ({ answers = {} } = {}) => {
       confirmed: intensityValue !== TRAINING_INTENSITY_VALUES.unknown,
       source: TRAINING_CONTEXT_SOURCES.onboardingAnswers,
     }),
+    weekdayAvailability: makeField({
+      value: weekdayAvailability,
+      confirmed: weekdayAvailability.length > 0,
+      source: TRAINING_CONTEXT_SOURCES.onboardingAnswers,
+    }),
   };
 };
 
@@ -176,6 +224,7 @@ export const buildTrainingContextFromEditor = ({
   mode = "",
   equipment = "",
   equipmentItems = [],
+  availableDays = [],
   time = "",
   intensity = "",
 } = {}) => {
@@ -183,6 +232,7 @@ export const buildTrainingContextFromEditor = ({
   const normalizedEquipmentItems = normalizeEquipmentItems(equipmentItems);
   const sessionDurationValue = normalizeTrainingSessionDuration(time);
   const intensityValue = normalizeTrainingIntensity(intensity);
+  const weekdayAvailability = normalizeTrainingWeekdayAvailability(availableDays);
   const normalizedEquipmentValue = equipment === TRAINING_EQUIPMENT_VALUES.fullGym
     ? TRAINING_EQUIPMENT_VALUES.fullGym
     : equipment === TRAINING_EQUIPMENT_VALUES.basicGym
@@ -225,6 +275,11 @@ export const buildTrainingContextFromEditor = ({
       confirmed: intensityValue !== TRAINING_INTENSITY_VALUES.unknown,
       source: TRAINING_CONTEXT_SOURCES.environmentEditor,
     }),
+    weekdayAvailability: makeField({
+      value: weekdayAvailability,
+      confirmed: weekdayAvailability.length > 0,
+      source: TRAINING_CONTEXT_SOURCES.environmentEditor,
+    }),
   };
 };
 
@@ -245,6 +300,7 @@ export const deriveTrainingContextFromPersonalization = ({ personalization = {} 
   const storedEnvironmentValue = normalizeTrainingEnvironment(stored?.environment?.value || "");
   const storedSessionDurationValue = normalizeTrainingSessionDuration(stored?.sessionDuration?.value || "");
   const storedIntensityValue = normalizeTrainingIntensity(stored?.intensityPosture?.value || "");
+  const storedWeekdayAvailability = normalizeTrainingWeekdayAvailability(stored?.weekdayAvailability?.value || []);
   const storedEquipmentItems = normalizeEquipmentItems(Array.isArray(stored?.equipmentAccess?.items) ? stored.equipmentAccess.items : []);
   const storedEquipmentValue = stored?.equipmentAccess?.value || deriveEquipmentAccessValue({
     items: storedEquipmentItems,
@@ -272,6 +328,9 @@ export const deriveTrainingContextFromPersonalization = ({ personalization = {} 
     Array.isArray(legacyProfile?.equipment_access) && legacyProfile.equipment_access.length
       ? legacyProfile.equipment_access
       : []
+  );
+  const legacyWeekdayAvailability = normalizeTrainingWeekdayAvailability(
+    legacyProfile?.available_days || legacyProfile?.available_training_days || []
   );
   const legacyEquipmentValue = legacyEquipmentItems.length
     ? deriveEquipmentAccessValue({
@@ -338,6 +397,13 @@ export const deriveTrainingContextFromPersonalization = ({ personalization = {} 
         ? stored.intensityPosture.confirmed
         : Boolean(legacyReady && legacyIntensityValue !== TRAINING_INTENSITY_VALUES.unknown),
       source: stored?.intensityPosture?.source || (legacyReady ? TRAINING_CONTEXT_SOURCES.legacyPersonalization : TRAINING_CONTEXT_SOURCES.unknown),
+    }),
+    weekdayAvailability: makeField({
+      value: storedWeekdayAvailability.length ? storedWeekdayAvailability : legacyWeekdayAvailability,
+      confirmed: typeof stored?.weekdayAvailability?.confirmed === "boolean"
+        ? stored.weekdayAvailability.confirmed
+        : Boolean(legacyReady && legacyWeekdayAvailability.length > 0),
+      source: stored?.weekdayAvailability?.source || (legacyReady && legacyWeekdayAvailability.length > 0 ? TRAINING_CONTEXT_SOURCES.legacyPersonalization : TRAINING_CONTEXT_SOURCES.unknown),
     }),
   };
 };

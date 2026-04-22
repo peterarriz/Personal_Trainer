@@ -6,6 +6,7 @@ const {
   WORKOUT_LOG_MODES,
   buildWorkoutLogFormRecommendation,
   buildWorkoutLogDraft,
+  buildWorkoutDailyCheckinFromDraft,
   buildWorkoutLogEntryFromDraft,
   buildWorkoutQuickCaptureModel,
   hasWorkoutQuickCaptureValues,
@@ -30,6 +31,7 @@ test("run day builds run-focused logging fields first", () => {
 
   assert.equal(draft.family, WORKOUT_LOG_FAMILIES.run);
   assert.equal(draft.run.enabled, true);
+  assert.equal(draft.run.modality, "run");
   assert.equal(draft.run.duration, "28");
   assert.equal(draft.run.distance, "2");
   assert.match(draft.run.purpose, /quality run/i);
@@ -50,7 +52,7 @@ test("recommendation service maps run sessions to running fields", () => {
   assert.equal(recommendation.recommendedMode, WORKOUT_LOG_MODES.running);
   assert.deepEqual(
     recommendation.recommendedFields.map((field) => field.id),
-    ["distance", "duration", "pace", "feel", "notes"]
+    ["modality", "distance", "duration", "pace", "rpe", "feel", "notes"]
   );
   assert.equal(recommendation.sections.run.enabled, true);
   assert.equal(recommendation.sections.strength.enabled, false);
@@ -311,6 +313,28 @@ test("minimal quick run input can be saved without the full detail form", () => 
   assert.equal(entry.actualSession.sessionFamily, WORKOUT_LOG_FAMILIES.run);
 });
 
+test("untouched run draft saves as prescribed instead of drifting into modified", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "hard-run",
+      label: "Tempo Run",
+      run: { t: "Tempo", d: "10 min easy + 20 min tempo + 10 min easy" },
+    }),
+    logEntry: {},
+  });
+
+  const entry = buildWorkoutLogEntryFromDraft({
+    draft,
+    baseEntry: {},
+    todayKey: "2026-04-11",
+  });
+
+  assert.equal(entry.actualSession.status, "completed_as_planned");
+  assert.equal(entry.actualSession.modifiedFromPlan, false);
+  assert.equal(entry.checkin.status, "completed_as_planned");
+});
+
 test("minimal quick strength input still preserves prescribed versus actual separation", () => {
   const draft = buildWorkoutLogDraft({
     dateKey: "2026-04-11",
@@ -422,7 +446,7 @@ test("mixed session builds split run and strength logging paths", () => {
   assert.equal(draft.sections.generic.enabled, false);
   assert.deepEqual(
     draft.recommendedFields.map((field) => field.section),
-    ["run", "run", "run", "run", "run", "strength", "strength", "strength", "strength", "strength", "strength"]
+    ["run", "run", "run", "run", "run", "run", "run", "strength", "strength", "strength", "strength", "strength", "strength"]
   );
 });
 
@@ -438,6 +462,7 @@ test("run-only draft prefills planned values without counting them as user chang
   });
 
   assert.equal(draft.family, WORKOUT_LOG_FAMILIES.run);
+  assert.equal(draft.run.modality, "run");
   assert.equal(draft.run.duration, "40");
   assert.equal(hasWorkoutQuickCaptureValues({ draft }), false);
 });
@@ -475,7 +500,90 @@ test("generic fallback sessions recommend a compact fallback schema", () => {
   assert.equal(recommendation.sections.strength.enabled, false);
   assert.deepEqual(
     recommendation.recommendedFields.map((field) => field.id),
-    ["reps", "weight", "feel", "notes"]
+    ["modality", "duration", "distance", "reps", "weight", "feel", "notes"]
   );
   assert.equal(recommendation.substitutionSupport.allowed, false);
+});
+
+test("swapped cardio session keeps substitute modality and modified status together", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "strength+prehab",
+      label: "Strength B",
+      prescribedExercises: [
+        { ex: "Barbell Bench Press", sets: "4x6" },
+      ],
+    }),
+    logEntry: {},
+  });
+
+  draft.completion.selection = "swapped";
+  draft.session.actualModality = "bike";
+  draft.session.swapLabel = "Bike substitute";
+  draft.run.enabled = true;
+  draft.run.duration = "35";
+  draft.run.distance = "10";
+
+  const entry = buildWorkoutLogEntryFromDraft({
+    draft,
+    baseEntry: {},
+    todayKey: "2026-04-11",
+  });
+
+  assert.equal(entry.actualSession.status, "completed_modified");
+  assert.equal(entry.actualSession.completionKind, "custom_session");
+  assert.equal(entry.actualSession.swapFromPlan, true);
+  assert.equal(entry.actualSession.modality, "bike");
+  assert.equal(entry.runTime, "35");
+  assert.equal(entry.miles, "10");
+});
+
+test("draft-derived daily checkin mirrors recovery signals for adaptation", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "hard-run",
+      label: "Tempo Run",
+      run: { t: "Tempo", d: "10 min easy + 20 min tempo + 10 min easy" },
+    }),
+    logEntry: {},
+  });
+
+  draft.signals.bodyStatus = "legs_sore";
+  draft.signals.recoveryState = "low";
+  draft.signals.blocker = "fatigue";
+  draft.notes = "Shortened after the warm-up.";
+  draft.feel = "2";
+
+  const checkin = buildWorkoutDailyCheckinFromDraft({
+    draft,
+    todayKey: "2026-04-11",
+  });
+
+  assert.equal(checkin.status, "completed_as_planned");
+  assert.equal(checkin.sessionFeel, "harder_than_expected");
+  assert.equal(checkin.blocker, "soreness_fatigue");
+  assert.equal(checkin.readiness.sleep, "2");
+  assert.equal(checkin.readiness.stress, "4");
+  assert.equal(checkin.readiness.soreness, "3");
+  assert.equal(checkin.note, "Shortened after the warm-up.");
+});
+
+test("saved blocker signals map back to the user-facing picker on reopen", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "hard-run",
+      label: "Tempo Run",
+      run: { t: "Tempo", d: "10 min easy + 20 min tempo + 10 min easy" },
+    }),
+    logEntry: {
+      checkin: {
+        blocker: "soreness_fatigue",
+      },
+    },
+  });
+
+  assert.equal(draft.signals.blocker, "fatigue");
 });

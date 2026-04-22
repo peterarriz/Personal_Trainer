@@ -11,6 +11,21 @@ import {
   ingestAdaptiveLearningEvents,
 } from "../src/services/adaptive-learning-sink-service.js";
 
+const createMemoryStorage = () => {
+  const store = new Map();
+  return {
+    getItem(key) {
+      return store.has(key) ? store.get(key) : null;
+    },
+    setItem(key, value) {
+      store.set(key, String(value));
+    },
+    removeItem(key) {
+      store.delete(key);
+    },
+  };
+};
+
 const buildEvent = () => createAdaptiveLearningEvent({
   eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationGenerated,
   actorId: "local_actor_1",
@@ -114,4 +129,40 @@ test("adaptive learning sink leaves events pending when the server rejects the b
       return true;
     }
   );
+});
+
+test("adaptive learning sink skips same-origin api routes in the local app runtime", async () => {
+  const event = buildEvent();
+  const previousWindow = global.window;
+  const previousLocalStorage = global.localStorage;
+  const localStorage = createMemoryStorage();
+  let fetchCalled = false;
+
+  global.window = {
+    location: { hostname: "127.0.0.1" },
+    localStorage,
+  };
+  global.localStorage = localStorage;
+
+  try {
+    const result = await ingestAdaptiveLearningEvents({
+      authSession: {
+        access_token: "token",
+      },
+      safeFetchWithTimeout: async () => {
+        fetchCalled = true;
+        throw new Error("fetch should not run in local app runtime");
+      },
+      events: [event],
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.skipped, true);
+    assert.equal(result.reason, "endpoint_unavailable");
+    assert.deepEqual(result.pendingEventIds, [event.eventId]);
+    assert.equal(fetchCalled, false);
+  } finally {
+    global.window = previousWindow;
+    global.localStorage = previousLocalStorage;
+  }
 });

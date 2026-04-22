@@ -13,6 +13,7 @@ import {
  NUTRITION_DAY_TYPES,
  resolveWorkoutNutritionDayType,
 } from "./services/nutrition-day-taxonomy-service.js";
+import { buildNutritionExecutionPlan } from "./services/nutrition-execution-plan-service.js";
 
 export const NUTRITION = Object.freeze(buildNutritionDayTargetsMap());
 
@@ -1383,7 +1384,7 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
  };
 };
 
-export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext, nutritionLayer, momentum, favorites, travelMode, learningLayer, timeOfDay, loggedIntake }) => {
+export const deriveRealWorldNutritionEngine = ({ location, dateKey = "", dayType, goalContext, nutritionLayer, momentum, favorites, travelMode, learningLayer, timeOfDay, loggedIntake }) => {
  const city = (location || "").trim() || "your area";
  const normalizedDayType = normalizeNutritionDayType(dayType || nutritionLayer?.dayType || "");
  const dayTypeLabel = getNutritionDayTypeLabel(normalizedDayType);
@@ -1581,6 +1582,32 @@ export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext,
  : "No major intake issue is logged, so recommendations stay aligned with training demand.";
   return `${workoutLabel} sets the training demand, ${goalLine} sets the bias, ${timeBucket} shapes meal timing, ${sessionFuelingPlan.priorityLine.toLowerCase()}, ${cuisinePreferenceLine ? `${cuisinePreferenceLine.toLowerCase()}, ` : ""}and ${intakeLine}`;
   })();
+ const executionPlan = buildNutritionExecutionPlan({
+  dateKey,
+  dayType: normalizedDayType,
+  mealFamily,
+  goalBias,
+  workoutLabel,
+  preferredCuisines,
+  savedMealAnchors: mealAnchors,
+  targets: nutritionLayer?.targets || {},
+  travelMode,
+  missedProteinSignal,
+  hungerSignal,
+ offTrackSignal,
+ likedMealPatterns: favorites?.likedMealPatterns || {},
+  dislikedMealPatterns: favorites?.dislikedMealPatterns || {},
+  mealPatternFeedback: favorites?.mealPatternFeedback || {},
+  slotOverrides: favorites?.mealCalendarOverrides?.[dateKey] || {},
+  favoriteGroceries: favorites?.groceries || [],
+  favoriteRestaurants: favorites?.restaurants || [],
+  safeMeals: [
+    ...(favorites?.safeMeals || []),
+    ...(favorites?.defaultMeals || []),
+    ...(favorites?.travelMeals || []),
+  ],
+  mealAnchorSignals: Object.values(mealAnchors || {}),
+ });
  const emergencyOrder = mealAnchors.emergencyOrder
  || recommendations.find((option) => option?.type === "anchor" || option?.type === "restaurant")?.meal
  || "";
@@ -1605,6 +1632,7 @@ export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext,
  mealAnchors,
  mealSlots,
  mealStructure,
+ executionPlan,
   dailyRecommendations,
   whyToday,
  performanceGuidance,

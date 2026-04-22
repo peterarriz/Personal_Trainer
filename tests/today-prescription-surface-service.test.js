@@ -23,6 +23,8 @@ test("today prescription model builds a concise coach-led day surface", () => {
     surfaceModel: {
       changeSummaryLine: "Aggressive preference active, but today still stays controlled.",
       canonicalReasonLine: "Recent work supports a controlled aerobic and strength touchpoint.",
+      explanationCategory: "adaptive_personalization",
+      explanationSourceLabel: "Based on your recent training",
     },
     whyNowLine: "You lifted hard yesterday, so today should stay useful without adding more cost.",
     prescribedExercises: [
@@ -36,12 +38,20 @@ test("today prescription model builds a concise coach-led day surface", () => {
   assert.match(model.dateLabel, /monday|apr/i);
   assert.equal(model.sessionLabel, "Easy run + upper support");
   assert.match(model.focusLine, /aerobic|strength|trunk/i);
-  assert.equal(model.blocks.length, 4);
+  assert.equal(model.blocks.length, 5);
   assert.equal(model.blocks[0].number, 1);
-  assert.match(model.blocks[0].title, /run \+ strength arc/i);
+  assert.match(model.blocks[0].title, /session arc/i);
   assert.match(model.blocks[0].prescription, /30 min/i);
-  assert.match(model.blocks[0].prescription, /bench|row/i);
+  assert.match(model.blocks[1].title, /strength touchpoint/i);
+  assert.match(model.blocks[1].prescription, /DB bench press/i);
+  assert.doesNotMatch(model.blocks[1].prescription, /Dead bug/i);
+  assert.match(model.blocks[2].title, /core \/ accessory/i);
+  assert.match(model.blocks[2].prescription, /Dead bug/i);
+  assert.match(model.blocks[3].title, /mobility/i);
+  assert.match(model.blocks[4].title, /optional finisher/i);
   assert.match(model.whyLine, /aggressive preference active/i);
+  assert.ok(model.trustModel?.chips?.some((chip) => chip.label === "Recent workouts"));
+  assert.ok(model.trustModel?.chips?.some((chip) => chip.label === "Goal balance"));
   assert.ok(model.rules.length >= 2);
 });
 
@@ -80,11 +90,18 @@ test("today prescription adjustments rewrite the visible prescription determinis
 
   assert.match(model.whyLine, /time is tight today/i);
   assert.match(model.focusLine, /controlled work|recovery protection/i);
-  assert.match(model.blocks[0].title, /run \+ strength arc/i);
+  assert.match(model.sessionLabel, /easy aerobic work/i);
+  assert.match(model.blocks[0].title, /bike substitution/i);
   assert.match(model.blocks[0].prescription, /bike/i);
+  assert.equal(model.blocks.length, 3);
+  assert.equal(model.blocks[1].title, "Mobility");
   assert.match(model.blocks[1].prescription, /ankle|calf|hip/i);
+  assert.match(model.blocks[2].title, /core \/ accessory/i);
   assert.match(model.blocks[2].prescription, /nearest dumbbell|bodyweight/i);
-  assert.ok(model.blocks.length <= 4);
+  assert.match(model.blocks[2].variant, /two clean rounds/i);
+  assert.ok(model.trustModel?.chips?.some((chip) => chip.label === "Time cap"));
+  assert.ok(model.trustModel?.chips?.some((chip) => chip.label === "Low recovery"));
+  assert.ok(model.trustModel?.chips?.some((chip) => chip.label === "Sore legs"));
   assert.deepEqual(model.adjustmentSummary, [
     "Short on time",
     "Low energy",
@@ -95,4 +112,35 @@ test("today prescription adjustments rewrite the visible prescription determinis
     "Home setup",
   ]);
   assert.match(model.rules.join(" "), /no hard impact|cut the accessory block/i);
+});
+
+test("strength days stay inside a 3-5 block budget instead of exploding into one card per lift", () => {
+  const model = buildTodayPrescriptionSurfaceModel({
+    dateKey: "2026-04-21",
+    training: {
+      type: "strength+prehab",
+      label: "Strength A",
+      strengthDuration: "45 min",
+    },
+    summary: {
+      sessionLabel: "Strength A",
+      structure: "Main lift + support",
+      why: "Today is for clean strength work without unnecessary fatigue.",
+    },
+    prescribedExercises: [
+      { ex: "Back squat", sets: "4", reps: "5", prescribedWeight: "225" },
+      { ex: "Romanian deadlift", sets: "3", reps: "8", prescribedWeight: "185" },
+      { ex: "Walking lunge", sets: "3", reps: "10 / side" },
+      { ex: "Hanging knee raise", sets: "3", reps: "12" },
+      { ex: "Face pull", sets: "3", reps: "15" },
+    ],
+  });
+
+  assert.ok(model.blocks.length >= 3);
+  assert.ok(model.blocks.length <= 5);
+  assert.equal(model.blocks[0].title, "Warm-up");
+  assert.equal(model.blocks[1].title, "Back squat");
+  assert.equal(model.blocks[2].title, "Romanian deadlift");
+  assert.match(model.blocks[3].title, /accessory \/ core/i);
+  assert.match(model.blocks[3].prescription, /Walking lunge/i);
 });

@@ -1,4 +1,5 @@
 import { dedupeStrings } from "../utils/collection-utils.js";
+import { buildGoalDriverProfile } from "./goal-driver-graph-service.js";
 
 const sanitizeText = (value = "", maxLength = 220) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 
@@ -252,6 +253,7 @@ const buildPacketFromSignals = ({ goal = {}, signals = {} } = {}) => {
     candidateDomainAdapters,
     fallbackPlanningMode,
     goalRole: sanitizeText(goal?.goalRole || resolvedGoal?.intakeConfirmedRole || "", 40).toLowerCase() || "primary",
+    driverProfile: buildGoalDriverProfile({ goal: { ...goal, resolvedGoal: { ...resolvedGoal, primaryDomain, planningCategory: resolvedGoal?.planningCategory || goal?.category || "", goalFamily } } }),
   };
 };
 

@@ -66,6 +66,15 @@ test("trainer payload sanitizes high-risk canonical entities before REST persist
             summary: "Bench 225",
             planningCategory: "strength",
             reviewCadence: "weekly",
+            driverProfile: {
+              version: "2026-04-goal-driver-graph-v1",
+              primaryDomain: "strength_hypertrophy",
+              primaryOutcomeId: "bench_press_strength",
+              primaryOutcomeLabel: "Bench press strength",
+              directDrivers: [{ id: "horizontal_press_strength", label: "Horizontal pressing strength", weight: 0.42 }],
+              supportDrivers: [{ id: "anterior_delt_strength", label: "Shoulder pressing support", weight: 0.18 }],
+              protectiveDrivers: [{ id: "shoulder_tolerance", label: "Shoulder tolerance", weight: 0.12 }],
+            },
             weird: new Map(),
           },
         },
@@ -99,6 +108,7 @@ test("trainer payload sanitizes high-risk canonical entities before REST persist
   assert.equal(payload.goals[0].name, "Bench 225");
   assert.equal(payload.goals[0].nonPersistable, undefined);
   assert.equal(payload.goals[0].resolvedGoal.summary, "Bench 225");
+  assert.equal(payload.goals[0].resolvedGoal.driverProfile.primaryOutcomeId, "bench_press_strength");
   assert.deepEqual(Object.keys(payload.plannedDayRecords), ["2026-04-07"]);
   assert.deepEqual(Object.keys(payload.planWeekRecords), ["4"]);
   assert.equal(payload.logs["2026-04-07"].performanceRecords.length >= 1, true);

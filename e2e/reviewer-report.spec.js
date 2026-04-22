@@ -54,16 +54,26 @@ async function saveTodayQuickLog(page, {
   statusLabel,
   note = "",
 } = {}) {
-  await page.getByTestId("app-tab-today").click();
-  await page.getByTestId("today-primary-cta").click();
-  const quickLog = page.getByTestId("today-quick-log");
-  await expect(quickLog).toBeVisible();
-  await quickLog.getByRole("button", { name: new RegExp(`^${String(statusLabel || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") }).click();
-  if (note) {
-    await quickLog.getByPlaceholder("Optional note").fill(note);
+  await page.getByTestId("app-tab-log").click();
+  await expect(page.getByTestId("log-tab")).toBeVisible();
+  const normalizedStatus = String(statusLabel || "").trim().toLowerCase();
+  const completionTestId = normalizedStatus.includes("skipped")
+    ? "log-completion-skipped"
+    : normalizedStatus.includes("swapped")
+    ? "log-completion-swapped"
+    : normalizedStatus.includes("partial")
+    ? "log-completion-partial"
+    : "log-completion-completed";
+  await page.getByTestId(completionTestId).click();
+  const advancedFields = page.getByTestId("log-advanced-fields");
+  if (!await advancedFields.evaluate((node) => node.open)) {
+    await advancedFields.locator("summary").click();
   }
-  await page.getByTestId("today-save-log").click();
-  await expect(page.getByTestId("today-save-status")).toContainText(/saved|marked/i);
+  if (note) {
+    await page.getByLabel("Session note").fill(note);
+  }
+  await page.getByTestId("log-save-quick").click();
+  await expect(page.getByTestId("log-save-status")).toContainText(/saved/i);
 }
 
 test.describe("history export tooling", () => {

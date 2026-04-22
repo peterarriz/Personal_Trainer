@@ -992,6 +992,30 @@ const buildTrackingFromResolvedGoal = (resolvedGoal = {}) => {
   return { mode: "progress_tracker", unit: resolvedGoal?.primaryMetric?.unit || resolvedGoal?.proxyMetrics?.[0]?.unit || "", metricKey: resolvedGoal?.primaryMetric?.key || resolvedGoal?.proxyMetrics?.[0]?.key || "" };
 };
 
+const enrichResolvedGoalWithCapabilityPacket = (resolvedGoal = {}) => {
+  if (!resolvedGoal || typeof resolvedGoal !== "object") return resolvedGoal;
+  const capabilityPacket = buildGoalCapabilityPacket({
+    goal: {
+      id: resolvedGoal.id,
+      name: resolvedGoal.summary,
+      category: resolvedGoal.planningCategory,
+      goalFamily: resolvedGoal.goalFamily,
+      targetHorizonWeeks: resolvedGoal.targetHorizonWeeks,
+      tradeoffs: resolvedGoal.tradeoffs,
+      resolvedGoal,
+    },
+  });
+  return {
+    ...resolvedGoal,
+    primaryDomain: capabilityPacket?.primaryDomain || resolvedGoal?.primaryDomain || "",
+    secondaryDomains: capabilityPacket?.secondaryDomains || resolvedGoal?.secondaryDomains || [],
+    candidateDomainAdapters: capabilityPacket?.candidateDomainAdapters || resolvedGoal?.candidateDomainAdapters || [],
+    fallbackPlanningMode: capabilityPacket?.fallbackPlanningMode || resolvedGoal?.fallbackPlanningMode || "",
+    missingAnchors: capabilityPacket?.missingAnchors || resolvedGoal?.missingAnchors || [],
+    driverProfile: capabilityPacket?.driverProfile || resolvedGoal?.driverProfile || null,
+  };
+};
+
 const createResolvedGoal = ({
   rawIntentText = "",
   analysisText = "",
@@ -1102,25 +1126,7 @@ const createResolvedGoal = ({
     },
     goalTemplateId: sanitizeText(templateSelection?.templateId || "", 80),
   };
-  const capabilityPacket = buildGoalCapabilityPacket({
-    goal: {
-      id: resolvedGoal.id,
-      name: resolvedGoal.summary,
-      category: resolvedGoal.planningCategory,
-      goalFamily: resolvedGoal.goalFamily,
-      targetHorizonWeeks: resolvedGoal.targetHorizonWeeks,
-      tradeoffs: resolvedGoal.tradeoffs,
-      resolvedGoal,
-    },
-  });
-  return {
-    ...resolvedGoal,
-    primaryDomain: capabilityPacket?.primaryDomain || "",
-    secondaryDomains: capabilityPacket?.secondaryDomains || [],
-    candidateDomainAdapters: capabilityPacket?.candidateDomainAdapters || [],
-    fallbackPlanningMode: capabilityPacket?.fallbackPlanningMode || "",
-    missingAnchors: capabilityPacket?.missingAnchors || [],
-  };
+  return enrichResolvedGoalWithCapabilityPacket(resolvedGoal);
 };
 
 const buildGoalBlueprints = ({
@@ -1462,7 +1468,7 @@ export const resolveGoalTranslation = ({
     structuredResolution,
   });
   if (structuredResolution?.resolvedGoal && !preferLegacyMixedResolution) {
-    const resolvedGoals = [{
+    const resolvedGoals = [enrichResolvedGoalWithCapabilityPacket({
       ...structuredResolution.resolvedGoal,
       confirmedByUser: Boolean(confirmation?.confirmed),
       confirmationSource: confirmation?.source || structuredResolution.resolvedGoal?.confirmationSource || "structured_intake",
@@ -1483,7 +1489,7 @@ export const resolveGoalTranslation = ({
         ...(structuredResolution.resolvedGoal?.unresolvedGaps || []),
         ...(confirmation?.edits?.unresolvedGaps || []),
       ]).slice(0, 4),
-    }];
+    })];
     const planningGoals = buildPlanningGoalsFromResolvedGoals({ resolvedGoals });
     const primaryConfidence = resolvedGoals[0]?.confidence || GOAL_CONFIDENCE_LEVELS.low;
     return {

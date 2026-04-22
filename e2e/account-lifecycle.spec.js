@@ -38,9 +38,34 @@ test("settings keeps reload and sign-out primary while recovery actions stay in 
     await openSettingsAccountAdvanced(page);
     await expect(page.getByTestId("settings-reset-device")).toBeVisible();
     await expect(page.getByTestId("settings-delete-account")).toBeVisible();
-    await expect(page.getByTestId("settings-delete-account-status")).toContainText("configured");
-    await expect(page.getByTestId("settings-delete-account")).toBeEnabled();
-    await expect.poll(() => stats.deleteGetRequests).toBeGreaterThan(0);
+    await expect(page.getByTestId("settings-delete-account-status")).toContainText(/local build|not available/i);
+    await expect(page.getByTestId("settings-delete-account")).toBeDisabled();
+    await expect.poll(() => stats.deleteGetRequests).toBe(0);
+  });
+
+  test("repeated refresh taps while account reload is already in flight coalesce into one cloud reload", async ({ page }) => {
+    const session = makeSession();
+    const payload = makeSignedInPayload();
+    const stats = await mockSupabaseRuntime(page, {
+      session,
+      payload,
+      trainerDataGetDelayMs: 900,
+    });
+
+    await bootAppWithSupabaseSeeds(page, { session, payload });
+    await openSettingsAccountSurface(page);
+
+    const baselineGetRequests = stats.trainerDataGetRequests;
+    const refreshButton = page.getByRole("button", { name: "Refresh from account" });
+
+    await refreshButton.evaluate((node) => {
+      node.click();
+      node.click();
+    });
+
+    await expect.poll(() => stats.trainerDataGetRequests).toBe(baselineGetRequests + 1);
+    await expect(page.getByTestId("settings-account-section")).toBeVisible();
+    await expect(page.getByTestId("settings-sync-status")).toContainText(/synced|up to date|working normally/i);
   });
 
   test("sign out returns to the account gate before a slow remote logout finishes and preserves the saved local copy", async ({ page }) => {
@@ -98,7 +123,7 @@ test("settings keeps reload and sign-out primary while recovery actions stay in 
     await expect.poll(() => stats.logoutRequests).toBe(1);
   });
 
-  test("delete account stays blocked with clear fallback paths when the deployment is not configured", async ({ page }) => {
+test("delete account stays blocked with clear fallback paths when the local build cannot verify the server route", async ({ page }) => {
     const session = makeSession();
     const payload = makeSignedInPayload();
     const stats = await mockSupabaseRuntime(page, {
@@ -131,13 +156,13 @@ test("settings keeps reload and sign-out primary while recovery actions stay in 
     await openSettingsAccountSurface(page);
     await openSettingsAccountAdvanced(page);
 
-    await expect(page.getByTestId("settings-delete-account-status")).toContainText("not configured");
-    await expect(page.getByTestId("settings-delete-account-help")).toContainText("sign out or reset this device");
+    await expect(page.getByTestId("settings-delete-account-status")).toContainText(/local build|not available/i);
+    await expect(page.getByTestId("settings-delete-account-help")).toContainText(/sign out|reset this device/i);
     await expect(page.getByTestId("settings-delete-account-diagnostics")).toHaveCount(0);
     await expect(page.getByTestId("settings-delete-account-missing-envs")).toHaveCount(0);
     await expect(page.getByTestId("settings-delete-account")).toBeDisabled();
     await expect(page.getByTestId("settings-reset-device")).toBeVisible();
-    await expect.poll(() => stats.deleteGetRequests).toBeGreaterThan(0);
+    await expect.poll(() => stats.deleteGetRequests).toBe(0);
     expect(stats.deletePostRequests).toBe(0);
   });
 });

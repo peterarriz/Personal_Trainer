@@ -19,6 +19,17 @@ const dedupeLabels = (values = []) => {
     });
 };
 
+const cleanSessionLabel = (value = "", fallback = "Today") => sanitizeText(
+  String(value || fallback)
+    .replace(/\(\s*reduced-load\s*\)/gi, "")
+    .replace(/\(\s*extended\s*\)/gi, "")
+    .replace(/\(\s*20-min version\s*\)/gi, "")
+    .replace(/\s*\bReduced-load\b/gi, "")
+    .replace(/\s*\bExtended\b/gi, "")
+    .replace(/\s{2,}/g, " "),
+  120
+) || sanitizeText(fallback, 120);
+
 const resolveDayKind = ({ commandCenterModel = null, surfaceModel = null } = {}) => {
   const explicitDayKind = sanitizeText(commandCenterModel?.dayKind || commandCenterModel?.baseDayKind || "", 40).toLowerCase();
   if (explicitDayKind) return explicitDayKind;
@@ -137,7 +148,10 @@ export const buildSharedSessionSummaryModel = ({
 } = {}) => {
   const display = surfaceModel?.display || {};
   const dayKind = resolveDayKind({ commandCenterModel, surfaceModel });
-  const title = sanitizeText(display?.sessionLabel || "Today", 120);
+  const canonicalSessionType = sanitizeText(display?.sessionType || "", 120);
+  const title = dayKind === "hybrid"
+    ? "Run + strength"
+    : cleanSessionLabel(display?.sessionLabel || canonicalSessionType || "Today", "Today");
   const durationLabel = sanitizeText(display?.expectedDuration || "", 60);
   const statusLabel = sanitizeText(commandCenterModel?.statusLabel || display?.sessionType || "", 80);
   const structureLabel = sanitizeText(display?.structure || currentWeekFocus || "", 120);

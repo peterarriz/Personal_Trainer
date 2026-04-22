@@ -74,6 +74,20 @@ test("resolves a fully measurable running goal into a canonical running planning
   assert.match(result.planningGoals[0].measurableTarget, /Half marathon time 1:45:00/i);
 });
 
+test("resolved strength goals now carry a driver graph for transfer and support work", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "bench 225",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "bench 225" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-21",
+  });
+
+  const driverProfile = result.resolvedGoals[0].driverProfile;
+  assert.equal(driverProfile?.primaryOutcomeId, "bench_press_strength");
+  assert.ok((driverProfile?.supportDrivers || []).some((driver) => driver.id === "anterior_delt_strength"));
+  assert.ok((driverProfile?.supportDrivers || []).some((driver) => driver.id === "upper_back_stability"));
+});
+
 test("marathon goals resolve to running/event interpretation instead of generic hybrid phrasing", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "I want to run a marathon",
