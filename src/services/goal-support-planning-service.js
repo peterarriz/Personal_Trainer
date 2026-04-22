@@ -131,6 +131,7 @@ const STRENGTH_UPPER_DRIVER_IDS = [
   "scapular_control",
   "anterior_delt_strength",
   "triceps_strength",
+  "biceps_hypertrophy",
   "pressing_hypertrophy",
   "trunk_bracing",
   "shoulder_tolerance",
@@ -222,3 +223,96 @@ export const buildGoalSupportPlanningContext = ({
     }),
   };
 };
+
+const DRIVER_TOUCHPOINT_LABELS = Object.freeze({
+  upper_back_stability: "upper back",
+  scapular_control: "scap control",
+  anterior_delt_strength: "shoulders",
+  triceps_strength: "triceps",
+  biceps_hypertrophy: "biceps",
+  pressing_hypertrophy: "pressing support",
+  trunk_bracing: "trunk",
+  shoulder_tolerance: "shoulder tolerance",
+  elbow_tolerance: "elbow tolerance",
+  lat_strength: "lats",
+  calf_soleus_capacity: "calves",
+  ankle_stiffness: "ankles",
+  single_leg_control: "single-leg control",
+  hip_stability: "hip stability",
+  trunk_stiffness: "trunk stiffness",
+  hamstring_durability: "hamstrings",
+  lower_leg_tolerance: "lower-leg tolerance",
+  tendon_tolerance: "tendon tolerance",
+  impact_tolerance: "impact tolerance",
+  posterior_chain_strength: "posterior chain",
+  shoulder_rotation_endurance: "shoulder rotation",
+  neck_upper_back_tolerance: "neck and upper back",
+  hip_extension_support: "hip extension",
+});
+
+const resolveTouchpointLabelList = (driverIds = []) => (
+  uniqueStrings(driverIds)
+    .map((driverId) => DRIVER_TOUCHPOINT_LABELS[driverId] || sanitizeText(driverId, 80).replace(/_/g, " "))
+    .filter(Boolean)
+    .slice(0, 3)
+);
+
+const formatTouchpointList = (driverIds = []) => {
+  const labels = resolveTouchpointLabelList(driverIds);
+  if (!labels.length) return "";
+  if (labels.length === 1) return labels[0];
+  if (labels.length === 2) return `${labels[0]} + ${labels[1]}`;
+  return `${labels[0]}, ${labels[1]}, and ${labels[2]}`;
+};
+
+const buildTouchpointGuidance = ({
+  bucket = "",
+  driverIds = [],
+} = {}) => {
+  const safeBucket = sanitizeText(bucket, 40).toLowerCase();
+  const focusLabel = formatTouchpointList(driverIds);
+  if (!focusLabel) return null;
+  if (safeBucket === "strength") {
+    return {
+      bucket: "strength",
+      driverIds: uniqueStrings(driverIds).slice(0, 4),
+      focusLabel,
+      optionalLine: `Optional: 8-10 min ${focusLabel} support if recovery is good.`,
+      effectLine: `Support gaps now stay visible through ${focusLabel} touchpoints instead of hiding inside the week.`,
+    };
+  }
+  if (safeBucket === "durability") {
+    return {
+      bucket: "durability",
+      driverIds: uniqueStrings(driverIds).slice(0, 4),
+      focusLabel,
+      optionalLine: `Optional: 8-10 min ${focusLabel} durability work after the main session.`,
+      effectLine: `The week now keeps ${focusLabel} durability visible because those support drivers are undercovered lately.`,
+    };
+  }
+  if (safeBucket === "swim") {
+    return {
+      bucket: "swim",
+      driverIds: uniqueStrings(driverIds).slice(0, 4),
+      focusLabel,
+      optionalLine: `Optional: 8-10 min dryland support for ${focusLabel}.`,
+      effectLine: `Dryland support now keeps ${focusLabel} visible between swim-specific sessions.`,
+    };
+  }
+  return null;
+};
+
+export const buildGoalSupportTouchpointGuidance = (supportPlanningContext = null) => ({
+  strength: buildTouchpointGuidance({
+    bucket: "strength",
+    driverIds: supportPlanningContext?.strengthFocusDriverIds || [],
+  }),
+  durability: buildTouchpointGuidance({
+    bucket: "durability",
+    driverIds: supportPlanningContext?.durabilityFocusDriverIds || [],
+  }),
+  swim: buildTouchpointGuidance({
+    bucket: "swim",
+    driverIds: supportPlanningContext?.swimDrylandFocusDriverIds || [],
+  }),
+});

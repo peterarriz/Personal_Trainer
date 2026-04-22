@@ -201,12 +201,16 @@ const normalizeMetric = (metric = null, fallbackKind = "primary") => {
   if (!metric || typeof metric !== "object") return null;
   const label = sanitizeText(metric?.label || metric?.name || "", 120);
   if (!label) return null;
+  const targetSets = Number(metric?.targetSets);
+  const targetReps = Number(metric?.targetReps);
   return {
     key: sanitizeText(metric?.key || slugify(label, fallbackKind), 80).toLowerCase(),
     label,
     unit: sanitizeText(metric?.unit || "", 24),
     targetValue: sanitizeText(metric?.targetValue || metric?.value || "", 80),
     kind: sanitizeText(metric?.kind || fallbackKind, 20).toLowerCase() || fallbackKind,
+    ...(Number.isFinite(targetSets) && targetSets > 0 ? { targetSets: Math.max(1, Math.round(targetSets)) } : {}),
+    ...(Number.isFinite(targetReps) && targetReps > 0 ? { targetReps: Math.max(1, Math.round(targetReps)) } : {}),
   };
 };
 

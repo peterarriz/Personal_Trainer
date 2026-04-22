@@ -214,6 +214,35 @@ const parseSessionLengthMinutes = (value = "") => {
   return Math.max(15, Math.min(180, Math.round(numeric)));
 };
 
+const getGoalTextCorpus = (goal = {}) => dedupeStrings([
+  goal?.summary,
+  goal?.rawIntent?.text,
+  goal?.sourceText,
+]).join(". ").toLowerCase();
+
+const isMaintenanceIntent = (goal = {}) => (
+  /\b(keep|maintain|hold|protect|without losing|without giving up)\b/i.test(getGoalTextCorpus(goal))
+);
+
+const isAppearanceGoal = (goal = {}) => (
+  sanitizeText(goal?.goalFamily || "", 40).toLowerCase() === "appearance"
+  || /\b(abs|six pack|physique|leaner|toned|defined|bigger shoulders|bigger arms|arm muscle|look athletic)\b/i.test(getGoalTextCorpus(goal))
+);
+
+const hasExplicitTarget = (goal = {}) => Boolean(
+  sanitizeText(goal?.primaryMetric?.targetValue || "", 40)
+  || sanitizeText(goal?.targetDate || "", 24)
+  || Number(goal?.targetHorizonWeeks || 0) > 0
+);
+
+const isHardOutcomeGoal = (goal = {}) => {
+  const planningCategory = sanitizeText(goal?.planningCategory || "", 40).toLowerCase();
+  if (planningCategory === "running") return true;
+  if (planningCategory === "strength") return hasExplicitTarget(goal) && !isMaintenanceIntent(goal);
+  if (planningCategory === "body_comp") return hasExplicitTarget(goal) && !isAppearanceGoal(goal);
+  return false;
+};
+
 const asDate = (value = null) => {
   if (!value) return new Date();
   if (value instanceof Date) return new Date(value.getTime());
@@ -905,6 +934,9 @@ const assessSingleGoalFeasibility = ({
   const hasConstraintPenalty = Boolean((currentContext?.injuryConstraints || []).length) && ["running", "strength"].includes(goal?.planningCategory);
   const compressedHorizon = hasTargetWindow && targetHorizonWeeks < demand.minimumRealisticHorizonWeeks;
   const severelyCompressedHorizon = hasTargetWindow && targetHorizonWeeks < Math.max(4, Math.round(demand.minimumRealisticHorizonWeeks * 0.55));
+  const maintenanceIntent = isMaintenanceIntent(goal);
+  const appearanceGoal = isAppearanceGoal(goal);
+  const hardOutcome = isHardOutcomeGoal(goal);
   const baselineSignals = buildBaselineSignals({
     goal: { ...goal, minimumRealisticHorizonWeeks: demand.minimumRealisticHorizonWeeks },
     facts: intakeCompleteness?.facts || {},
@@ -1010,13 +1042,22 @@ const assessSingleGoalFeasibility = ({
   });
 
   let priorityScore = 100;
-  if (hasTargetWindow) priorityScore += Math.max(0, 40 - targetHorizonWeeks);
+  if (goal?.planningPriority) priorityScore += Math.max(0, 14 - (Number(goal.planningPriority) * 2));
+  if (hasTargetWindow) priorityScore += Math.max(0, 28 - Math.min(targetHorizonWeeks, 28));
   if (goal?.measurabilityTier === GOAL_MEASURABILITY_TIERS.fullyMeasurable) priorityScore += 18;
   if (goal?.measurabilityTier === GOAL_MEASURABILITY_TIERS.proxyMeasurable) priorityScore += 8;
   if (goal?.measurabilityTier === GOAL_MEASURABILITY_TIERS.exploratoryFuzzy) priorityScore -= 8;
-  if (/\bkeep\b|\bmaintain\b/.test(String(goal?.summary || "").toLowerCase())) priorityScore -= 18;
-  if (realismStatus === GOAL_REALISM_STATUSES.unrealistic) priorityScore += 6;
-  if (goal?.planningPriority) priorityScore += Math.max(0, 8 - Number(goal.planningPriority));
+  if (hardOutcome) priorityScore += 18;
+  if (maintenanceIntent) priorityScore -= 22;
+  if (appearanceGoal) priorityScore -= 14;
+  if (realismStatus === GOAL_REALISM_STATUSES.realistic) priorityScore += 12;
+  if (realismStatus === GOAL_REALISM_STATUSES.aggressive) priorityScore += 2;
+  if (realismStatus === GOAL_REALISM_STATUSES.unrealistic) priorityScore -= 18;
+  if (severeScheduleShortfall) priorityScore -= 22;
+  else if (scheduleShortfall || shortSessions) priorityScore -= 8;
+  else priorityScore += 10;
+  if (compressedHorizon) priorityScore -= 8;
+  if (severelyCompressedHorizon) priorityScore -= 12;
   const suggestedRevision = (
     baselineSignals?.suggestedRevision?.summary
     || baselineSignals?.suggestedRevision?.first_block_target
@@ -1079,6 +1120,9 @@ const assessSingleGoalFeasibility = ({
     targetHorizonWeeks,
     minimumRealisticHorizonWeeks: demand.minimumRealisticHorizonWeeks,
     scheduleFit: severeScheduleShortfall ? "under_supported" : scheduleShortfall || shortSessions ? "tight" : "supported",
+    maintenanceIntent,
+    appearanceGoal,
+    hardOutcome,
     realisticByTargetDate,
     longerHorizonNeed,
     blockingReasons: dedupeStrings(blockingReasons),
@@ -1100,23 +1144,53 @@ const assessSingleGoalFeasibility = ({
 };
 
 const buildConflictFlags = ({ resolvedGoals = [], goalAssessments = [], scheduleReality = {}, currentContext = {} } = {}) => {
+  const assessmentMap = new Map(toArray(goalAssessments).map((assessment) => [assessment.goalId, assessment]));
+  const shapedGoals = toArray(resolvedGoals).map((goal) => {
+    const assessment = assessmentMap.get(goal?.id || "") || {};
+    return {
+      goal,
+      assessment,
+      planningCategory: sanitizeText(goal?.planningCategory || "", 40).toLowerCase(),
+      goalFamily: sanitizeText(goal?.goalFamily || "", 40).toLowerCase(),
+      maintenanceIntent: Boolean(assessment?.maintenanceIntent ?? isMaintenanceIntent(goal)),
+      appearanceGoal: Boolean(assessment?.appearanceGoal ?? isAppearanceGoal(goal)),
+      hardOutcome: Boolean(assessment?.hardOutcome ?? isHardOutcomeGoal(goal)),
+    };
+  });
   const categories = new Set((resolvedGoals || []).map((goal) => sanitizeText(goal?.planningCategory || "", 40).toLowerCase()).filter(Boolean));
   const flags = [];
   const scheduleTight = scheduleReality.trainingDaysPerWeek <= 3 || scheduleReality.sessionLengthMinutes < 35;
+  const scheduleSupported = scheduleReality.trainingDaysPerWeek >= 5 && scheduleReality.sessionLengthMinutes >= 45;
+  const scheduleModerate = scheduleReality.trainingDaysPerWeek >= 4 && scheduleReality.sessionLengthMinutes >= 40;
   const hasRunning = categories.has("running");
   const hasStrength = categories.has("strength");
   const hasBodyComp = categories.has("body_comp");
+  const hardOutcomeGoals = shapedGoals.filter((item) => item.hardOutcome);
+  const compressedHardOutcomes = shapedGoals.filter((item) => (
+    item.hardOutcome
+    && ["aggressive", "unrealistic"].includes(sanitizeText(item.assessment?.realismStatus || "", 20).toLowerCase())
+  ));
+  const performanceBodyCompPush = shapedGoals.some((item) => (
+    item.planningCategory === "body_comp"
+    && item.hardOutcome
+    && !item.appearanceGoal
+  ));
+  const sameLaneBenchmarkCategory = ["running", "strength"].find((planningCategory) => (
+    hardOutcomeGoals.filter((item) => item.planningCategory === planningCategory).length >= 2
+  )) || "";
 
   if (hasRunning && hasStrength) {
     flags.push({
       key: "hybrid_interference",
-      severity: scheduleReality.trainingDaysPerWeek >= 5 && scheduleReality.sessionLengthMinutes >= 45
+      severity: scheduleSupported && !performanceBodyCompPush
         ? GOAL_CONFLICT_SEVERITIES.low
-        : scheduleTight
+        : scheduleTight || performanceBodyCompPush
         ? GOAL_CONFLICT_SEVERITIES.high
+        : scheduleModerate
+        ? GOAL_CONFLICT_SEVERITIES.medium
         : GOAL_CONFLICT_SEVERITIES.medium,
       goalIds: (resolvedGoals || []).filter((goal) => ["running", "strength"].includes(goal?.planningCategory)).map((goal) => goal.id),
-      summary: scheduleReality.trainingDaysPerWeek >= 5 && scheduleReality.sessionLengthMinutes >= 45
+      summary: scheduleSupported && !performanceBodyCompPush
         ? "Running and strength can coexist here, but they still need an explicit weekly split."
         : "Running and strength are competing for the same recovery budget, so one lane needs to lead each block.",
     });
@@ -1140,6 +1214,55 @@ const buildConflictFlags = ({ resolvedGoals = [], goalAssessments = [], schedule
     });
   }
 
+  if (hasRunning && hasStrength && performanceBodyCompPush) {
+    flags.push({
+      key: "recovery_budget_overdrawn",
+      severity: scheduleSupported ? GOAL_CONFLICT_SEVERITIES.medium : GOAL_CONFLICT_SEVERITIES.high,
+      goalIds: shapedGoals
+        .filter((item) => ["running", "strength", "body_comp"].includes(item.planningCategory))
+        .map((item) => item.goal?.id)
+        .filter(Boolean),
+      summary: "Trying to push running, strength, and an aggressive cut together will overdraw recovery unless one lane clearly leads.",
+    });
+  }
+
+  if (sameLaneBenchmarkCategory) {
+    flags.push({
+      key: "same_lane_benchmark_stack",
+      severity: scheduleTight ? GOAL_CONFLICT_SEVERITIES.high : GOAL_CONFLICT_SEVERITIES.medium,
+      goalIds: hardOutcomeGoals
+        .filter((item) => item.planningCategory === sameLaneBenchmarkCategory)
+        .map((item) => item.goal?.id)
+        .filter(Boolean),
+      summary: sameLaneBenchmarkCategory === "running"
+        ? "Multiple running benchmarks are sharing one lane, so one race target should lead and the other should ride as support."
+        : "Multiple strength benchmarks are sharing one lane, so one lift target should lead and the other should ride as support.",
+    });
+  }
+
+  if (
+    hardOutcomeGoals.length >= 3
+    || (hardOutcomeGoals.length >= 2 && performanceBodyCompPush && !scheduleSupported)
+  ) {
+    flags.push({
+      key: "parallel_outcome_overload",
+      severity: scheduleTight || hardOutcomeGoals.length >= 3
+        ? GOAL_CONFLICT_SEVERITIES.high
+        : GOAL_CONFLICT_SEVERITIES.medium,
+      goalIds: hardOutcomeGoals.map((item) => item.goal?.id).filter(Boolean),
+      summary: "There are too many hard outcomes to push in parallel here, so one lane has to lead, one can be maintained, and the rest should sequence.",
+    });
+  }
+
+  if (compressedHardOutcomes.length >= 2) {
+    flags.push({
+      key: "compressed_parallel_targets",
+      severity: GOAL_CONFLICT_SEVERITIES.high,
+      goalIds: compressedHardOutcomes.map((item) => item.goal?.id).filter(Boolean),
+      summary: "More than one major target is already tight for the current runway, so lower-priority target windows need to move or phase later.",
+    });
+  }
+
   if ((resolvedGoals || []).length >= 2 && scheduleReality.trainingDaysPerWeek <= 3) {
     flags.push({
       key: "limited_schedule_multi_goal_stack",
@@ -1158,38 +1281,87 @@ const buildConflictFlags = ({ resolvedGoals = [], goalAssessments = [], schedule
     });
   }
 
-  return flags.slice(0, 5);
+  return flags.slice(0, 7);
 };
 
 const buildSuggestedSequencing = ({ resolvedGoals = [], goalAssessments = [], conflictFlags = [] } = {}) => {
   const sequencing = [];
+  const getFlag = (key) => conflictFlags.find((flag) => flag.key === key) || null;
   const primaryConflict = conflictFlags.find((flag) => flag.severity === GOAL_CONFLICT_SEVERITIES.high) || conflictFlags[0] || null;
   const compressedGoal = goalAssessments.find((assessment) => assessment.realismStatus === GOAL_REALISM_STATUSES.unrealistic)
     || goalAssessments.find((assessment) => assessment.realismStatus === GOAL_REALISM_STATUSES.aggressive)
     || null;
+  const fatLossVsStrength = getFlag("fat_loss_vs_strength");
+  const fatLossVsEndurance = getFlag("fat_loss_vs_endurance");
+  const sameLaneBenchmarkStack = getFlag("same_lane_benchmark_stack");
+  const recoveryBudgetOverdrawn = getFlag("recovery_budget_overdrawn");
+  const parallelOutcomeOverload = getFlag("parallel_outcome_overload");
+  const compressedParallelTargets = getFlag("compressed_parallel_targets");
+  const hybridInterference = getFlag("hybrid_interference");
+  const limitedScheduleStack = getFlag("limited_schedule_multi_goal_stack");
 
-  if (primaryConflict?.key === "fat_loss_vs_strength") {
+  if (sameLaneBenchmarkStack) {
     sequencing.push({
       phase: "now",
-      goalIds: primaryConflict.goalIds,
+      goalIds: sameLaneBenchmarkStack.goalIds,
+      summary: "Pick one benchmark as the headline target and let the second ride the same lane instead of forcing two co-primary outcomes.",
+    });
+  }
+
+  if (recoveryBudgetOverdrawn) {
+    sequencing.push({
+      phase: "now",
+      goalIds: recoveryBudgetOverdrawn.goalIds,
+      summary: "Use one performance lane as the lead, keep the cut moderate, and let support work ride in the background until recovery stabilizes.",
+    });
+  }
+
+  if (parallelOutcomeOverload) {
+    sequencing.push({
+      phase: "now",
+      goalIds: parallelOutcomeOverload.goalIds,
+      summary: "Use this block for one primary outcome and one maintained lane, then sequence the rest into the next block instead of asking everything to peak together.",
+    });
+  }
+
+  if (compressedParallelTargets) {
+    sequencing.push({
+      phase: "next_block",
+      goalIds: compressedParallelTargets.goalIds,
+      summary: "Move the lower-priority target date or delay that lane until the first block lands, because the current stack is too compressed to judge honestly.",
+    });
+  }
+
+  if (fatLossVsStrength) {
+    sequencing.push({
+      phase: "now",
+      goalIds: fatLossVsStrength.goalIds,
       summary: "Lead with body composition now and treat strength as maintenance until the physique push settles.",
     });
   }
 
-  if (primaryConflict?.key === "hybrid_interference") {
+  if (fatLossVsEndurance) {
     sequencing.push({
       phase: "now",
-      goalIds: primaryConflict.goalIds,
-      summary: primaryConflict.severity === GOAL_CONFLICT_SEVERITIES.low
+      goalIds: fatLossVsEndurance.goalIds,
+      summary: "Keep the cut moderate while run quality matters, then press harder on body composition after the race-specific block settles.",
+    });
+  }
+
+  if (hybridInterference) {
+    sequencing.push({
+      phase: "now",
+      goalIds: hybridInterference.goalIds,
+      summary: hybridInterference.severity === GOAL_CONFLICT_SEVERITIES.low
         ? "Use a clear weekly split so both lanes stay alive without competing every session."
         : "Start with one lead emphasis per block and hold the other lane at maintenance volume.",
     });
   }
 
-  if (primaryConflict?.key === "limited_schedule_multi_goal_stack") {
+  if (limitedScheduleStack) {
     sequencing.push({
       phase: "now",
-      goalIds: primaryConflict.goalIds,
+      goalIds: limitedScheduleStack.goalIds,
       summary: "Use the first block to establish one primary goal and keep the rest in maintenance mode.",
     });
   }
@@ -1210,7 +1382,14 @@ const buildSuggestedSequencing = ({ resolvedGoals = [], goalAssessments = [], co
     });
   }
 
-  return sequencing.slice(0, 4);
+  return dedupeFeasibilityReasons(sequencing.map((item, index) => ({
+    code: `${item.phase}_${index}`,
+    summary: item.summary,
+    severity: "warning",
+    priority: index + 1,
+    goalId: toArray(item.goalIds || [])[0] || "",
+    item,
+  }))).map((entry) => entry.item).slice(0, 5);
 };
 
 const buildPriorityOrdering = ({ resolvedGoals = [], goalAssessments = [] } = {}) => {

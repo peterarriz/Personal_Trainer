@@ -146,6 +146,8 @@ const normalizeResolvedGoal = (goal = {}, index = 0) => {
         unit: sanitizeText(goal.primaryMetric.unit || "", 24),
         kind: "primary",
         targetValue: sanitizeText(goal.primaryMetric.targetValue || "", 40),
+        ...(Number.isFinite(Number(goal?.primaryMetric?.targetSets)) ? { targetSets: Math.max(1, Math.round(Number(goal.primaryMetric.targetSets))) } : {}),
+        ...(Number.isFinite(Number(goal?.primaryMetric?.targetReps)) ? { targetReps: Math.max(1, Math.round(Number(goal.primaryMetric.targetReps))) } : {}),
       }
     : null;
 
@@ -933,6 +935,27 @@ const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
   const firstWeight = Number(firstTargetedRecord?.actual?.weight ?? firstTargetedRecord?.prescribed?.weight ?? 0) || null;
   const bestWeight = Number(bestTargetedRecord?.actual?.weight ?? bestTargetedRecord?.prescribed?.weight ?? 0) || null;
   const targetWeight = parsePrimaryMetricTargetNumber(goal?.primaryMetric);
+  const targetSets = Number(goal?.primaryMetric?.targetSets);
+  const targetReps = Number(goal?.primaryMetric?.targetReps);
+  const hasTargetProtocol = Number.isFinite(targetSets) && targetSets > 0 && Number.isFinite(targetReps) && targetReps > 0;
+  const protocolQualifiedRecords = hasTargetProtocol
+    ? targetedRecords.filter((record) => {
+        const actualSets = Number(record?.actual?.sets ?? record?.prescribed?.sets ?? 0);
+        const actualReps = Number(record?.actual?.reps ?? record?.prescribed?.reps ?? 0);
+        return actualSets >= targetSets && actualReps >= targetReps;
+      })
+    : [];
+  const bestProtocolRecord = hasTargetProtocol
+    ? [...protocolQualifiedRecords].sort((a, b) => {
+        const aValue = Number(a?.actual?.weight ?? a?.prescribed?.weight ?? 0);
+        const bValue = Number(b?.actual?.weight ?? b?.prescribed?.weight ?? 0);
+        return aValue - bValue;
+      }).slice(-1)[0] || null
+    : null;
+  const bestProtocolWeight = Number(bestProtocolRecord?.actual?.weight ?? bestProtocolRecord?.prescribed?.weight ?? 0) || null;
+  const benchmarkWeight = hasTargetProtocol ? (bestProtocolWeight ?? bestWeight) : bestWeight;
+  const currentProtocolLabel = hasTargetProtocol ? `${targetSets} x ${targetReps}` : "";
+  const recordLabel = hasTargetProtocol ? `${targetSets} x ${targetReps} benchmark` : "Performance record";
 
   const topSetItem = createTrackedItem({
     key: "top_set_load",
@@ -943,7 +966,11 @@ const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
     currentDisplay: latestTargetedRecord
       ? `${latestWeight || 0} lb x ${latestTargetedRecord?.actual?.reps || latestTargetedRecord?.prescribed?.reps || 0} x ${latestTargetedRecord?.actual?.sets || latestTargetedRecord?.prescribed?.sets || 0} on ${latestTargetedRecord.date}`
       : "No targeted lift sets logged yet",
-    targetDisplay: targetWeight ? `${targetWeight} lb target` : "",
+    targetDisplay: targetWeight
+      ? hasTargetProtocol
+        ? `${targetWeight} lb for ${currentProtocolLabel}`
+        : `${targetWeight} lb target`
+      : "",
     trendDisplay: (Number.isFinite(latestWeight) && Number.isFinite(firstWeight))
       ? `${formatSignedDelta(latestWeight - firstWeight, 0, "lb")} vs first logged exposure`
       : "",
@@ -962,25 +989,29 @@ const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
 
   const recordItem = createTrackedItem({
     key: "performance_record",
-    label: "Performance record",
+    label: recordLabel,
     kind: "primary",
     metricRefs: [goal?.primaryMetric?.key || ""],
-    status: bestTargetedRecord ? GOAL_PROGRESS_STATUSES.onTrack : GOAL_PROGRESS_STATUSES.needsData,
-    currentDisplay: bestTargetedRecord
+    status: benchmarkWeight ? GOAL_PROGRESS_STATUSES.onTrack : GOAL_PROGRESS_STATUSES.needsData,
+    currentDisplay: hasTargetProtocol
+      ? bestProtocolRecord
+        ? `Best logged ${currentProtocolLabel} load ${bestProtocolWeight || 0} lb on ${bestProtocolRecord.date}`
+        : `No ${currentProtocolLabel} strength record logged yet`
+      : bestTargetedRecord
       ? `Best logged top set ${bestWeight || 0} lb on ${bestTargetedRecord.date}`
       : "No strength record logged yet",
-    trendDisplay: (Number.isFinite(bestWeight) && Number.isFinite(firstWeight))
-      ? `${formatSignedDelta(bestWeight - firstWeight, 0, "lb")} from first logged exposure`
+    trendDisplay: (Number.isFinite(benchmarkWeight) && Number.isFinite(firstWeight))
+      ? `${formatSignedDelta(benchmarkWeight - firstWeight, 0, "lb")} from first logged exposure`
       : "",
     why: "A strength goal needs a hard anchor in real logged performance, not only planned percentages.",
     metricMeta: {
       valueFormat: "load",
       unit: "lb",
       direction: "higher",
-      currentValue: bestWeight,
+      currentValue: benchmarkWeight,
       baselineValue: firstWeight,
       targetValue: targetWeight,
-      currentDate: bestTargetedRecord?.date || latestTargetedRecord?.date || "",
+      currentDate: bestProtocolRecord?.date || bestTargetedRecord?.date || latestTargetedRecord?.date || "",
       baselineDate: firstTargetedRecord?.date || "",
     },
   });
@@ -991,7 +1022,7 @@ const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
   });
 
   if (Number.isFinite(targetWeight) && targetWeight > 0) {
-    const remaining = Number.isFinite(bestWeight) ? Math.max(0, targetWeight - bestWeight) : null;
+    const remaining = Number.isFinite(benchmarkWeight) ? Math.max(0, targetWeight - benchmarkWeight) : null;
     const incrementStep = targetWeight >= 225 ? 2.5 : 5;
     const projectedItem = createTrackedItem({
       key: "projected_goal_progress",
@@ -1004,9 +1035,15 @@ const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
         ? GOAL_PROGRESS_STATUSES.onTrack
         : GOAL_PROGRESS_STATUSES.building,
       currentDisplay: remaining === null
-        ? `First ${targetWeight} lb exposure still needs to be logged`
+        ? hasTargetProtocol
+          ? `First ${targetWeight} lb for ${currentProtocolLabel} still needs to be logged`
+          : `First ${targetWeight} lb exposure still needs to be logged`
         : remaining === 0
-        ? `${targetWeight} lb has been touched or exceeded`
+        ? hasTargetProtocol
+          ? `${targetWeight} lb for ${currentProtocolLabel} has been touched or exceeded`
+          : `${targetWeight} lb has been touched or exceeded`
+        : hasTargetProtocol
+        ? `${remaining} lb remaining to ${targetWeight} lb for ${currentProtocolLabel}`
         : `${remaining} lb remaining to ${targetWeight} lb`,
       trendDisplay: remaining > 0
         ? `Roughly ${Math.max(1, Math.ceil(remaining / incrementStep))} more ${incrementStep} lb jumps at current progression`
@@ -1016,11 +1053,11 @@ const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
         valueFormat: "load",
         unit: "lb",
         direction: "higher",
-        currentValue: bestWeight ?? latestWeight,
+        currentValue: benchmarkWeight ?? latestWeight,
         baselineValue: firstWeight,
         targetValue: targetWeight,
         distanceValue: remaining,
-        currentDate: bestTargetedRecord?.date || latestTargetedRecord?.date || "",
+        currentDate: bestProtocolRecord?.date || bestTargetedRecord?.date || latestTargetedRecord?.date || "",
         baselineDate: firstTargetedRecord?.date || "",
       },
     });
@@ -1033,12 +1070,14 @@ const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
         unit: "lb",
         direction: "higher",
         baselineValue: firstWeight,
-        currentValue: bestWeight ?? latestWeight,
+        currentValue: benchmarkWeight ?? latestWeight,
         targetValue: targetWeight,
-        currentDate: bestTargetedRecord?.date || latestTargetedRecord?.date || "",
+        currentDate: bestProtocolRecord?.date || bestTargetedRecord?.date || latestTargetedRecord?.date || "",
         baselineDate: firstTargetedRecord?.date || "",
         status: projectedItem.status,
-        emptyStateLine: `First ${targetWeight} lb exposure still needs to be logged.`,
+        emptyStateLine: hasTargetProtocol
+          ? `First ${targetWeight} lb for ${currentProtocolLabel} still needs to be logged.`
+          : `First ${targetWeight} lb exposure still needs to be logged.`,
       }),
     };
   }
@@ -1589,10 +1628,28 @@ const buildHonestyNote = ({ goal = {}, trackingMode = GOAL_PROGRESS_TRACKING_MOD
 };
 
 const buildGoalProgressCard = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
+  const safeNow = asDate(now);
   const trackingMode = resolveTrackingMode(goal);
   const trackingModel = buildTrackedItemsForGoal({ goal, dataIndex, manualProgressInputs, now });
   const trackedItems = Array.isArray(trackingModel?.trackedItems) ? trackingModel.trackedItems : [];
-  const status = goal?.goalFamily === "appearance"
+  const exactMetricAnchor = trackingModel?.progressAnchor?.kind === "exact_metric"
+    ? trackingModel.progressAnchor
+    : null;
+  const targetWindowExpired = Boolean(
+    goal?.targetDate
+    && (asDate(goal.targetDate).getTime() + GRACE_PERIOD_MS) < safeNow.getTime()
+  );
+  const exactMetricTargetReached = Boolean(
+    exactMetricAnchor
+    && Number.isFinite(exactMetricAnchor?.currentValue)
+    && Number.isFinite(exactMetricAnchor?.targetValue)
+    && (
+      exactMetricAnchor?.direction === "higher"
+        ? Number(exactMetricAnchor.currentValue) >= Number(exactMetricAnchor.targetValue)
+        : Number(exactMetricAnchor.currentValue) <= Number(exactMetricAnchor.targetValue)
+    )
+  );
+  let status = goal?.goalFamily === "appearance"
     ? GOAL_PROGRESS_STATUSES.reviewBased
     : trackingMode === GOAL_PROGRESS_TRACKING_MODES.exploratory
     ? GOAL_PROGRESS_STATUSES.reviewBased
@@ -1601,13 +1658,21 @@ const buildGoalProgressCard = ({ goal = {}, dataIndex = {}, manualProgressInputs
     : trackedItems.some((item) => item?.status === GOAL_PROGRESS_STATUSES.onTrack)
     ? GOAL_PROGRESS_STATUSES.onTrack
     : GOAL_PROGRESS_STATUSES.building;
+  if (targetWindowExpired && !exactMetricTargetReached && status === GOAL_PROGRESS_STATUSES.onTrack) {
+    status = GOAL_PROGRESS_STATUSES.building;
+  }
 
   const missingDataLabels = trackedItems
     .filter((item) => item?.status === GOAL_PROGRESS_STATUSES.needsData)
     .map((item) => item?.label)
     .filter(Boolean);
-  const statusSummary = buildStatusSummary({ goal, trackingMode });
-  const honestyNote = buildHonestyNote({ goal, trackingMode, trackedItems });
+  const targetWindowMissed = targetWindowExpired && !exactMetricTargetReached;
+  const statusSummary = targetWindowMissed
+    ? "The original target window has passed, so this goal needs a re-plan instead of an automatic on-track label."
+    : buildStatusSummary({ goal, trackingMode });
+  const honestyNote = targetWindowMissed
+    ? "The date window passed before the target metric was fully met, so the next step should be a truthful re-plan."
+    : buildHonestyNote({ goal, trackingMode, trackedItems });
   const nextReviewFocus = missingDataLabels.length
     ? `Add ${missingDataLabels.slice(0, 2).join(" and ")} before the next ${goal?.reviewCadence || "weekly"} review.`
     : goal?.first30DaySuccessDefinition

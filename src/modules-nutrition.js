@@ -1598,6 +1598,8 @@ export const deriveRealWorldNutritionEngine = ({ location, dateKey = "", dayType
  likedMealPatterns: favorites?.likedMealPatterns || {},
   dislikedMealPatterns: favorites?.dislikedMealPatterns || {},
   mealPatternFeedback: favorites?.mealPatternFeedback || {},
+  mealPatternFeedbackMeta: favorites?.mealPatternFeedbackMeta || {},
+  mealPatternHistory: favorites?.mealPatternHistory || [],
   slotOverrides: favorites?.mealCalendarOverrides?.[dateKey] || {},
   favoriteGroceries: favorites?.groceries || [],
   favoriteRestaurants: favorites?.restaurants || [],

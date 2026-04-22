@@ -92,7 +92,7 @@ This dashboard intentionally starts with the high-signal issues that have alread
 
 | Check | Command | Expected result | Current status |
 | --- | --- | --- | --- |
-| Build | `cmd /c npm run build` | Must pass with repo hygiene check green. | `PASS` |
+| Build | `cmd /c npm run build:verified` | Must pass with repo hygiene check green. | `PASS` |
 | Planning contract pack | `node --test tests/plan-archetype-contract.test.js tests/goal-progress-service.test.js` | All archetype contract and tracking checks pass. | `PASS` |
 | Sync state and save copy | `node --test tests/sync-state-service.test.js tests/save-feedback-service.test.js` | Unified save/sync states pass without vague fallback copy. | `PASS` |
 | Log speed and duplicate-content guard | `cmd /c npx playwright test e2e/log-prescribed-workflow.spec.js` | Quick log, full detail log, and modified log pass. | `PASS` |

@@ -30,6 +30,7 @@ The app is no longer a single-file dashboard.
 ```bash
 npm install
 npm run build
+npm run build:verified
 npm run dev
 npm test
 npm run test:repo-hygiene
@@ -43,6 +44,7 @@ npm run e2e
 What those commands do today:
 
 - `npm run build` builds the deployable app into `dist/`.
+- `npm run build:verified` runs repo hygiene first, then builds the deployable app into `dist/`.
 - `npm run dev` builds once, then serves `dist/` on port `3000`. It is a preview server, not a hot-reload dev server.
 - `npm test` runs the full Node test suite in `tests/`.
 - `npm run test:repo-hygiene` blocks stray root debris, generated output, and accidental backup files.

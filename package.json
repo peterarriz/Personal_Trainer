@@ -4,6 +4,8 @@
   "description": "FORMA fitness operating system for planning, logging, nutrition, recovery, and coaching",
   "scripts": {
     "build": "node scripts/build.js",
+    "build:deploy": "node scripts/build.js",
+    "build:verified": "npm run test:repo-hygiene && npm run build",
     "build:inline": "node scripts/build.js --mode=inline",
     "build:split": "node scripts/build.js --mode=split",
     "dev": "npm run build && npx serve dist -p 3000",
@@ -27,6 +29,8 @@
     "qa:launch-simulation:report": "node -r sucrase/register scripts/run-launch-simulation.js --mode report",
     "qa:launch-simulation:browser:chunk": "node scripts/run-launch-browser-chunk.js",
     "qa:launch-gate": "node scripts/run-launch-gate.cjs",
+    "qa:sync:proof": "node scripts/run-sync-proof-gate.cjs",
+    "qa:visual-review": "node scripts/run-visual-review-pack.cjs",
     "qa:peter-proof-gate": "node scripts/run-peter-proof-gate.cjs",
     "qa:manual-pack": "node scripts/run-manual-qa-pack.cjs",
     "qa:release-gate": "node scripts/run-manual-qa-pack.cjs",
@@ -45,7 +49,8 @@
     "e2e:headed": "playwright test --headed",
     "e2e:debug": "playwright test --debug",
     "e2e:install": "playwright install chromium",
-    "perf:mobile": "node scripts/profile-mobile-performance.cjs"
+    "perf:mobile": "node scripts/profile-mobile-performance.cjs",
+    "vercel-build": "npm run build:deploy"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",

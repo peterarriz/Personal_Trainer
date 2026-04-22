@@ -62,12 +62,16 @@ const sanitizeMetric = (metric = null) => {
   const key = sanitizeText(metric?.key || "", 60).toLowerCase();
   const label = sanitizeText(metric?.label || metric?.key || "", 80);
   if (!key && !label) return null;
+  const targetSets = toFiniteInteger(metric?.targetSets, null);
+  const targetReps = toFiniteInteger(metric?.targetReps, null);
   return {
     ...(key ? { key } : {}),
     ...(label ? { label } : {}),
     ...(sanitizeText(metric?.unit || "", 24) ? { unit: sanitizeText(metric.unit, 24) } : {}),
     ...(sanitizeText(metric?.kind || "", 20) ? { kind: sanitizeText(metric.kind, 20).toLowerCase() } : {}),
     ...(sanitizeText(metric?.targetValue || metric?.value || "", 40) ? { targetValue: sanitizeText(metric?.targetValue || metric?.value || "", 40) } : {}),
+    ...(Number.isFinite(targetSets) && targetSets > 0 ? { targetSets: Math.max(1, targetSets) } : {}),
+    ...(Number.isFinite(targetReps) && targetReps > 0 ? { targetReps: Math.max(1, targetReps) } : {}),
   };
 };
 

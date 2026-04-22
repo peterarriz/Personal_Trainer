@@ -313,12 +313,19 @@ const chooseRoleForCandidate = ({
   maintainedCount = 0,
   backgroundCount = 0,
   highConflict = false,
+  outcomeOverload = false,
   intakeBlocked = false,
 } = {}) => {
   const planningCategory = sanitizeText(goal?.planningCategory || "", 40).toLowerCase();
   const leadCategory = sanitizeText(leadGoal?.planningCategory || "", 40).toLowerCase();
   const canMaintain = maintainedCount < GOAL_ARBITRATION_LIMITS.maintained;
-  const canSupport = backgroundCount < GOAL_ARBITRATION_LIMITS.support && !highConflict;
+  const canSupport = backgroundCount < GOAL_ARBITRATION_LIMITS.support;
+  const realismStatus = sanitizeText(goal?.feasibilityAssessment?.realismStatus || "", 20).toLowerCase();
+  const scheduleFit = sanitizeText(goal?.feasibilityAssessment?.scheduleFit || "", 20).toLowerCase();
+  const hardOutcome = isHardOutcomeGoal(goal);
+  const bodyCompOutcome = planningCategory === "body_comp" && hardOutcome;
+  const underSupported = scheduleFit === "under_supported";
+  const compressedOutcome = ["aggressive", "unrealistic"].includes(realismStatus);
 
   if (hasBlockingClarification(goal)) return GOAL_ROLES.deferred;
   if (intakeBlocked && !isMaintenanceIntent(goal)) {
@@ -327,14 +334,23 @@ const chooseRoleForCandidate = ({
   if (isMaintenanceIntent(goal) && planningCategory && planningCategory !== leadCategory) {
     return canMaintain ? GOAL_ROLES.maintained : (canSupport ? GOAL_ROLES.background : GOAL_ROLES.deferred);
   }
-  if (isHardOutcomeGoal(goal) && planningCategory && planningCategory !== leadCategory) {
-    return (!highConflict && canMaintain) ? GOAL_ROLES.maintained : GOAL_ROLES.deferred;
+  if (hardOutcome && planningCategory && planningCategory === leadCategory) {
+    return canSupport && !outcomeOverload ? GOAL_ROLES.background : GOAL_ROLES.deferred;
+  }
+  if (hardOutcome && planningCategory && planningCategory !== leadCategory) {
+    if (bodyCompOutcome && (highConflict || outcomeOverload)) {
+      return canSupport ? GOAL_ROLES.background : GOAL_ROLES.deferred;
+    }
+    if (underSupported || compressedOutcome) {
+      return GOAL_ROLES.deferred;
+    }
+    return canMaintain ? GOAL_ROLES.maintained : (canSupport && !outcomeOverload ? GOAL_ROLES.background : GOAL_ROLES.deferred);
   }
   if (isConditioningSupportGoal(goal) && planningCategory && planningCategory !== leadCategory) {
-    return canMaintain ? GOAL_ROLES.maintained : (canSupport ? GOAL_ROLES.background : GOAL_ROLES.deferred);
+    return canMaintain ? GOAL_ROLES.maintained : (canSupport && !highConflict ? GOAL_ROLES.background : GOAL_ROLES.deferred);
   }
   if (isAppearanceGoal(goal)) {
-    return canSupport ? GOAL_ROLES.background : GOAL_ROLES.deferred;
+    return canSupport && !outcomeOverload ? GOAL_ROLES.background : GOAL_ROLES.deferred;
   }
   if (planningCategory && planningCategory === leadCategory) {
     return canSupport ? GOAL_ROLES.background : GOAL_ROLES.deferred;
@@ -391,6 +407,13 @@ const buildRoleDecision = ({
       return {
         reasonCode: "background_until_primary_clarifies",
         summary: "This stays visible, but it cannot move higher in the priority order until the top goal is better anchored.",
+        validationIssueKeys,
+      };
+    }
+    if (planningCategory === "body_comp") {
+      return {
+        reasonCode: "body_comp_background_constraint",
+        summary: "This still shapes nutrition and check-ins, but it should not claim equal training weight while the lead performance lane is doing the harder work.",
         validationIssueKeys,
       };
     }
@@ -497,8 +520,8 @@ const buildConflictSummary = ({
     ...capItem,
     ...scheduleItem,
   ], (item) => `${item.key}:${item.summary}`);
-  const blocked = items.some((item) => item.severity === "high")
-    || sanitizeText(goalFeasibility?.confirmationAction || "", 20).toLowerCase() === "block";
+  const blocked = sanitizeText(goalFeasibility?.confirmationAction || "", 20).toLowerCase() === "block"
+    || items.some((item) => item.severity === "high" && item.source !== "feasibility");
   const warned = !blocked && (
     items.length > 0
     || sanitizeText(goalFeasibility?.confirmationAction || "", 20).toLowerCase() === "warn"
@@ -524,6 +547,7 @@ const buildArbitrationReasoning = ({
   intakeCompleteness = null,
   scheduleTight = false,
   highConflict = false,
+  outcomeOverload = false,
 } = {}) => ({
   activeGoalCap: { ...GOAL_ARBITRATION_LIMITS },
   leadGoalId: leadGoal?.id || "",
@@ -536,6 +560,7 @@ const buildArbitrationReasoning = ({
     missingRequiredCount: toArray(intakeCompleteness?.missingRequired || []).length,
     scheduleTight,
     highConflict,
+    outcomeOverload,
   },
   decisions: orderedGoals.map((goal) => ({
     goalId: goal?.id || "",
@@ -690,6 +715,7 @@ export const buildGoalArbitrationStack = ({
           missingRequiredCount: 0,
           scheduleTight: false,
           highConflict: false,
+          outcomeOverload: false,
         },
         decisions: [],
       },
@@ -708,12 +734,33 @@ export const buildGoalArbitrationStack = ({
   const sessionLengthMinutes = parseSessionLengthMinutes(scheduleReality?.sessionLength || "");
   const scheduleTight = (trainingDaysPerWeek > 0 && trainingDaysPerWeek <= 3)
     || (Number.isFinite(sessionLengthMinutes) && sessionLengthMinutes > 0 && sessionLengthMinutes < 35);
+  const hardOutcomeCount = candidates.filter((goal) => isHardOutcomeGoal(goal)).length;
+  const performanceLaneCount = new Set(
+    candidates
+      .filter((goal) => ["running", "strength"].includes(sanitizeText(goal?.planningCategory || "", 40).toLowerCase()))
+      .map((goal) => sanitizeText(goal?.planningCategory || "", 40).toLowerCase())
+  ).size;
+  const bodyCompOutcomePresent = candidates.some((goal) => (
+    sanitizeText(goal?.planningCategory || "", 40).toLowerCase() === "body_comp"
+    && isHardOutcomeGoal(goal)
+  ));
+  const outcomeOverload = Boolean(
+    toArray(goalFeasibility?.conflictFlags).some((flag) => ["parallel_outcome_overload", "compressed_parallel_targets"].includes(sanitizeText(flag?.key || "", 80).toLowerCase()))
+    || hardOutcomeCount >= 3
+    || (performanceLaneCount >= 2 && bodyCompOutcomePresent)
+  );
   const highConflict = Boolean(
     scheduleTight
     || toArray(goalFeasibility?.conflictFlags).some((flag) => sanitizeText(flag?.severity || "", 20).toLowerCase() === "high")
+    || outcomeOverload
   );
   const intakeBlocked = Boolean(toArray(intakeCompleteness?.missingRequired).length);
-  const tradeoffSummary = sanitizeText(goalFeasibility?.tradeoffSummary || "", 220);
+  const fallbackTradeoffSummary = outcomeOverload
+    ? "This stack has too many hard outcomes to optimize in parallel, so the current block needs one clear lead, one maintained lane, and stricter caps on everything else."
+    : scheduleTight
+    ? "The current schedule is tight enough that the stack needs one clear lead and strict caps on secondary lanes."
+    : "";
+  const tradeoffSummary = sanitizeText(goalFeasibility?.tradeoffSummary || fallbackTradeoffSummary, 220);
 
   const leadGoal = [...candidates]
     .sort((a, b) => {
@@ -756,6 +803,7 @@ export const buildGoalArbitrationStack = ({
       maintainedCount,
       backgroundCount,
       highConflict,
+      outcomeOverload,
       intakeBlocked,
     });
     rolesByGoalId[goal.id] = role;
@@ -818,6 +866,7 @@ export const buildGoalArbitrationStack = ({
     intakeCompleteness: activeCompleteness,
     scheduleTight,
     highConflict,
+    outcomeOverload,
   });
   const finalization = buildFinalizationState({
     orderedGoals,

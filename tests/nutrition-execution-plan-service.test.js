@@ -131,3 +131,45 @@ test("meal feedback can push meals down and slot overrides can rotate anchored m
   assert.equal(rotatedPlan.sections[0].overrideApplied, true);
   assert.ok(rotatedPlan.sections[0].seedOffset >= 1);
 });
+
+test("recent meal-pattern history pushes stale patterns down even when the rest of the context matches", () => {
+  const args = {
+    dateKey: "2026-04-21",
+    dayType: "strength_support",
+    mealFamily: "strength_support",
+    goalBias: "strength",
+    workoutLabel: "Bench focus",
+    preferredCuisines: ["mediterranean"],
+    targets: { cal: 2350, p: 195, c: 225, f: 72 },
+  };
+  const baselinePlan = buildNutritionExecutionPlan(args);
+  const staleLunchPatternId = baselinePlan.sections[1].preferenceKey;
+  const rotatedPlan = buildNutritionExecutionPlan({
+    ...args,
+    mealPatternHistory: [
+      { dateKey: "2026-04-20", slotKey: "lunch", patternId: staleLunchPatternId },
+      { dateKey: "2026-04-19", slotKey: "lunch", patternId: staleLunchPatternId },
+      { dateKey: "2026-04-18", slotKey: "lunch", patternId: staleLunchPatternId },
+    ],
+  });
+
+  assert.notEqual(rotatedPlan.sections[1].preferenceKey, staleLunchPatternId);
+});
+
+test("too-expensive dislike reasons quietly push the affordability profile down without asking for a budget", () => {
+  const plan = buildNutritionExecutionPlan({
+    dateKey: "2026-04-21",
+    dayType: "strength_support",
+    mealFamily: "strength_support",
+    goalBias: "strength",
+    workoutLabel: "Bench focus",
+    preferredCuisines: ["mediterranean"],
+    targets: { cal: 2350, p: 195, c: 225, f: 72 },
+    mealPatternFeedbackMeta: {
+      salmon_plate: { vote: "disliked", reason: "too_expensive" },
+      white_fish_weeknight_plate: { vote: "disliked", reason: "too_expensive" },
+    },
+  });
+
+  assert.equal(plan.affordabilityProfileKey, "value_sensitive");
+});

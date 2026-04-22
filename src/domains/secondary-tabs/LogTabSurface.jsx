@@ -1,4 +1,60 @@
-function LogTab({ planDay = null, surfaceModel = null, logs, dailyCheckins = {}, plannedDayRecords = {}, planWeekRecords = {}, weeklyCheckins = {}, nutritionActualLogs = {}, saveLogs, bodyweights, saveBodyweights, personalization, athleteProfile = null, saveManualProgressInputs = async () => null, currentWeek, todayWorkout: legacyTodayWorkout, planArchives = [], planStartDate = "", syncStateModel = null, syncSurfaceModel = null }) {
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { buildPlannedDayRecord, resolveEffectiveStatus } from "../../modules-checkins.js";
+import { buildDayReview, buildDayReviewComparison, classifyDayReviewStatus } from "../../services/day-review-service.js";
+import { buildGoalProgressTrackingFromGoals } from "../../services/goal-progress-service.js";
+import { buildSaveFeedbackModel, SAVE_FEEDBACK_PHASES } from "../../services/save-feedback-service.js";
+import { appendProvenanceSidecar, buildProvenanceEvent, describeProvenanceRecord, normalizeProvenanceEvent, PROVENANCE_ACTORS } from "../../services/provenance-service.js";
+import { buildLegacyHistoryDisplayLabel } from "../../services/legacy-fallback-compat-service.js";
+import {
+  buildArchivedDayReview,
+  buildArchivedPlanAudit,
+  buildHistoricalWeekAuditEntries,
+} from "../../services/history-audit-service.js";
+import {
+  HistoryAuditArchiveSection,
+  HistoryAuditDayReviewCard,
+  HistoryAuditWeekHistorySection,
+} from "../../review-audit-components.jsx";
+import { StateFeedbackBanner, StateFeedbackChip } from "../../components/StateFeedbackPrimitives.jsx";
+import {
+  SurfaceActions,
+  SurfaceCard,
+  SurfaceDisclosure,
+  SurfaceHeading,
+  SurfaceHero,
+  SurfaceHeroCopy,
+  SurfaceHeroHeader,
+  SurfaceMetaRow,
+  SurfacePill,
+  SurfaceQuietPanel,
+  SurfaceRecommendationCard,
+  SurfaceStack,
+} from "../../components/SurfaceSystem.jsx";
+import { buildLogTrustModel } from "../../services/compact-trust-service.js";
+import {
+  WORKOUT_LOG_FAMILIES,
+  WORKOUT_LOG_BLOCKER_OPTIONS,
+  WORKOUT_LOG_BODY_STATUS_OPTIONS,
+  WORKOUT_LOG_COMPLETION_SELECTIONS,
+  WORKOUT_LOG_MODALITY_OPTIONS,
+  WORKOUT_LOG_RECOVERY_STATE_OPTIONS,
+  buildWorkoutDailyCheckinFromDraft,
+  buildWorkoutQuickCaptureModel,
+  buildWorkoutLogDraft,
+  buildWorkoutLogEntryFromDraft,
+  hasWorkoutQuickCaptureValues,
+} from "../../services/workout-log-form-service.js";
+import { getCurrentPrescribedDayRecord, getCurrentPrescribedDayRevision, normalizePrescribedDayHistoryEntry } from "../../services/prescribed-day-history-service.js";
+import { CompactTrustRow } from "../../components/CompactTrustRow.jsx";
+import {
+  LogCompletionSelector,
+  LogFeelStrip,
+  LogValueStepper,
+  StrengthExecutionCard,
+} from "../../components/WorkoutLogControls.jsx";
+
+export function LogTab({ planDay = null, surfaceModel = null, logs, dailyCheckins = {}, plannedDayRecords = {}, planWeekRecords = {}, weeklyCheckins = {}, nutritionActualLogs = {}, saveLogs, bodyweights, saveBodyweights, personalization, athleteProfile = null, saveManualProgressInputs = async () => null, currentWeek, todayWorkout: legacyTodayWorkout, planArchives = [], planStartDate = "", syncStateModel = null, syncSurfaceModel = null, runtime = {} }) {
+ const { C, BAND_TENSION_LEVELS, sanitizeDisplayText, sanitizeStatusLabel, buildReviewBadgeTone, buildStrengthPrescriptionEntriesForLogging, getPlannedTrainingForLogDraft, inferExerciseMode, normalizeExerciseKey, resolveCanonicalSurfaceSessionLabel, resolvePlannedDayHistoryEntry, SyncStateCallout, CompactSyncStatus } = runtime;
  const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
  const plannedWorkout = planDay?.base?.training || legacyTodayWorkout;
  const goals = athleteProfile?.goals || [];
@@ -1445,19 +1501,3 @@ style={{ flex:"1 1 220px", minHeight:52, borderRadius:16, justifyContent:"center
  );
 
 }
-
-const buildLocationAwareOrderSuggestion = ({ nearby = [] }) => {
- const nameList = (nearby || []).map(n => String(n?.name || "").toLowerCase());
- if (nameList.some(n => n.includes("chipotle"))) {
- return "Nearby option: Chipotle with double chicken, fajita veggies, and black beans keeps protein high and fits today's target.";
- }
- if (nameList.some(n => n.includes("cava"))) {
- return "Nearby option: CAVA with greens + grains, double chicken, and hummus on the side keeps the meal balanced and protein-forward.";
- }
- if (nameList.some(n => n.includes("panera"))) {
- return "Nearby option: Panera with a teriyaki chicken bowl plus Greek yogurt is an easy protein-forward backup.";
- }
- return null;
-};
-
-// NUTRITION TAB (REDESIGNED)

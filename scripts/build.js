@@ -13,7 +13,6 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { execFileSync } = require("node:child_process");
 const { transform } = require("sucrase");
 const { minify } = require("terser");
 
@@ -69,9 +68,29 @@ const STATIC_COPY_ENTRIES = [
 ];
 const LAZY_CHUNK_SPECS = [
   {
-    name: "secondary.tabs",
-    baseName: "secondary.tabs",
-    entryFile: path.join(ROOT, "src", "domains", "secondary-tabs", "lazy-secondary-tabs-entry.js"),
+    name: "secondary.log",
+    baseName: "secondary.log",
+    entryFile: path.join(ROOT, "src", "domains", "secondary-tabs", "lazy-log-tab-entry.js"),
+  },
+  {
+    name: "secondary.plan",
+    baseName: "secondary.plan",
+    entryFile: path.join(ROOT, "src", "domains", "secondary-tabs", "lazy-plan-tab-entry.js"),
+  },
+  {
+    name: "secondary.nutrition",
+    baseName: "secondary.nutrition",
+    entryFile: path.join(ROOT, "src", "domains", "secondary-tabs", "lazy-nutrition-tab-entry.js"),
+  },
+  {
+    name: "secondary.coach",
+    baseName: "secondary.coach",
+    entryFile: path.join(ROOT, "src", "domains", "secondary-tabs", "lazy-coach-tab-entry.js"),
+  },
+  {
+    name: "secondary.settings",
+    baseName: "secondary.settings",
+    entryFile: path.join(ROOT, "src", "domains", "secondary-tabs", "lazy-settings-tab-entry.js"),
   },
 ];
 const BUILD_MODES = Object.freeze({
@@ -474,6 +493,19 @@ const writeHashedAsset = (baseName, content) => {
   };
 };
 
+const writeStableChunkAsset = (baseName, content) => {
+  const hash = hashContent(content);
+  const fileName = `${baseName}.js`;
+  const fullPath = path.join(ASSETS_DIR, fileName);
+  fs.writeFileSync(fullPath, content);
+  return {
+    fileName,
+    publicPath: `./assets/${fileName}?v=${hash}`,
+    rootPublicPath: `/assets/${fileName}?v=${hash}`,
+    bytes: Buffer.byteLength(content),
+  };
+};
+
 const buildSplitOutput = ({ appRuntime, buildVersion, lazyAssets = [] }) => {
   const reactAsset = writeHashedAsset("react.vendor", REACT);
   const reactDomAsset = writeHashedAsset("react-dom.vendor", REACT_DOM);
@@ -538,7 +570,6 @@ const runBuild = async () => {
     `Client Supabase build config: url=${CLIENT_SUPABASE_URL_CONFIG.source || "missing"} ` +
     `host=${SUPABASE_URL_HOST || "missing"} anon=${CLIENT_SUPABASE_ANON_KEY_CONFIG.source || "missing"}`
   );
-  execFileSync(process.execPath, [path.join(__dirname, "check-repo-hygiene.cjs")], { stdio: "inherit" });
 
   ensureCleanDist();
   writeStaticAssets();
@@ -553,7 +584,7 @@ const runBuild = async () => {
       chunkName: spec.name,
     });
     const chunkRuntime = await minifyScript(rawChunkRuntime);
-    const asset = writeHashedAsset(spec.baseName, chunkRuntime);
+    const asset = writeStableChunkAsset(spec.baseName, chunkRuntime);
     lazyChunkAssets.push({
       ...asset,
       chunkName: spec.name,

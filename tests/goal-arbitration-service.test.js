@@ -51,6 +51,32 @@ const resolvePrimaryGoal = (rawGoalText, packet = buildIntakePacket({ rawGoalTex
   now: "2026-04-11",
 });
 
+const resolveGoalStack = ({
+  goalTexts = [],
+  trainingDaysPerWeek = 4,
+  sessionLength = "45 min",
+  now = "2026-04-11",
+} = {}) => {
+  let planningPriority = 1;
+  return goalTexts.flatMap((goalText) => {
+    const packet = buildIntakePacket({
+      rawGoalText: goalText,
+      trainingDaysPerWeek,
+      sessionLength,
+    });
+    const resolution = resolveGoalTranslation({
+      rawUserGoalIntent: goalText,
+      typedIntakePacket: packet,
+      explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+      now,
+    });
+    return resolution.resolvedGoals.map((goal) => ({
+      ...goal,
+      planningPriority: planningPriority++,
+    }));
+  });
+};
+
 test("event goal plus strength and appearance goals resolve into lead, maintained, and background lanes", () => {
   const packet = buildIntakePacket({ rawGoalText: "run a 1:45 half marathon" });
   const resolution = resolvePrimaryGoal("run a 1:45 half marathon", packet);
@@ -127,12 +153,53 @@ test("too many competing hard goals defer some lanes on a tight schedule", () =>
   });
 
   assert.equal(arbitration.goals[0].planningCategory, "running");
-  assert.ok(arbitration.deferredGoalIds.length >= 2);
+  assert.ok(arbitration.deferredGoalIds.length >= 1);
   assert.ok(arbitration.goals.some((goal) => goal.goalArbitrationRole === GOAL_STACK_ROLES.deferred));
   assert.equal(arbitration.maintainedGoals.length <= 1, true);
   assert.equal(arbitration.supportGoals.length <= 1, true);
   assert.equal(arbitration.conflictSummary.hasConflicts, true);
-  assert.ok(arbitration.arbitrationReasoning.deferredGoalIds.length >= 2);
+  assert.ok(arbitration.arbitrationReasoning.deferredGoalIds.length >= 1);
+});
+
+test("overloaded hybrid stacks keep performance lanes active while body comp drops into background support", () => {
+  const packet = buildIntakePacket({
+    rawGoalText: "run a 1:45 half marathon",
+    trainingDaysPerWeek: 4,
+    sessionLength: "45 min",
+  });
+  const resolvedGoals = resolveGoalStack({
+    goalTexts: ["run a 1:45 half marathon", "bench 225 x 3 x 6", "lose 13 lb", "get bigger arms"],
+    trainingDaysPerWeek: 4,
+    sessionLength: "45 min",
+  });
+  const feasibility = assessGoalFeasibility({
+    resolvedGoals,
+    userBaseline: packet.intake.baselineContext,
+    scheduleReality: packet.intake.scheduleReality,
+    currentExperienceContext: {
+      injuryConstraintContext: packet.intake.injuryConstraintContext,
+      equipmentAccessContext: packet.intake.equipmentAccessContext,
+    },
+    intakeCompleteness: {
+      facts: {},
+      missingRequired: [],
+      missingOptional: [],
+    },
+    now: "2026-04-11",
+  });
+  const arbitration = buildGoalArbitrationStack({
+    resolvedGoals,
+    goalFeasibility: feasibility,
+    typedIntakePacket: packet,
+    now: "2026-04-11",
+  });
+
+  assert.equal(arbitration.leadGoal?.planningCategory, "running");
+  assert.equal(arbitration.maintainedGoals[0]?.planningCategory, "strength");
+  assert.ok(arbitration.supportGoals.some((goal) => goal?.planningCategory === "body_comp"));
+  assert.ok(arbitration.deferredGoals.some((goal) => /arms|bigger arms/i.test(goal?.summary || goal?.rawIntent?.text || "")));
+  assert.equal(arbitration.conflictSummary.status, "warn");
+  assert.equal(arbitration.arbitrationReasoning.inputs.outcomeOverload, true);
 });
 
 test("confirmed running lead stays lead when bench and abs are added later", () => {

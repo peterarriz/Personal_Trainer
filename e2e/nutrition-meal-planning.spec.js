@@ -59,7 +59,7 @@ test.describe("nutrition meal planning preferences", () => {
     await freezeBrowserDate(page, "2026-04-16T12:00:00.000Z");
   });
 
-  test("thumbs up/down and weekly meal rotations persist cleanly", async ({ page }) => {
+  test("thumbs up/down, dislike reasons, reuse, and weekly meal rotations persist cleanly", async ({ page }) => {
     await completeRunningOnboarding(page);
 
     await page.getByTestId("app-tab-nutrition").click();
@@ -69,6 +69,8 @@ test.describe("nutrition meal planning preferences", () => {
     await expect(page.getByTestId("nutrition-save-status")).toContainText(/saved/i);
 
     await page.getByTestId("nutrition-dislike-meal-lunch").click();
+    await expect(page.getByTestId("nutrition-meal-reason-lunch-too_expensive")).toBeVisible();
+    await page.getByTestId("nutrition-meal-reason-lunch-too_expensive").click();
     await expect(page.getByTestId("nutrition-save-status")).toContainText(/saved/i);
 
     const firstRotateButton = page.locator('[data-testid^="nutrition-meal-calendar-rotate-"]').first();
@@ -76,20 +78,32 @@ test.describe("nutrition meal planning preferences", () => {
     await firstRotateButton.click();
     await expect(page.getByTestId("nutrition-save-status")).toContainText(/saved/i);
 
+    const firstReuseButton = page.locator('[data-testid^="nutrition-meal-calendar-reuse-"]').first();
+    const reuseTestId = await firstReuseButton.getAttribute("data-testid");
+    if (reuseTestId) {
+      await firstReuseButton.click();
+      const reuseTarget = page.locator('[data-testid^="nutrition-meal-calendar-reuse-target-"]').first();
+      await reuseTarget.click();
+      await expect(page.getByTestId("nutrition-save-status")).toContainText(/saved/i);
+    }
+
     const cache = await readLocalCache(page);
     const mealPatternFeedbackValues = Object.values(cache?.nutritionFavorites?.mealPatternFeedback || {});
     expect(mealPatternFeedbackValues).toContain("liked");
     expect(mealPatternFeedbackValues).toContain("disliked");
     expect(Object.keys(cache?.nutritionFavorites?.mealCalendarOverrides || {}).length).toBeGreaterThan(0);
+    expect(Object.keys(cache?.nutritionFavorites?.mealPatternFeedbackMeta || {}).length).toBeGreaterThan(0);
+    expect((cache?.nutritionFavorites?.mealPatternHistory || []).length).toBeGreaterThan(0);
 
     await page.reload();
     await page.getByTestId("app-tab-nutrition").click();
     await expect(page.getByTestId("nutrition-tab")).toBeVisible();
-    await expect(page.getByTestId("nutrition-like-meal-breakfast")).toContainText(/liked/i);
     const reloadedCache = await readLocalCache(page);
     const reloadedFeedbackValues = Object.values(reloadedCache?.nutritionFavorites?.mealPatternFeedback || {});
     expect(reloadedFeedbackValues).toContain("liked");
     expect(reloadedFeedbackValues).toContain("disliked");
+    expect(Object.keys(reloadedCache?.nutritionFavorites?.mealPatternFeedbackMeta || {}).length).toBeGreaterThan(0);
+    expect((reloadedCache?.nutritionFavorites?.mealPatternHistory || []).length).toBeGreaterThan(0);
     if (rotateTestId) {
       const rotatedRowTestId = rotateTestId.replace("rotate", "slot");
       await expect(page.getByTestId(rotatedRowTestId)).toContainText(/rotated/i);

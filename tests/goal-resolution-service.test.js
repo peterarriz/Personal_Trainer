@@ -430,6 +430,22 @@ test("resolves a fully measurable strength goal into logged-lift planning input"
   assert.match(result.planningGoals[0].measurableTarget, /225 lb/i);
 });
 
+test("bench protocol phrasing preserves the target load and working-set prescription", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "Bench 225 x 3 x 6",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "Bench 225 x 3 x 6" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-22",
+  });
+
+  assert.equal(result.resolvedGoals[0].primaryMetric.key, "bench_press_weight");
+  assert.equal(result.resolvedGoals[0].primaryMetric.targetValue, "225");
+  assert.equal(result.resolvedGoals[0].primaryMetric.targetSets, 3);
+  assert.equal(result.resolvedGoals[0].primaryMetric.targetReps, 6);
+  assert.equal(result.resolvedGoals[0].summary, "Bench press 225 lb for 3 x 6");
+  assert.equal(result.planningGoals[0].measurableTarget, "Bench press 225 lb for 3 x 6");
+});
+
 test("muscle-gain goals resolve into strength planning instead of generic consistency fallback", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "gain muscle and build confidence",
@@ -443,6 +459,23 @@ test("muscle-gain goals resolve into strength planning instead of generic consis
   assert.equal(result.resolvedGoals[0].planningCategory, "strength");
   assert.equal(result.resolvedGoals[0].summary, "Gain muscle with repeatable training");
   assert.equal(result.planningGoals[0].category, "strength");
+});
+
+test("arm-specific hypertrophy language stays strength-specific even with hybrid context around it", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "build arm muscle",
+    typedIntakePacket: buildIntakePacket({
+      rawGoalText: "build arm muscle",
+      additionalContext: "Balancing lifting, running, and some fat loss without overcomplicating the week.",
+    }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-22",
+  });
+
+  assert.equal(result.resolvedGoals[0].goalFamily, "strength");
+  assert.equal(result.resolvedGoals[0].planningCategory, "strength");
+  assert.equal(result.resolvedGoals[0].summary, "Build arm muscle");
+  assert.ok((result.resolvedGoals[0].driverProfile?.supportDrivers || []).some((driver) => driver.id === "biceps_hypertrophy"));
 });
 
 test("strength goal parsing preserves four-digit lift targets for downstream realism checks", () => {
@@ -632,6 +665,24 @@ test("explicit strength plus leaning-out phrasing resolves into separate goals i
   assert.equal(result.resolvedGoals[1].planningCategory, "body_comp");
   assert.match(result.resolvedGoals[1].summary, /lean/i);
   assert.ok(result.tradeoffs.some((item) => /fat loss may limit strength/i.test(item)));
+});
+
+test("target-weight phrasing stays body-comp specific even when surrounding context mentions hybrid tradeoffs", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "Cut to 180 pounds",
+    typedIntakePacket: buildIntakePacket({
+      rawGoalText: "Cut to 180 pounds",
+      additionalContext: "Trying to keep lifting and running productive while leaning out.",
+    }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-22",
+  });
+
+  assert.equal(result.resolvedGoals[0].goalFamily, "body_comp");
+  assert.equal(result.resolvedGoals[0].planningCategory, "body_comp");
+  assert.equal(result.resolvedGoals[0].primaryMetric?.key, "bodyweight_target");
+  assert.equal(result.resolvedGoals[0].primaryMetric?.targetValue, "180");
+  assert.equal(result.resolvedGoals[0].summary, "Cut to 180 lb");
 });
 
 test("strength plus aesthetics phrasing keeps the exact lift goal and an explicit appearance goal", () => {

@@ -224,7 +224,7 @@ console.log(`Artifacts: ${outputDir}`);
 console.log(`Screenshots: ${screenshotsDir}`);
 console.log(`PDFs: ${pdfDir}`);
 console.log(`Suggested next steps:`);
-console.log(`  1. npm run build`);
+console.log(`  1. npm run build:verified`);
 console.log(`  2. npm run dev`);
 console.log(`  3. npm run qa:adaptive-policy:launch-readiness`);
 console.log(`  4. Open the worksheet and fill results as you go.`);

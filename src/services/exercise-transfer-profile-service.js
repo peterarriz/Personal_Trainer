@@ -98,6 +98,15 @@ export const buildExerciseTransferProfile = ({
     });
   }
 
+  if (/curl|preacher|hammer curl|incline curl|ez bar curl|cable curl/.test(text)) {
+    return buildProfile({
+      exerciseName: cleanExerciseName,
+      primaryPattern: "biceps_support",
+      supportDriverIds: ["biceps_hypertrophy"],
+      protectiveDriverIds: ["elbow_tolerance"],
+    });
+  }
+
   if (/pull[-\s]?up|pull up|chin[-\s]?up|chin up|pull-down|pulldown|lat pull|lat row|row|seal row|chest-supported row|chest supported row|one-arm row|one arm row/.test(text)) {
     return buildProfile({
       exerciseName: cleanExerciseName,

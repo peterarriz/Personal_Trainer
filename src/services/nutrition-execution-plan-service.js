@@ -429,8 +429,10 @@ const normalizeMealPatternFeedback = ({
   likedMealPatterns = {},
   dislikedMealPatterns = {},
   mealPatternFeedback = {},
+  mealPatternFeedbackMeta = {},
 } = {}) => {
   const voteMap = {};
+  const metaMap = {};
   Object.entries(likedMealPatterns || {}).forEach(([key, value]) => {
     const safeKey = sanitizeText(key).toLowerCase();
     if (safeKey && value) voteMap[safeKey] = "liked";
@@ -447,8 +449,24 @@ const normalizeMealPatternFeedback = ({
     else if (["disliked", "dislike", "down", "avoid"].includes(safeValue)) voteMap[safeKey] = "disliked";
     else delete voteMap[safeKey];
   });
+  Object.entries(mealPatternFeedbackMeta || {}).forEach(([key, value]) => {
+    const safeKey = sanitizeText(key).toLowerCase();
+    if (!safeKey || !value || typeof value !== "object") return;
+    const vote = sanitizeText(value.vote || voteMap[safeKey] || "").toLowerCase();
+    const reason = sanitizeText(value.reason || "", 80).toLowerCase();
+    const updatedAt = sanitizeText(value.updatedAt || value.dateKey || "", 40);
+    if (!vote && !reason) return;
+    metaMap[safeKey] = {
+      vote,
+      reason,
+      updatedAt,
+    };
+    if (vote === "liked") voteMap[safeKey] = "liked";
+    if (vote === "disliked") voteMap[safeKey] = "disliked";
+  });
   return {
     voteMap,
+    metaMap,
     likedPatternKeys: new Set(
       Object.entries(voteMap)
         .filter(([, value]) => value === "liked")
@@ -459,6 +477,31 @@ const normalizeMealPatternFeedback = ({
         .filter(([, value]) => value === "disliked")
         .map(([key]) => key)
     ),
+    tooExpensivePatternKeys: new Set(
+      Object.entries(metaMap)
+        .filter(([, value]) => sanitizeText(value?.reason || "", 80).toLowerCase() === "too_expensive")
+        .map(([key]) => key)
+    ),
+  };
+};
+
+const normalizeMealPatternHistory = (history = []) => {
+  const recentPatternCounts = {};
+  const recentSlotPatternCounts = {};
+  (Array.isArray(history) ? history : []).forEach((entry) => {
+    if (!entry || typeof entry !== "object") return;
+    const patternId = sanitizeText(entry.patternId || "", 80).toLowerCase();
+    const slotKey = sanitizeText(entry.slotKey || "", 40).toLowerCase();
+    if (!patternId) return;
+    recentPatternCounts[patternId] = (recentPatternCounts[patternId] || 0) + 1;
+    if (slotKey) {
+      const compoundKey = `${slotKey}:${patternId}`;
+      recentSlotPatternCounts[compoundKey] = (recentSlotPatternCounts[compoundKey] || 0) + 1;
+    }
+  });
+  return {
+    recentPatternCounts,
+    recentSlotPatternCounts,
   };
 };
 
@@ -1774,6 +1817,9 @@ const scorePattern = (pattern = {}, ctx = {}) => {
   if (ctx.recoverySession && Array.isArray(pattern.mealFamilies) && pattern.mealFamilies.includes("recovery")) score += 2;
   if (ctx.likedPatternKeys instanceof Set && ctx.likedPatternKeys.has(patternId)) score += 6;
   if (ctx.dislikedPatternKeys instanceof Set && ctx.dislikedPatternKeys.has(patternId)) score -= 8;
+  if (ctx.tooExpensivePatternKeys instanceof Set && ctx.tooExpensivePatternKeys.has(patternId)) score -= 6;
+  score -= Number(ctx.recentPatternCounts?.[patternId] || 0) * 1.4;
+  score -= Number(ctx.recentSlotPatternCounts?.[`${ctx.currentSlotKey}:${patternId}`] || 0) * 2.2;
   return score;
 };
 
@@ -1828,7 +1874,7 @@ const buildSavedAnchorSection = (slotKey = "", anchorText = "", ctx = {}) => {
 };
 
 const buildPatternSection = (slotKey = "", ctx = {}, state = {}, slotOverride = null) => {
-  const pattern = choosePattern(slotKey, ctx, slotOverride);
+  const pattern = choosePattern(slotKey, { ...ctx, currentSlotKey: slotKey }, slotOverride);
   if (!pattern) return null;
   const slotSeed = buildSlotSeed(ctx, slotKey, slotOverride);
   const picks = pattern.pickParts ? pattern.pickParts(ctx, state, slotSeed) : {};
@@ -1838,6 +1884,7 @@ const buildPatternSection = (slotKey = "", ctx = {}, state = {}, slotOverride = 
     key: slotKey,
     slotKey,
     label: slotKey === "snack" ? "Snacks" : titleCase(slotKey),
+    patternId: sanitizeText(pattern?.id || "", 80).toLowerCase(),
     title: typeof pattern.title === "function" ? sanitizeText(pattern.title(picks, ctx)) : sanitizeText(pattern.title),
     buildHeading: "Build",
     buildItems,
@@ -1845,7 +1892,7 @@ const buildPatternSection = (slotKey = "", ctx = {}, state = {}, slotOverride = 
     detailLabel: pattern.detailLabel || "Execution note",
     detailLine: sanitizeText(typeof pattern.detailLine === "function" ? pattern.detailLine(ctx, picks) : pattern.detailLine),
     why: sanitizeText(typeof pattern.why === "function" ? pattern.why(ctx, picks) : pattern.why),
-    preferenceKey: pattern.id,
+    preferenceKey: sanitizeText(pattern.id || "", 80).toLowerCase(),
     sourceType: "pattern",
     overrideApplied: shouldUsePatternOverride(slotOverride),
     seedOffset: Math.max(0, Math.round(Number(slotOverride?.seedOffset || 0))),
@@ -1956,6 +2003,8 @@ const buildContext = ({
   likedMealPatterns = {},
   dislikedMealPatterns = {},
   mealPatternFeedback = {},
+  mealPatternFeedbackMeta = {},
+  mealPatternHistory = [],
   favoriteGroceries = [],
   favoriteRestaurants = [],
   safeMeals = [],
@@ -1968,13 +2017,23 @@ const buildContext = ({
     likedMealPatterns,
     dislikedMealPatterns,
     mealPatternFeedback,
+    mealPatternFeedbackMeta,
   });
-  const affordabilityProfile = inferAffordabilityProfile({
+  const historyModel = normalizeMealPatternHistory(mealPatternHistory);
+  let affordabilityProfile = inferAffordabilityProfile({
     grocerySignals: favoriteGroceries,
     restaurantSignals: favoriteRestaurants,
     safeMealSignals: safeMeals,
     mealAnchorSignals,
   });
+  if (
+    patternFeedback.tooExpensivePatternKeys?.size
+    && affordabilityProfile === NUTRITION_AFFORDABILITY_PROFILES.premiumOpen
+  ) {
+    affordabilityProfile = NUTRITION_AFFORDABILITY_PROFILES.balancedValue;
+  } else if (patternFeedback.tooExpensivePatternKeys?.size >= 2) {
+    affordabilityProfile = NUTRITION_AFFORDABILITY_PROFILES.valueSensitive;
+  }
   return {
     seed: `${dateKey || "undated"}_${normalizedDayType}_${goalBias}_${primaryCuisine}_${sanitizeText(workoutLabel)}`,
     dateKey,
@@ -1996,8 +2055,12 @@ const buildContext = ({
     offTrackSignal,
     likedPatternKeys: patternFeedback.likedPatternKeys,
     dislikedPatternKeys: patternFeedback.dislikedPatternKeys,
+    tooExpensivePatternKeys: patternFeedback.tooExpensivePatternKeys,
     mealPatternVoteMap: patternFeedback.voteMap,
+    mealPatternFeedbackMetaMap: patternFeedback.metaMap,
     slotOverrides: normalizeSlotOverrides(slotOverrides),
+    recentPatternCounts: historyModel.recentPatternCounts,
+    recentSlotPatternCounts: historyModel.recentSlotPatternCounts,
     affordabilityProfile,
   };
 };
@@ -2065,6 +2128,8 @@ export const buildNutritionExecutionPlan = ({
   likedMealPatterns = {},
   dislikedMealPatterns = {},
   mealPatternFeedback = {},
+  mealPatternFeedbackMeta = {},
+  mealPatternHistory = [],
   favoriteGroceries = [],
   favoriteRestaurants = [],
   safeMeals = [],
@@ -2086,6 +2151,8 @@ export const buildNutritionExecutionPlan = ({
     likedMealPatterns,
     dislikedMealPatterns,
     mealPatternFeedback,
+    mealPatternFeedbackMeta,
+    mealPatternHistory,
     favoriteGroceries,
     favoriteRestaurants,
     safeMeals,
@@ -2116,7 +2183,7 @@ export const buildNutritionExecutionPlan = ({
   const sections = [breakfastSection, lunchSection, dinnerSection, snackSection].filter(Boolean);
 
   return {
-    title: `${buildDayLabel(dateKey)} — Nutrition Plan`,
+    title: `${buildDayLabel(dateKey)} - Nutrition Plan`,
     focusLine: buildFocusLine(ctx),
     whyLine: buildWhyLine(ctx),
     objectiveItems: buildObjectiveItems(ctx),

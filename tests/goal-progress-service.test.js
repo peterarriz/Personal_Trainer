@@ -180,6 +180,65 @@ test("strength goals can surface accessory support evidence without pretending i
   assert.match(itemsByKey.projected_goal_progress.currentDisplay, /still needs to be logged/i);
 });
 
+test("strength protocol goals track the exact working-load gap instead of pretending a top single is enough", () => {
+  const result = buildGoalProgressTracking({
+    resolvedGoals: [
+      buildResolvedGoal({
+        summary: "Bench press 225 lb for 3 x 6",
+        planningCategory: "strength",
+        goalFamily: "strength",
+        primaryMetric: {
+          key: "bench_press_weight",
+          label: "Bench press",
+          unit: "lb",
+          targetValue: "225",
+          targetSets: 3,
+          targetReps: 6,
+        },
+      }),
+    ],
+    logs: {
+      "2026-03-30": buildBenchLog({ weight: 155, reps: 6, sets: 4 }),
+      "2026-04-08": buildBenchLog({ weight: 165, reps: 5, sets: 3 }),
+    },
+    now: "2026-04-10",
+  });
+
+  const itemsByKey = Object.fromEntries(result.goalCards[0].trackedItems.map((item) => [item.key, item]));
+  assert.match(itemsByKey.top_set_load.targetDisplay, /225 lb for 3 x 6/i);
+  assert.match(itemsByKey.performance_record.currentDisplay, /Best logged 3 x 6 load 155 lb/i);
+  assert.match(itemsByKey.projected_goal_progress.currentDisplay, /70 lb remaining to 225 lb for 3 x 6/i);
+});
+
+test("time-bound goals stop calling themselves on-track after the deadline passes unmet", () => {
+  const result = buildGoalProgressTracking({
+    resolvedGoals: [
+      buildResolvedGoal({
+        summary: "Run a half marathon in 1:45:00",
+        planningCategory: "running",
+        goalFamily: "performance",
+        primaryMetric: { key: "half_marathon_time", label: "Half marathon time", unit: "time", targetValue: "1:45:00" },
+        proxyMetrics: [
+          { key: "weekly_run_frequency", label: "Weekly run frequency", unit: "sessions", kind: "proxy" },
+          { key: "long_run_duration", label: "Long run duration", unit: "min", kind: "proxy" },
+        ],
+      }),
+    ].map((goal) => ({
+      ...goal,
+      targetDate: "2026-10-18",
+    })),
+    logs: {
+      "2026-10-10": { type: "Long Run", miles: 10, runTime: "86:00", pace: "8:36", feel: 3, checkin: { status: "completed_as_planned" } },
+      "2026-10-15": { type: "Tempo Run", miles: 5, runTime: "39:30", pace: "7:54", feel: 4, checkin: { status: "completed_as_planned" } },
+    },
+    now: "2026-11-15",
+  });
+
+  assert.notEqual(result.goalCards[0].status, GOAL_PROGRESS_STATUSES.onTrack);
+  assert.match(result.goalCards[0].statusSummary, /target window has passed|re-plan/i);
+  assert.match(result.goalCards[0].honestyNote, /date window passed|truthful re-plan/i);
+});
+
 test("body-composition goals use live proxy trends like bodyweight, waist, and consistency", () => {
   const result = buildGoalProgressTracking({
     resolvedGoals: [

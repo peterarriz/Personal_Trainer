@@ -82,6 +82,7 @@ import {
 } from "./services/hybrid-adaptive-service.js";
 import {
   buildGoalSupportPlanningContext,
+  buildGoalSupportTouchpointGuidance,
 } from "./services/goal-support-planning-service.js";
 import {
   applyExercisePreferenceRows,
@@ -300,6 +301,8 @@ const buildUpperSupportRow = ({
    return buildExercise("Lateral raise or DB shoulder press", "3 sets", "10-15 reps", "Shoulders often unlock stuck pressing.");
   case "triceps_strength":
    return buildExercise(equipmentProfile.hasCable ? "Cable pressdown or skull crusher" : "DB triceps extension or close-grip push-up", "2-3 sets", "10-12 reps", "Support the lockout without turning the session into arm day.");
+  case "biceps_hypertrophy":
+   return buildExercise(equipmentProfile.hasCable ? "Cable curl or incline DB curl" : "DB curl or hammer curl", "2-3 sets", "10-15 reps", "Direct arm volume supports visible arm growth.");
   case "pressing_hypertrophy":
    return buildExercise(equipmentProfile.hasBench ? "Incline bench or DB incline press" : "DB incline press", "3-4 sets", "8-12 reps", "Extra pressing tissue can support the main lift.");
   case "trunk_bracing":
@@ -1349,6 +1352,80 @@ const appendDistinctSecondaryLine = (current = "", addition = "") => {
  if (!safeCurrent) return safeAddition;
  if (safeCurrent.toLowerCase().includes(safeAddition.toLowerCase())) return safeCurrent;
  return `${safeCurrent} ${safeAddition}`.trim();
+};
+
+const appendSupportTouchpoint = (session = null, touchpoint = null) => {
+ if (!session || !touchpoint?.optionalLine) return session;
+ const existingTouchpoints = Array.isArray(session?.supportTouchpoints) ? session.supportTouchpoints : [];
+ const alreadyPresent = existingTouchpoints.some((entry) => sanitizeText(entry?.bucket || "", 40) === sanitizeText(touchpoint?.bucket || "", 40));
+ const nextTouchpoints = alreadyPresent
+  ? existingTouchpoints
+  : [
+    ...existingTouchpoints,
+    {
+     source: "goal_driver_graph",
+     bucket: touchpoint.bucket,
+     focusLabel: touchpoint.focusLabel,
+     driverIds: clonePlainValue(touchpoint.driverIds || []),
+    },
+   ];
+ return normalizeSessionEntryLabel({
+  ...session,
+  optionalSecondary: appendDistinctSecondaryLine(session?.optionalSecondary || "", touchpoint.optionalLine),
+  supportTouchpoints: nextTouchpoints,
+ });
+};
+
+const applyGoalSupportTouchpointOverlay = ({
+ dayTemplates = {},
+ supportPlanningContext = null,
+ hasRunningGoal = false,
+} = {}) => {
+ const guidance = buildGoalSupportTouchpointGuidance(supportPlanningContext);
+ const touchpoints = [guidance.strength, guidance.durability, guidance.swim].filter(Boolean);
+ if (!touchpoints.length) {
+  return {
+   dayTemplates: clonePlainValue(dayTemplates || {}),
+   changed: false,
+   effects: [],
+  };
+ }
+
+ const next = clonePlainValue(dayTemplates || {});
+ const effectLines = [];
+ const findCandidateDay = ({ bucket = "" } = {}) => {
+  const entries = Object.entries(next || {});
+  const preferredOrder = bucket === "strength"
+   ? ["easy-run", "conditioning", "rest", "run+strength"]
+   : bucket === "durability"
+   ? ["easy-run", "conditioning", "rest", "strength+prehab"]
+   : ["conditioning", "rest", "strength+prehab", "easy-run"];
+  for (const sessionType of preferredOrder) {
+   const match = entries.find(([, session]) => {
+    if (!session) return false;
+    if (String(session?.type || "").toLowerCase() !== sessionType) return false;
+    const existingTouchpoints = Array.isArray(session?.supportTouchpoints) ? session.supportTouchpoints : [];
+    if (existingTouchpoints.some((entry) => sanitizeText(entry?.bucket || "", 40) === bucket)) return false;
+    if (bucket === "durability" && !hasRunningGoal && sessionType === "easy-run") return false;
+    return true;
+   });
+   if (match) return Number(match[0]);
+  }
+  return null;
+ };
+
+ touchpoints.forEach((touchpoint) => {
+  const dayKey = findCandidateDay({ bucket: touchpoint.bucket });
+  if (!Number.isInteger(dayKey)) return;
+  next[dayKey] = appendSupportTouchpoint(next[dayKey], touchpoint);
+  effectLines.push(touchpoint.effectLine);
+ });
+
+ return {
+  dayTemplates: next,
+  changed: effectLines.length > 0,
+  effects: dedupeStrings(effectLines).slice(0, 3),
+ };
 };
 
 const applyPreferredLongSessionDayShift = ({
@@ -4882,6 +4959,16 @@ export const composeGoalNativePlan = ({
  const strengthEnvironmentScore = hasGym ? 1 : equipmentKnown ? -1 : 0;
  const strengthScore = (primary?.category === "strength" ? 3 : 0) + (strengthGoal ? 2 : 0) + strengthEnvironmentScore;
  const bodyCompScore = (primary?.category === "body_comp" ? 3 : 0) + (bodyCompGoal ? 2 : 0) + (lowBandwidth ? 1 : 0);
+ const safeBaseWeek = {
+ phase: sanitizeText(baseWeek?.phase || "", 40) || "BASE",
+ label: sanitizeText(baseWeek?.label || "", 80) || "Current block",
+ mon: clonePlainValue(baseWeek?.mon || { t: "Easy", d: "30-40 min" }),
+ thu: clonePlainValue(baseWeek?.thu || { t: "Tempo", d: "20-30 min" }),
+ fri: clonePlainValue(baseWeek?.fri || { t: "Easy", d: "25-35 min" }),
+ sat: clonePlainValue(baseWeek?.sat || { t: raceNear ? "Long" : "Endurance", d: raceNear ? "60-75 min" : "45-60 min" }),
+ str: sanitizeText(baseWeek?.str || "A", 8) || "A",
+ nutri: sanitizeText(baseWeek?.nutri || NUTRITION_DAY_TYPES.runEasy, 40) || NUTRITION_DAY_TYPES.runEasy,
+ };
 
  let architecture = "hybrid_performance";
  if (lowBandwidth) {
@@ -4965,7 +5052,7 @@ export const composeGoalNativePlan = ({
  goals,
  athleteProfile,
  defaultArchitecture: architecture,
- baseWeek,
+ baseWeek: safeBaseWeek,
  logs,
  plannedDayRecords,
  planWeekRecords,
@@ -4998,21 +5085,21 @@ export const composeGoalNativePlan = ({
 
  const dayTemplates = {
  event_prep_upper_body_maintenance: {
- 1: { type: "hard-run", label: `${baseWeek.mon?.t || "Quality"} Run`, run: baseWeek.mon, nutri: NUTRITION_DAY_TYPES.runQuality, optionalSecondary: "Optional: short trunk support after the run." },
- 2: { type: "strength+prehab", label: "Upper-Body Maintenance A", strSess: baseWeek.str || "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, upperBodyBias: true, optionalSecondary: "Optional: 8 min shoulder mobility reset." },
- 3: { type: "easy-run", label: "Easy Run", run: baseWeek.fri || { t: "Easy", d: "25-35 min" }, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: 5-10 min mobility finish." },
- 4: { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: NUTRITION_DAY_TYPES.runQuality, optionalSecondary: "Optional: fueling and calf reset after the main work." },
- 5: { type: "strength+prehab", label: "Upper-Body Maintenance B", strSess: baseWeek.str === "A" ? "B" : "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, upperBodyBias: true, optionalSecondary: "Optional: cuff or scap stability finisher." },
- 6: { type: "long-run", label: "Long Run", run: baseWeek.sat, nutri: NUTRITION_DAY_TYPES.runLong, optionalSecondary: "Optional: 10 min walk and mobility cooldown." },
+ 1: { type: "hard-run", label: `${safeBaseWeek.mon?.t || "Quality"} Run`, run: safeBaseWeek.mon, nutri: NUTRITION_DAY_TYPES.runQuality, optionalSecondary: "Optional: short trunk support after the run." },
+ 2: { type: "strength+prehab", label: "Upper-Body Maintenance A", strSess: safeBaseWeek.str || "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, upperBodyBias: true, optionalSecondary: "Optional: 8 min shoulder mobility reset." },
+ 3: { type: "easy-run", label: "Easy Run", run: safeBaseWeek.fri || { t: "Easy", d: "25-35 min" }, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: 5-10 min mobility finish." },
+ 4: { type: "hard-run", label: `${safeBaseWeek.thu?.t || "Tempo"} Run`, run: safeBaseWeek.thu, nutri: NUTRITION_DAY_TYPES.runQuality, optionalSecondary: "Optional: fueling and calf reset after the main work." },
+ 5: { type: "strength+prehab", label: "Upper-Body Maintenance B", strSess: safeBaseWeek.str === "A" ? "B" : "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, upperBodyBias: true, optionalSecondary: "Optional: cuff or scap stability finisher." },
+ 6: { type: "long-run", label: "Long Run", run: safeBaseWeek.sat, nutri: NUTRITION_DAY_TYPES.runLong, optionalSecondary: "Optional: 10 min walk and mobility cooldown." },
  0: restDay("Active Recovery"),
  },
  race_prep_dominant: {
- 1: { type: "run+strength", label: "Quality Run + Strength Finish", run: baseWeek.mon, strSess: baseWeek.str, nutri: NUTRITION_DAY_TYPES.hybridSupport, optionalSecondary: "Optional: short lift finisher only if the run stayed smooth." },
+ 1: { type: "run+strength", label: "Quality Run + Strength Finish", run: safeBaseWeek.mon, strSess: safeBaseWeek.str, nutri: NUTRITION_DAY_TYPES.hybridSupport, optionalSecondary: "Optional: short lift finisher only if the run stayed smooth." },
  2: { type: "conditioning", label: "Conditioning Intervals", nutri: NUTRITION_DAY_TYPES.conditioningMixed, optionalSecondary: "Optional: mobility reset to keep legs fresh for the next run." },
- 3: { type: "strength+prehab", label: "Strength + Durability", strSess: baseWeek.str === "A" ? "B" : "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: calf and foot durability work." },
- 4: { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: NUTRITION_DAY_TYPES.runQuality, optionalSecondary: "Optional: short mobility and fueling reset." },
- 5: { type: "easy-run", label: "Easy Run", run: baseWeek.fri, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: 4-6 relaxed strides if recovery is good." },
- 6: { type: "long-run", label: "Long Run", run: baseWeek.sat, nutri: NUTRITION_DAY_TYPES.runLong, optionalSecondary: "Optional: walk, calf work, and fueling reset after the run." },
+ 3: { type: "strength+prehab", label: "Strength + Durability", strSess: safeBaseWeek.str === "A" ? "B" : "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: calf and foot durability work." },
+ 4: { type: "hard-run", label: `${safeBaseWeek.thu?.t || "Tempo"} Run`, run: safeBaseWeek.thu, nutri: NUTRITION_DAY_TYPES.runQuality, optionalSecondary: "Optional: short mobility and fueling reset." },
+ 5: { type: "easy-run", label: "Easy Run", run: safeBaseWeek.fri, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: 4-6 relaxed strides if recovery is good." },
+ 6: { type: "long-run", label: "Long Run", run: safeBaseWeek.sat, nutri: NUTRITION_DAY_TYPES.runLong, optionalSecondary: "Optional: walk, calf work, and fueling reset after the run." },
  0: restDay("Active Recovery"),
  },
  strength_dominant: {
@@ -5043,16 +5130,16 @@ export const composeGoalNativePlan = ({
  },
  hybrid_performance: {
  1: hasRunningGoal
- ? { type: "run+strength", label: "Easy Run + Strength Finish", run: baseWeek.mon, strSess: baseWeek.str, nutri: NUTRITION_DAY_TYPES.hybridSupport, optionalSecondary: "Optional: short lift finisher if the run stayed easy." }
- : { type: "strength+prehab", label: "Strength + Conditioning Primer", strSess: baseWeek.str, nutri: NUTRITION_DAY_TYPES.hybridSupport, optionalSecondary: "Optional: easy aerobic cooldown." },
+ ? { type: "run+strength", label: "Easy Run + Strength Finish", run: safeBaseWeek.mon, strSess: safeBaseWeek.str, nutri: NUTRITION_DAY_TYPES.hybridSupport, optionalSecondary: "Optional: short lift finisher if the run stayed easy." }
+ : { type: "strength+prehab", label: "Strength + Conditioning Primer", strSess: safeBaseWeek.str, nutri: NUTRITION_DAY_TYPES.hybridSupport, optionalSecondary: "Optional: easy aerobic cooldown." },
  2: { type: "conditioning", label: "Conditioning", nutri: NUTRITION_DAY_TYPES.conditioningMixed, optionalSecondary: "Optional: mobility reset to keep hybrid load coherent." },
- 3: { type: "strength+prehab", label: "Full-Body Strength B + Durability", strSess: baseWeek.str === "A" ? "B" : "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: durability finisher for shoulders, hips, or trunk." },
+ 3: { type: "strength+prehab", label: "Full-Body Strength B + Durability", strSess: safeBaseWeek.str === "A" ? "B" : "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: durability finisher for shoulders, hips, or trunk." },
  4: hasRunningGoal
- ? { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: NUTRITION_DAY_TYPES.runQuality, optionalSecondary: "Optional: short mobility and fueling reset." }
+ ? { type: "hard-run", label: `${safeBaseWeek.thu?.t || "Tempo"} Run`, run: safeBaseWeek.thu, nutri: NUTRITION_DAY_TYPES.runQuality, optionalSecondary: "Optional: short mobility and fueling reset." }
  : buildConditioningSession({ label: "Conditioning Intervals", detail: "20-30 min controlled intervals or mixed-modality conditioning" }),
- 5: { type: "strength+prehab", label: "Full-Body Strength Focus", strSess: baseWeek.str, nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: low-drama carry or trunk finisher." },
+ 5: { type: "strength+prehab", label: "Full-Body Strength Focus", strSess: safeBaseWeek.str, nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: low-drama carry or trunk finisher." },
  6: hasRunningGoal
- ? { type: "easy-run", label: "Supportive Endurance", run: baseWeek.fri, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: strides or mobility if recovery is still good." }
+ ? { type: "easy-run", label: "Supportive Endurance", run: safeBaseWeek.fri, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: strides or mobility if recovery is still good." }
  : buildConditioningSession({ label: "Supportive Conditioning", detail: "20-30 min easy conditioning to keep work capacity alive", lowImpact: true }),
  0: restDay("Active Recovery"),
  },
@@ -5350,6 +5437,12 @@ const scheduleLimitedTemplates = limitDayTemplatesToScheduleReality({
    hasRunningGoal,
    domainAdapterId: domainAdapter?.id || "",
   });
+  const supportTouchpointOverlay = applyGoalSupportTouchpointOverlay({
+   dayTemplates: annotatedTemplates,
+   supportPlanningContext,
+   hasRunningGoal,
+  });
+  annotatedTemplates = supportTouchpointOverlay?.dayTemplates || annotatedTemplates;
   const habitExerciseOverlay = applyHabitDrivenExercisePreferences({
    dayTemplates: annotatedTemplates,
    habitAdaptationContext,
@@ -5363,6 +5456,9 @@ const scheduleLimitedTemplates = limitDayTemplatesToScheduleReality({
   }
   if (habitCardioOverlay?.effects?.length) {
    why.push(...habitCardioOverlay.effects);
+  }
+  if (supportTouchpointOverlay?.effects?.length) {
+   why.push(...supportTouchpointOverlay.effects);
   }
   if (habitExerciseOverlay?.effects?.length) {
    why.push(...habitExerciseOverlay.effects);
@@ -5472,7 +5568,7 @@ if (adaptationState?.weeklyIntentHints?.weeklyConstraints?.length) {
   };
  const programBlock = buildProgramBlock({
  weekNumber: currentWeek,
- weekTemplate: baseWeek,
+ weekTemplate: safeBaseWeek,
  weekTemplates,
  goals,
  architecture: effectiveArchitecture,

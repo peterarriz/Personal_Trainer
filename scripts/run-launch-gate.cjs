@@ -61,7 +61,7 @@ const CHECKS = [
   {
     id: "build",
     label: "Build and repo hygiene",
-    command: "npm run build",
+    command: "npm run build:verified",
     categories: ["today", "log", "plan", "intake", "hybrid", "trust", "sync", "design", "journeys"],
     parseMetrics: parseBuildMetrics,
   },

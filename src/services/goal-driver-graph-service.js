@@ -185,6 +185,30 @@ const buildGenericStrengthProfile = () => buildDriverProfile({
   ],
 });
 
+const buildArmHypertrophyDriverProfile = () => buildDriverProfile({
+  primaryDomain: "strength_hypertrophy",
+  primaryOutcomeId: "arm_hypertrophy",
+  primaryOutcomeLabel: "Arm hypertrophy",
+  focusLabel: "Arm hypertrophy support graph",
+  directDrivers: [
+    { id: "arm_hypertrophy_volume", label: "Arm hypertrophy volume", weight: 0.34, rationale: "Arms need enough direct work to actually grow." },
+    { id: "arm_training_frequency", label: "Arm training frequency", weight: 0.24, rationale: "Repeatable exposures usually matter more than one giant arm day." },
+  ],
+  supportDrivers: [
+    { id: "biceps_hypertrophy", label: "Biceps hypertrophy", weight: 0.18, rationale: "Direct elbow-flexor work keeps the goal specific." },
+    { id: "triceps_strength", label: "Triceps hypertrophy support", weight: 0.16, rationale: "Triceps still make up a big chunk of upper-arm growth." },
+    { id: "anterior_delt_strength", label: "Shoulder support", weight: 0.1, rationale: "Shoulders help the whole upper-arm look and pressing support." },
+    { id: "pressing_hypertrophy", label: "Compound pressing support", weight: 0.08, rationale: "Compound pressing still supports overall upper-body size." },
+  ],
+  protectiveDrivers: [
+    { id: "elbow_tolerance", label: "Elbow tolerance", weight: 0.14, rationale: "Arm work stops fast when the elbows get angry." },
+    { id: "shoulder_tolerance", label: "Shoulder tolerance", weight: 0.08, rationale: "Shoulders still gate pressing-driven arm volume." },
+  ],
+  transferNotes: [
+    "Curls, triceps work, and supportive upper-body volume can all move arm growth, but direct weekly arm work still needs to show up.",
+  ],
+});
+
 const buildRunningDriverProfile = () => buildDriverProfile({
   primaryDomain: "running_endurance",
   primaryOutcomeId: "running_performance",
@@ -325,6 +349,7 @@ const detectStrengthFocus = ({ text = "", metricKey = "" } = {}) => {
   if (/\bsquat\b/.test(corpus)) return "squat";
   if (/\bdeadlift|hinge\b/.test(corpus)) return "deadlift";
   if (/\bohp|overhead press|shoulder press\b/.test(corpus)) return "ohp";
+  if (/\barm|arms|bicep|biceps|tricep|triceps|curl\b/.test(corpus)) return "arms";
   return "generic";
 };
 
@@ -360,6 +385,7 @@ export const buildGoalDriverProfile = ({ goal = {} } = {}) => {
     if (focus === "squat") return buildSquatDriverProfile();
     if (focus === "deadlift") return buildDeadliftDriverProfile();
     if (focus === "ohp") return buildOhpDriverProfile();
+    if (focus === "arms") return buildArmHypertrophyDriverProfile();
     return buildGenericStrengthProfile();
   }
   return buildDriverProfile({

@@ -33,7 +33,9 @@ export const DEFAULT_NUTRITION_FAVORITES = {
   likedMealPatterns: {},
   dislikedMealPatterns: {},
   mealPatternFeedback: {},
+  mealPatternFeedbackMeta: {},
   mealCalendarOverrides: {},
+  mealPatternHistory: [],
 };
 
 const clonePersistenceValue = (value) => {

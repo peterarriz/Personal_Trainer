@@ -37,6 +37,51 @@ const summarizeSlotPreview = (section = null) => (
     .slice(0, 2)
 );
 
+const normalizeMealPatternHistoryEntry = (entry = null) => {
+  if (!entry || typeof entry !== "object") return null;
+  const dateKey = sanitizeText(entry.dateKey, 24);
+  const slotKey = sanitizeText(entry.slotKey, 40).toLowerCase();
+  const patternId = sanitizeText(entry.patternId, 80).toLowerCase();
+  if (!dateKey || !slotKey || !patternId) return null;
+  return {
+    dateKey,
+    slotKey,
+    patternId,
+  };
+};
+
+export const mergeMealPatternHistoryFromCalendar = ({
+  history = [],
+  days = [],
+  maxEntries = 84,
+} = {}) => {
+  const nextMap = new Map();
+  (Array.isArray(history) ? history : [])
+    .map((entry) => normalizeMealPatternHistoryEntry(entry))
+    .filter(Boolean)
+    .forEach((entry) => {
+      nextMap.set(`${entry.dateKey}:${entry.slotKey}`, entry);
+    });
+
+  (Array.isArray(days) ? days : []).forEach((day) => {
+    const dateKey = sanitizeText(day?.dateKey, 24);
+    if (!dateKey) return;
+    (Array.isArray(day?.meals) ? day.meals : []).forEach((meal) => {
+      const normalized = normalizeMealPatternHistoryEntry({
+        dateKey,
+        slotKey: meal?.slotKey,
+        patternId: meal?.patternId || meal?.preferenceKey,
+      });
+      if (!normalized) return;
+      nextMap.set(`${normalized.dateKey}:${normalized.slotKey}`, normalized);
+    });
+  });
+
+  return [...nextMap.values()]
+    .sort((left, right) => right.dateKey.localeCompare(left.dateKey) || left.slotKey.localeCompare(right.slotKey))
+    .slice(0, Math.max(7, Number(maxEntries || 84)));
+};
+
 const buildWeekDayExecutionPlan = ({
   dateKey = "",
   session = null,
@@ -115,6 +160,9 @@ export const buildWeeklyNutritionCalendarModel = ({
         label: sanitizeText(section?.label || "Meal", 40),
         title: sanitizeText(section?.title || "Meal", 120),
         targetLine: sanitizeText(section?.targetLine || "", 120),
+        patternId: sanitizeText(section?.sourceType || "pattern", 40).toLowerCase() === "pattern"
+          ? sanitizeText(section?.patternId || section?.preferenceKey || "", 80).toLowerCase()
+          : "",
         preferenceKey: sanitizeText(section?.preferenceKey || "", 80).toLowerCase(),
         sourceType: sanitizeText(section?.sourceType || "pattern", 40).toLowerCase(),
         hasOverride: Boolean(section?.overrideApplied),

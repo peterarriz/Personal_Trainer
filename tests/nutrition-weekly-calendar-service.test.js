@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   buildWeeklyNutritionCalendarModel,
+  mergeMealPatternHistoryFromCalendar,
 } = require("../src/services/nutrition-weekly-calendar-service.js");
 
 test("weekly nutrition calendar model exposes an editable week and carries slot overrides through to the day rows", () => {
@@ -124,4 +125,32 @@ test("weekly nutrition calendar model exposes an editable week and carries slot 
   assert.equal(rotatedBreakfast.sourceType, "pattern");
   assert.notEqual(rotatedBreakfast.title, baselineBreakfast.title);
   assert.ok(rotatedModel.overrideCount >= 1);
+});
+
+test("meal calendar history merge keeps the latest slot choices compact and reusable", () => {
+  const history = mergeMealPatternHistoryFromCalendar({
+    history: [
+      { dateKey: "2026-04-20", slotKey: "breakfast", patternId: "savory_oats" },
+    ],
+    days: [
+      {
+        dateKey: "2026-04-21",
+        meals: [
+          { slotKey: "breakfast", patternId: "yogurt_bowl" },
+          { slotKey: "lunch", patternId: "shawarma_plate" },
+        ],
+      },
+      {
+        dateKey: "2026-04-20",
+        meals: [
+          { slotKey: "breakfast", patternId: "egg_bowl" },
+        ],
+      },
+    ],
+    maxEntries: 10,
+  });
+
+  assert.equal(history.length, 3);
+  assert.deepEqual(history[0], { dateKey: "2026-04-21", slotKey: "breakfast", patternId: "yogurt_bowl" });
+  assert.deepEqual(history[2], { dateKey: "2026-04-20", slotKey: "breakfast", patternId: "egg_bowl" });
 });

@@ -54,6 +54,32 @@ const buildIntakePacket = ({
   },
 });
 
+const resolveGoalStack = ({
+  goalTexts = [],
+  trainingDaysPerWeek = 4,
+  sessionLength = "45 min",
+  now = "2026-04-10",
+} = {}) => {
+  let planningPriority = 1;
+  return goalTexts.flatMap((goalText) => {
+    const packet = buildIntakePacket({
+      rawGoalText: goalText,
+      trainingDaysPerWeek,
+      sessionLength,
+    });
+    const resolution = resolveGoalTranslation({
+      rawUserGoalIntent: goalText,
+      typedIntakePacket: packet,
+      explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+      now,
+    });
+    return resolution.resolvedGoals.map((goal) => ({
+      ...goal,
+      planningPriority: planningPriority++,
+    }));
+  });
+};
+
 test("compatible mixed goals stay realistic and keep low conflict when schedule support is strong", () => {
   const resolution = resolveGoalTranslation({
     rawUserGoalIntent: "be a hybrid athlete",
@@ -120,6 +146,54 @@ test("conflicting goals surface explicit conflict flags and recommend sequencing
   assert.equal(feasibility.recommendedPriorityOrdering[0].planningCategory, "body_comp");
   assert.equal(reordered[0].planningCategory, "body_comp");
   assert.equal(reordered[0].planningPriority, 1);
+});
+
+test("overloaded hybrid stacks surface parallel-outcome overload and keep support goals out of the lead slots", () => {
+  const resolvedGoals = resolveGoalStack({
+    goalTexts: ["run a 1:45 half marathon", "bench 225 x 3 x 6", "cut to 180 pounds", "get bigger arms"],
+    trainingDaysPerWeek: 4,
+    sessionLength: "45 min",
+  });
+
+  const feasibility = assessGoalFeasibility({
+    resolvedGoals,
+    userBaseline: { experienceLevel: "intermediate", currentBaseline: "consistent training" },
+    scheduleReality: { trainingDaysPerWeek: 4, sessionLength: "45 min", trainingLocation: "Both" },
+    currentExperienceContext: { injuryConstraintContext: { constraints: [] } },
+    now: "2026-04-10",
+  });
+
+  assert.equal(feasibility.confirmationAction, GOAL_FEASIBILITY_ACTIONS.warn);
+  assert.equal(feasibility.realismStatus, GOAL_REALISM_STATUSES.aggressive);
+  assert.ok(feasibility.conflictFlags.some((flag) => flag.key === "parallel_outcome_overload"));
+  assert.ok(feasibility.conflictFlags.some((flag) => flag.key === "recovery_budget_overdrawn"));
+  assert.deepEqual(
+    feasibility.recommendedPriorityOrdering.slice(0, 2).map((item) => item.planningCategory).sort(),
+    ["running", "strength"]
+  );
+  assert.match(feasibility.suggestedSequencing[0].summary, /lead|moderate|background/i);
+});
+
+test("same-lane benchmark stacks tell the user to pick one headline target", () => {
+  const resolvedGoals = resolveGoalStack({
+    goalTexts: ["run a 1:45 half marathon", "run a sub-20 5k"],
+    trainingDaysPerWeek: 4,
+    sessionLength: "45 min",
+  });
+
+  const feasibility = assessGoalFeasibility({
+    resolvedGoals,
+    userBaseline: { experienceLevel: "intermediate", currentBaseline: "running consistently" },
+    scheduleReality: { trainingDaysPerWeek: 4, sessionLength: "45 min", trainingLocation: "Both" },
+    currentExperienceContext: { injuryConstraintContext: { constraints: [] } },
+    now: "2026-04-10",
+  });
+
+  assert.ok(feasibility.conflictFlags.some((flag) => flag.key === "same_lane_benchmark_stack"));
+  assert.match(
+    feasibility.suggestedSequencing.map((item) => item.summary).join(" "),
+    /headline target|same lane/i
+  );
 });
 
 test("fuzzy appearance goals become exploratory with a realistic first-block outcome", () => {

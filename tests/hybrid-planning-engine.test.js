@@ -260,6 +260,29 @@ test("recent bench-support work shifts the next accessory packet toward trunk an
   assert.match(textCorpus, /\bcarry|plank|serratus|external rotation\b/);
 });
 
+test("support gaps surface as visible weekly touchpoints instead of only hiding inside lift packets", () => {
+  const composer = buildComposer({
+    goals: buildGoals([
+      { name: "Run a 1:45 half marathon", category: "running", priority: 1, targetDate: "2026-08-15" },
+      { name: "Bench 225", category: "strength", priority: 2 },
+    ]),
+    personalization: {
+      userGoalProfile: { days_per_week: 5, session_length: "45" },
+    },
+    todayKey: "2026-04-21",
+    currentDayOfWeek: 2,
+  });
+
+  const touchpointSessions = Object.values(composer.dayTemplates || {}).filter((session) => Array.isArray(session?.supportTouchpoints) && session.supportTouchpoints.length);
+  const touchpointBuckets = touchpointSessions.flatMap((session) => session.supportTouchpoints.map((entry) => entry.bucket));
+  const touchpointCopy = touchpointSessions.map((session) => String(session?.optionalSecondary || "").toLowerCase()).join(" ");
+
+  assert.ok(touchpointBuckets.includes("strength"));
+  assert.ok(touchpointBuckets.includes("durability"));
+  assert.match(touchpointCopy, /shoulders|upper back|triceps|scap|trunk/);
+  assert.match(touchpointCopy, /calves|ankles|single-leg|durability|lower-leg/);
+});
+
 test("repeated misses on Saturday move key work off the chronic miss day when a recovery slot can absorb it", () => {
   const composer = buildComposer({
     goals: buildGoals([

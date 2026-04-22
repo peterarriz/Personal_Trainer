@@ -16,6 +16,16 @@ It is intentionally not a replacement for the existing launch dashboard or manua
 npm run qa:launch-gate
 ```
 
+Related proof commands:
+
+```bash
+npm run qa:sync:proof
+npm run qa:visual-review
+```
+
+- `qa:sync:proof` writes a staging-sync artifact and records whether the real two-device proof was run or skipped because env is missing.
+- `qa:visual-review` builds a screenshot pack for auth, Today, Log, Plan, Nutrition, and Settings across desktop/mobile theme states.
+
 ## Output
 
 Each run writes:
@@ -48,7 +58,7 @@ The scorecard evaluates these product dimensions:
 
 The harness runs deterministic checks only:
 
-- build and repo-hygiene via `npm run build`
+- verified build plus repo-hygiene via `npm run build:verified`
 - unit and contract tests for Today, Log, Plan, Intake, Trust, Sync, and hybrid planning
 - benchmark suites for plan quality and archetype differentiation
 - Playwright flows for Today, Log, Plan, Intake, account lifecycle, sync-state failure handling, CTA/tap-budget checks, and theme intent
@@ -64,6 +74,8 @@ Some launch decisions cannot be honestly automated in a local repo-only run. The
 - any deployment/vendor validation that depends on external configuration
 
 The harness generates a companion manual review worksheet each run so those checks stay attached to the same artifact set.
+
+The adjacent proof commands above are intentionally separate so we can keep the launch gate deterministic while still attaching fresh staging-sync and screenshot artifacts to a release candidate when needed.
 
 ## Scoring model
 

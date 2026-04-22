@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, normalizeGoals, getActiveTimeBoundGoal, generateTodayPlan } from "./modules-planning.js";
-import { createAuthStorageModule, buildStorageStatus, classifyStorageError, STORAGE_STATUS_REASONS } from "./modules-auth-storage.js";
+import { createAuthStorageModule, buildStorageStatus, classifyStorageError, createPersistQueueController, createPersistedPayloadFingerprint, STORAGE_STATUS_REASONS } from "./modules-auth-storage.js";
 import { getGoalContext, normalizeActualNutritionLog, resolveNutritionActualLogStoreCompat, compareNutritionPrescriptionToActual, getPlaceRecommendations, buildGroceryBasket, mergeActualNutritionLogUpdate, applyHydrationQuickAdd } from "./modules-nutrition.js";
 import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, resolveEffectiveStatus, buildPlannedDayRecord, comparePlannedDayToActual } from "./modules-checkins.js";
 import { COACH_TOOL_ACTIONS, deterministicCoachPacket } from "./modules-coach-engine.js";
@@ -340,33 +340,37 @@ function useResponsiveMediaQuery(query) {
 }
 
 const FORMA_LAZY_CHUNK_NAMES = Object.freeze({
- secondaryTabs: "secondary.tabs",
+ logTab: "secondary.log",
+ planTab: "secondary.plan",
+ nutritionTab: "secondary.nutrition",
+ coachTab: "secondary.coach",
+ settingsTab: "secondary.settings",
 });
 
 const FORMA_LAZY_MODULES = Object.freeze({
  logTab: {
-  chunkName: FORMA_LAZY_CHUNK_NAMES.secondaryTabs,
-  moduleId: "src/domains/secondary-tabs/SecondaryTabSurfaces.jsx",
+  chunkName: FORMA_LAZY_CHUNK_NAMES.logTab,
+  moduleId: "src/domains/secondary-tabs/LogTabSurface.jsx",
   exportName: "LogTab",
  },
  planTab: {
-  chunkName: FORMA_LAZY_CHUNK_NAMES.secondaryTabs,
-  moduleId: "src/domains/secondary-tabs/SecondaryTabSurfaces.jsx",
+  chunkName: FORMA_LAZY_CHUNK_NAMES.planTab,
+  moduleId: "src/domains/secondary-tabs/PlanTabSurface.jsx",
   exportName: "PlanTab",
  },
  nutritionTab: {
-  chunkName: FORMA_LAZY_CHUNK_NAMES.secondaryTabs,
-  moduleId: "src/domains/secondary-tabs/SecondaryTabSurfaces.jsx",
+  chunkName: FORMA_LAZY_CHUNK_NAMES.nutritionTab,
+  moduleId: "src/domains/secondary-tabs/NutritionTabSurface.jsx",
   exportName: "NutritionTab",
  },
  coachTab: {
-  chunkName: FORMA_LAZY_CHUNK_NAMES.secondaryTabs,
-  moduleId: "src/domains/secondary-tabs/SecondaryTabSurfaces.jsx",
+  chunkName: FORMA_LAZY_CHUNK_NAMES.coachTab,
+  moduleId: "src/domains/secondary-tabs/CoachTabSurface.jsx",
   exportName: "CoachTab",
  },
  settingsTab: {
-  chunkName: FORMA_LAZY_CHUNK_NAMES.secondaryTabs,
-  moduleId: "src/domains/secondary-tabs/SecondaryTabSurfaces.jsx",
+  chunkName: FORMA_LAZY_CHUNK_NAMES.settingsTab,
+  moduleId: "src/domains/secondary-tabs/SettingsTabSurface.jsx",
   exportName: "SettingsTab",
  },
 });
@@ -5344,12 +5348,14 @@ export default function TrainerDashboard() {
  const realtimeChannelRef = useRef(null);
  const realtimeResyncTimerRef = useRef(null);
  const realtimeInterruptedRef = useRef(false);
- const lastLocalMutationAtRef = useRef(0);
- const skipNextGoalsPersistRef = useRef(false);
+const lastLocalMutationAtRef = useRef(0);
+const skipNextGoalsPersistRef = useRef(false);
 const suspendLocalPersistenceRef = useRef(false);
 const authSessionRef = useRef(null);
 const authSessionUserIdRef = useRef("");
 const sbLoadRef = useRef(null);
+const persistExecutorRef = useRef(null);
+const persistQueueRef = useRef(null);
  const logDiagRef = useRef(null);
  const historyRelabelAppliedRef = useRef(false);
  const bootPersistenceReadyRef = useRef(false);
@@ -5359,6 +5365,21 @@ const [showAppleHealthFirstLaunch, setShowAppleHealthFirstLaunch] = useState(fal
 const DEBUG_MODE = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
 const TRUSTED_DEBUG_MODE = typeof window !== "undefined" && canExposeInternalOperatorTools({ debugMode: DEBUG_MODE, hostname: window.location.hostname }) === true;
 const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorageGet(localStorage, "apple_health_supported", "0") === "1";
+if (!persistQueueRef.current) {
+ persistQueueRef.current = createPersistQueueController({
+ execute: async (request) => {
+ if (typeof persistExecutorRef.current !== "function") {
+ return {
+ ok: false,
+ skipped: true,
+ stale: true,
+ reason: "persist_executor_unavailable",
+ };
+ }
+ return persistExecutorRef.current(request);
+ },
+ });
+}
  const logDiag = (...args) => { if (DEBUG_MODE) console.log("[trainer-debug]", ...args); };
  const recordBootMetric = useCallback((payload = {}) => {
  if (typeof window === "undefined") return;
@@ -7255,8 +7276,65 @@ useEffect(() => {
  });
  };
 
+ persistExecutorRef.current = async (request = {}) => {
+ if (suspendLocalPersistenceRef.current) {
+ return {
+ ok: false,
+ skipped: true,
+ stale: true,
+ reason: "persistence_suspended",
+ };
+ }
+ const requestUserId = String(request?.userId || "").trim();
+ const currentUserId = String(authSessionRef.current?.user?.id || "").trim();
+ if (requestUserId !== currentUserId) {
+ return {
+ ok: false,
+ skipped: true,
+ stale: true,
+ reason: "auth_user_changed",
+ };
+ }
+ const effectiveAuthSession = authSessionRef.current || request?.authSession || null;
+ const shouldAttemptCloudPersist = Boolean(
+ currentUserId
+ && request?.payload?.personalization?.profile?.onboardingComplete
+ );
+ if (shouldAttemptCloudPersist) {
+ markLocalMutation();
+ noteCloudSyncStarted("persist_all");
+ }
+ const persistResult = await authStorage.persistAll({
+ payload: request?.payload || {},
+ authSession: effectiveAuthSession,
+ setStorageStatus,
+ setAuthSession,
+ });
+ if (!shouldAttemptCloudPersist) return persistResult;
+ if (persistResult?.stale) return persistResult;
+ if (persistResult?.ok && persistResult?.synced) {
+ noteCloudSyncSucceeded("persist_all");
+ return persistResult;
+ }
+ if (!persistResult?.ok) {
+ noteCloudSyncFailed({
+ source: "persist_all",
+ error: persistResult?.error || null,
+ status: persistResult?.status || null,
+ });
+ }
+ return persistResult;
+ };
+
  const persistAll = async (newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization = personalization, newCoachActions = coachActions, newCoachPlanAdjustments = coachPlanAdjustments, newGoals = goals, newDailyCheckins = dailyCheckins, newWeeklyCheckins = weeklyCheckins, newNutritionFavorites = nutritionFavorites, newNutritionActualLogs = nutritionActualLogs, newPlannedDayRecords = plannedDayRecords, newPlanWeekRecords = planWeekRecords) => {
- if (suspendLocalPersistenceRef.current) return;
+ if (suspendLocalPersistenceRef.current) {
+ return {
+ ok: false,
+ skipped: true,
+ stale: true,
+ reason: "persistence_suspended",
+ };
+ }
  const normalizedGoalPayload = normalizeGoals(newGoals || []);
  const runtimeState = buildCanonicalRuntimeState({
  logs: newLogs,
@@ -7280,29 +7358,23 @@ useEffect(() => {
  runtimeState,
  transformPersonalization: (draftPersonalization) => buildPersistedPersonalization(draftPersonalization, normalizedGoalPayload),
  });
- const shouldAttemptCloudPersist = Boolean(
- authSession?.user?.id
- && payload?.personalization?.profile?.onboardingComplete
+ const requestUserId = String(authSessionRef.current?.user?.id || authSession?.user?.id || "").trim();
+ return (
+ persistQueueRef.current?.enqueue({
+ key: createPersistedPayloadFingerprint(payload),
+ ownerId: requestUserId,
+ request: {
+ payload,
+ authSession,
+ userId: requestUserId,
+ },
+ })
+ || persistExecutorRef.current?.({
+ payload,
+ authSession,
+ userId: requestUserId,
+ })
  );
- if (shouldAttemptCloudPersist) {
- markLocalMutation();
- noteCloudSyncStarted("persist_all");
- }
- const persistResult = await authStorage.persistAll({ payload, authSession, setStorageStatus, setAuthSession });
- if (!shouldAttemptCloudPersist) return persistResult;
- if (persistResult?.stale) return persistResult;
- if (persistResult?.ok && persistResult?.synced) {
- noteCloudSyncSucceeded("persist_all");
- return persistResult;
- }
- if (!persistResult?.ok) {
- noteCloudSyncFailed({
- source: "persist_all",
- error: persistResult?.error || null,
- status: persistResult?.status || null,
- });
- }
- return persistResult;
  };
 
  const hydrateLocalRuntimeCache = ({ statusOverride = null } = {}) => {
@@ -7646,6 +7718,12 @@ useEffect(() => {
  const nextUserId = String(authSession?.user?.id || "").trim();
  if (authSessionUserIdRef.current === nextUserId) return;
  authSessionUserIdRef.current = nextUserId;
+ persistQueueRef.current?.invalidateQueued({
+ ok: false,
+ skipped: true,
+ stale: true,
+ reason: nextUserId ? "auth_user_changed" : "signed_out",
+ });
  authStorage.invalidatePersistenceLifecycle?.({
  resetFingerprints: false,
  resetTransientCooldown: nextUserId === "",
@@ -8436,58 +8514,7 @@ Keep it plain and specific.`;
  basePersonalization: personalization,
  currentPhase,
  });
- if (false) {
- const { updates, nextPrescriptions, nextTracking } = deriveProgressiveOverloadAdjustments({
- logs: nextLogs,
- todayWorkout,
- checkin: merged,
- personalization,
- currentPhase,
- goals,
- goalState: canonicalGoalState,
- });
- if (updates.length > 0) {
- const tomorrow = new Date(`${dateKey}T12:00:00`);
- tomorrow.setDate(tomorrow.getDate() + 1);
- const tomorrowKey = toDateKey(tomorrow);
- const primary = updates[0];
- let oneLine = `${primary.exercise} adjusts ${primary.oldWeight}?${primary.newWeight} lbs tomorrow due to ${String(primary.ruleTriggered || "rule").replaceAll("_"," ")}.`;
- const aiPrompt = `The rules engine has determined this adjustment for tomorrow: ${primary.exercise} moves from ${primary.oldWeight} to ${primary.newWeight} because ${primary.ruleTriggered}. Write one sentence a coach would say mid-workout about this change. Under 15 words. Include specific numbers only. No encouragement language. No "great job." No "you've earned." Sound like you're standing next to them.`;
- const aiLine = await callAnthropic({ system: "You are a concise strength coach notification writer.", user: aiPrompt, maxTokens: 60 });
- if (aiLine) oneLine = aiLine.trim().split("\n")[0];
- let explain = `Rule trigger: ${primary.ruleTriggered.replaceAll("_"," ")}. Weight ${primary.oldWeight}?${primary.newWeight} lbs; sets ${primary.oldSets}?${primary.newSets}.`;
- const explainPrompt = `Explain in one short paragraph why ${primary.exercise} changed from ${primary.oldWeight} to ${primary.newWeight} lbs and sets ${primary.oldSets} to ${primary.newSets}. Include reps completion trend, feel trend, injury flag (${personalization?.injuryPainState?.level || "none"}), phase (${currentPhase}), and days to goal (${primary.daysToGoal ?? "unknown"}).`;
- const aiExplain = await callAnthropic({ system: "You explain deterministic training-rule outcomes in plain language.", user: explainPrompt, maxTokens: 150 });
- if (aiExplain) explain = aiExplain.trim();
- const nextStrengthProgression = {
- ...(personalization?.strengthProgression || {}),
- prescriptions: nextPrescriptions,
- tracking: nextTracking,
- pendingByDate: {
- ...(personalization?.strengthProgression?.pendingByDate || {}),
- [tomorrowKey]: {
- exercise: primary.exercise,
- inlineNote: `${primary.newWeight > primary.oldWeight ? "?" : primary.newWeight < primary.oldWeight ? "?" : "?"} ${primary.exercise}: ${primary.oldWeight} ? ${primary.newWeight} lbs today`,
- reason: primary.ruleTriggered,
- note: oneLine,
- explanation: explain,
- oldWeight: primary.oldWeight,
- newWeight: primary.newWeight,
- },
- },
- notifications: {
- ...(personalization?.strengthProgression?.notifications || {}),
- [tomorrowKey]: oneLine,
- },
- explanations: {
- ...(personalization?.strengthProgression?.explanations || {}),
- [tomorrowKey]: explain,
- },
- };
- nextPersonalization = mergePersonalization(personalization, { strengthProgression: nextStrengthProgression });
- }
- }
- }
+}
  const nextFitnessSignals = deriveFitnessLayer({ logs: nextLogs, personalization: nextPersonalization });
  nextPersonalization = mergePersonalization(nextPersonalization, { fitnessSignals: nextFitnessSignals, profile: { ...nextPersonalization.profile, fitnessLevel: nextFitnessSignals.fitnessLevel } });
  const phaseNow = todayWorkout?.week?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
@@ -11008,7 +11035,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  </div>
  </div>
  </div>
- <button data-testid="app-tab-settings" className="btn app-settings-button" onMouseEnter={warmSecondaryTabs} onFocus={warmSecondaryTabs} onClick={()=>{ setSettingsFocus(""); setTab(5); }} aria-label="Open settings" title="Settings">
+ <button data-testid="app-tab-settings" className="btn app-settings-button" onPointerDown={warmSecondaryTabs} onClick={()=>{ setSettingsFocus(""); setTab(5); }} aria-label="Open settings" title="Settings">
  <SettingsIcon size={18} />
  </button>
  </div>
@@ -11020,7 +11047,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  {/* TABS */}
  <div className="app-tab-strip">
  {TABS.map((t,i) => (
- <button key={t.id} data-testid={`app-tab-${t.id}`} className="btn app-tab-button" data-active={tab===i?"true":"false"} onMouseEnter={i >= 1 ? warmSecondaryTabs : undefined} onFocus={i >= 1 ? warmSecondaryTabs : undefined} onClick={()=>setTab(i)}>
+ <button key={t.id} data-testid={`app-tab-${t.id}`} className="btn app-tab-button" data-active={tab===i?"true":"false"} onPointerDown={i >= 1 ? warmSecondaryTabs : undefined} onClick={()=>setTab(i)}>
  {t.label}
  </button>
  ))}

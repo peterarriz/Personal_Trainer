@@ -284,6 +284,28 @@ const extractWeightChangeTarget = (text = "") => {
   return "";
 };
 
+const extractTargetBodyweight = (text = "") => {
+  const normalized = sanitizeText(text, 220).toLowerCase();
+  const match = normalized.match(/\b(?:cut|get|drop|lean|weigh|reach|down)\s+(?:down\s+)?(?:to|under)?\s*(\d{2,3}(?:\.\d+)?)\s*(?:lb|lbs|pounds?)\b/i);
+  return match?.[1] ? match[1] : "";
+};
+
+const extractLiftTargetProtocol = (text = "") => {
+  const normalized = sanitizeText(text, 220);
+  const tripleMatch = normalized.match(/\b(?:bench(?: press)?|squat|deadlift|overhead press|ohp|pull[- ]?up)\b[\s:,-]{0,10}(\d{2,4}(?:\.\d+)?)\s*[x×]\s*(\d{1,2})\s*[x×]\s*(\d{1,2})\b/i)
+    || normalized.match(/\b(\d{2,4}(?:\.\d+)?)\s*[x×]\s*(\d{1,2})\s*[x×]\s*(\d{1,2})\b/i);
+  if (!tripleMatch?.[1] || !tripleMatch?.[2] || !tripleMatch?.[3]) return null;
+  const targetValue = sanitizeText(tripleMatch[1], 40);
+  const targetSets = Number(tripleMatch[2]);
+  const targetReps = Number(tripleMatch[3]);
+  if (!targetValue || !Number.isFinite(targetSets) || !Number.isFinite(targetReps)) return null;
+  return {
+    targetValue,
+    targetSets: Math.max(1, Math.round(targetSets)),
+    targetReps: Math.max(1, Math.round(targetReps)),
+  };
+};
+
 const hasAppearanceTimingCue = (rawText = "", timeline = {}) => {
   if (timeline?.targetDate || timeline?.targetHorizonWeeks) return true;
   return /\b(by|before|for)\b|\bspring\b|\bsummer\b|\bfall\b|\bautumn\b|\bwinter\b|\bjanuary\b|\bfebruary\b|\bmarch\b|\bapril\b|\bmay\b|\bjune\b|\bjuly\b|\baugust\b|\bseptember\b|\boctober\b|\bnovember\b|\bdecember\b/i.test(
@@ -307,20 +329,25 @@ const buildStructuredLiftTargetMetric = ({
   const liftFocus = normalizeChoice(readFieldValue(fields, "lift_focus") || templateSelection?.specificityDefaults?.lift_focus || "");
   const liftMetric = LIFT_FOCUS_METRIC_MAP[liftFocus] || null;
   if (!liftMetric) return null;
+  const protocolTarget = extractLiftTargetProtocol(rawText);
   const targetValue = sanitizeText(
     readFieldValue(fields, "lift_target_weight")
+    || protocolTarget?.targetValue
     || parseStrengthTarget(rawText)
     || templateSelection?.specificityDefaults?.metric_target
     || "",
     40
   );
   if (!targetValue) return null;
+  const targetSetsRaw = sanitizeText(readFieldValue(fields, "lift_target_sets") || "", 20);
+  const targetSets = targetSetsRaw ? Number(targetSetsRaw) : protocolTarget?.targetSets ?? null;
   const targetRepsRaw = sanitizeText(readFieldValue(fields, "lift_target_reps") || "", 20);
-  const targetReps = targetRepsRaw ? Number(targetRepsRaw) : null;
+  const targetReps = targetRepsRaw ? Number(targetRepsRaw) : protocolTarget?.targetReps ?? null;
   return {
     ...liftMetric,
     targetValue,
     kind: "primary",
+    ...(Number.isFinite(targetSets) && targetSets > 0 ? { targetSets: Math.round(targetSets) } : {}),
     ...(Number.isFinite(targetReps) && targetReps > 0 ? { targetReps: Math.round(targetReps) } : {}),
   };
 };
@@ -343,15 +370,32 @@ const buildPrimaryMetric = ({
   if (templateMetric?.key) return templateMetric;
   if (!archetype) return null;
   if (archetype.id === "lift_focus_bench") {
-    const targetValue = structuredLiftMetric?.targetValue || parseStrengthTarget(rawText) || templateSelection?.specificityDefaults?.metric_target || "";
+    const protocolTarget = extractLiftTargetProtocol(rawText);
+    const targetValue = structuredLiftMetric?.targetValue || protocolTarget?.targetValue || parseStrengthTarget(rawText) || templateSelection?.specificityDefaults?.metric_target || "";
     return targetValue
-      ? { key: "bench_press_weight", label: "Bench press", unit: "lb", targetValue, kind: "primary" }
+      ? {
+          key: "bench_press_weight",
+          label: "Bench press",
+          unit: "lb",
+          targetValue,
+          kind: "primary",
+          ...(Number.isFinite(Number(structuredLiftMetric?.targetSets ?? protocolTarget?.targetSets))
+            ? { targetSets: Math.max(1, Math.round(Number(structuredLiftMetric?.targetSets ?? protocolTarget?.targetSets))) }
+            : {}),
+          ...(Number.isFinite(Number(structuredLiftMetric?.targetReps ?? protocolTarget?.targetReps))
+            ? { targetReps: Math.max(1, Math.round(Number(structuredLiftMetric?.targetReps ?? protocolTarget?.targetReps))) }
+            : {}),
+        }
       : null;
   }
   if (intent?.id === "lose_body_fat") {
-    const targetValue = extractWeightChangeTarget(rawText);
-    return targetValue
-      ? { key: "bodyweight_change", label: "Bodyweight change", unit: "lb", targetValue, kind: "primary" }
+    const changeTarget = extractWeightChangeTarget(rawText);
+    if (changeTarget) {
+      return { key: "bodyweight_change", label: "Bodyweight change", unit: "lb", targetValue: changeTarget, kind: "primary" };
+    }
+    const targetBodyweight = extractTargetBodyweight(rawText);
+    return targetBodyweight
+      ? { key: "bodyweight_target", label: "Bodyweight", unit: "lb", targetValue: targetBodyweight, kind: "primary" }
       : null;
   }
   const targetDuration = extractTimeToken(rawText);
@@ -388,8 +432,12 @@ const formatPrimaryMetricTarget = (primaryMetric = null) => {
   const targetValue = sanitizeText(primaryMetric?.targetValue || "", 40);
   if (!targetValue) return "";
   const unit = sanitizeText(primaryMetric?.unit || "", 20);
+  const targetSets = Number(primaryMetric?.targetSets);
   const targetReps = Number(primaryMetric?.targetReps);
   const valueWithUnit = `${targetValue}${unit ? ` ${unit}` : ""}`.trim();
+  if (Number.isFinite(targetSets) && targetSets > 0 && Number.isFinite(targetReps) && targetReps > 0) {
+    return `${valueWithUnit} for ${targetSets} x ${targetReps}`;
+  }
   if (Number.isFinite(targetReps) && targetReps > 0) {
     return `${valueWithUnit} for ${targetReps} reps`;
   }
@@ -443,7 +491,10 @@ const buildSummary = ({
     return "Swim faster with repeatable technique";
   }
   if (intent?.id === "build_muscle") {
-    return /\b(gain|add|put on)\s+muscle\b/i.test(rawText)
+    if (/\b(arm|arms|bicep|biceps|tricep|triceps)\b/i.test(rawText) && /\b(gain|build|add|put on)\b[\s\S]{0,20}\bmuscle\b/i.test(rawText)) {
+      return "Build arm muscle";
+    }
+    return /\b(gain|add|put on)\b[\s\S]{0,20}\bmuscle\b/i.test(rawText)
       ? "Gain muscle with repeatable training"
       : "Build muscle";
   }
