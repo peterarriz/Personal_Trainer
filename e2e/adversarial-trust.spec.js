@@ -87,10 +87,15 @@ const bootAuthEntry = async (page, {
   await expect(page.getByTestId("auth-gate")).toBeVisible();
 };
 
+const domClick = async (locator) => {
+  await expect(locator).toBeVisible();
+  await locator.evaluate((node) => node.click());
+};
+
 const enterAppShell = async (page) => {
   const authGate = page.getByTestId("auth-gate");
   if (await authGate.isVisible().catch(() => false)) {
-    await page.getByTestId("continue-local-mode").click();
+    await domClick(page.getByTestId("continue-local-mode"));
   }
   await expect(page.getByTestId("app-root")).toHaveAttribute("data-onboarding-complete", "true");
   await expect(page.getByTestId("app-tab-settings")).toBeVisible();
@@ -243,23 +248,23 @@ const buildSevenGoalStackFromFamilies = async (page, { finishBuild = true } = {}
   for (const [categoryId, templateId] of selections) {
     const resolvedFamilyId = familyAliases[categoryId] || categoryId;
     const resolvedTemplateId = templateAliases[templateId] || templateId;
-    await page.getByTestId(`intake-goal-type-${resolvedFamilyId}`).click();
-    await page.getByTestId(`intake-featured-goal-${resolvedTemplateId}`).click();
+    await domClick(page.getByTestId(`intake-goal-type-${resolvedFamilyId}`));
+    await domClick(page.getByTestId(`intake-featured-goal-${resolvedTemplateId}`));
     await fillStarterMetricInputs(page, starterMetricsByTemplateId[resolvedTemplateId] || {});
     await commitPendingGoalSelection(page);
     await fillStarterMetricInputs(page, starterMetricsByTemplateId[resolvedTemplateId] || {});
   }
 
-  await page.getByTestId("intake-goals-option-experience-level-intermediate").click();
-  await page.getByTestId("intake-goals-option-training-days-4").click();
-  await page.getByTestId("intake-goals-option-session-length-45").click();
-  await page.getByTestId("intake-goals-option-training-location-gym").click();
+  await domClick(page.getByTestId("intake-goals-option-experience-level-intermediate"));
+  await domClick(page.getByTestId("intake-goals-option-training-days-4"));
+  await domClick(page.getByTestId("intake-goals-option-session-length-45"));
+  await domClick(page.getByTestId("intake-goals-option-training-location-gym"));
   const coachingChip = page.getByTestId("intake-goals-option-coaching-style-balanced-coaching");
   if (await coachingChip.count()) {
-    await coachingChip.click();
+    await domClick(coachingChip);
   }
   if (!finishBuild) return;
-  await page.getByTestId("intake-footer-continue").click();
+  await domClick(page.getByTestId("intake-footer-continue"));
   await expect.poll(async () => page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
   const phase = await page.getByTestId("intake-root").getAttribute("data-intake-phase");
   if (phase === "clarify") {
@@ -295,7 +300,7 @@ const buildSevenGoalStackFromFamilies = async (page, { finishBuild = true } = {}
 };
 
 const openDetailedWorkoutLog = async (page) => {
-  await page.getByTestId("app-tab-log").click();
+  await domClick(page.getByTestId("app-tab-log"));
   await expect(page.getByTestId("log-tab")).toBeVisible();
   await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
 };
@@ -367,7 +372,7 @@ test.describe("skeptical user adversarial coverage", () => {
 
     for (const scenario of scenarios) {
       await bootAuthEntry(page, scenario);
-      await page.getByTestId("auth-mode-signup").click();
+      await domClick(page.getByTestId("auth-mode-signup"));
       await expect(page.getByTestId("auth-submit")).toBeVisible();
       await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
 
@@ -569,7 +574,8 @@ test.describe("skeptical user adversarial coverage", () => {
     await expect(page.getByText("PRIORITY 1", { exact: true })).toBeVisible();
     await expect(page.getByText("ADDITIONAL GOAL", { exact: true }).first()).toBeVisible();
 
-    await page.getByTestId("intake-footer-continue").click();
+    await expect(page.getByTestId("intake-footer-continue")).toBeEnabled();
+    await domClick(page.getByTestId("intake-footer-continue"));
     await expect.poll(async () => page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
     const phase = await page.getByTestId("intake-root").getAttribute("data-intake-phase");
     if (phase === "clarify") {
@@ -600,9 +606,9 @@ test.describe("skeptical user adversarial coverage", () => {
     } else {
       await expect(page.getByTestId("today-session-card")).toBeVisible();
     }
-    await page.getByTestId("app-tab-settings").click({ force: true });
+    await domClick(page.getByTestId("app-tab-settings"));
     await expect(page.getByTestId("settings-tab")).toBeVisible();
-    await page.getByTestId("settings-surface-goals").click();
+    await domClick(page.getByTestId("settings-surface-goals"));
     await expect(page.getByTestId("settings-goals-section")).toBeVisible();
     await expect(page.getByTestId("settings-goals-management")).toBeVisible();
     await expect(page.getByTestId("settings-goals-management")).toContainText(/Priority 1|Priority 2/i);
@@ -628,20 +634,20 @@ test.describe("skeptical user adversarial coverage", () => {
 
     await completeRunningOnboarding(page);
 
-    await page.getByTestId("app-tab-program").click({ force: true });
+    await domClick(page.getByTestId("app-tab-program"));
     await expect(page.getByTestId("program-tab")).toBeVisible();
     await expect(page.getByTestId("program-this-week")).toBeVisible();
 
-    await page.getByTestId("app-tab-settings").click({ force: true });
-    await page.getByTestId("settings-surface-preferences").click();
-    await page.getByRole("button", { name: /Aggressive/i }).first().click();
+    await domClick(page.getByTestId("app-tab-settings"));
+    await domClick(page.getByTestId("settings-surface-preferences"));
+    await domClick(page.getByRole("button", { name: /Aggressive/i }).first());
 
-    await page.getByTestId("app-tab-today").click({ force: true });
+    await domClick(page.getByTestId("app-tab-today"));
     const todayLabel = normalizeSurfaceText(await page.getByTestId("today-canonical-session-label").innerText());
     const todayPlanText = normalizeSurfaceText(await page.getByTestId("today-full-workout").innerText());
     await expect(page.getByTestId("today-change-summary")).toContainText("Aggressive preference");
 
-    await page.getByTestId("app-tab-program").click({ force: true });
+    await domClick(page.getByTestId("app-tab-program"));
     const programLabel = normalizeSurfaceText(await page.getByTestId("program-canonical-session-label").innerText());
     await expect(page.getByTestId("program-change-summary")).toContainText("Aggressive preference");
 
@@ -649,11 +655,11 @@ test.describe("skeptical user adversarial coverage", () => {
     const logLabel = normalizeSurfaceText(await page.getByTestId("log-canonical-session-label").innerText());
     const logPlanText = normalizeSurfaceText(await page.getByTestId("log-detailed-entry").getByTestId("planned-session-plan").innerText());
 
-    await page.getByTestId("app-tab-nutrition").click({ force: true });
+    await domClick(page.getByTestId("app-tab-nutrition"));
     const nutritionLabel = normalizeSurfaceText(await page.getByTestId("nutrition-canonical-session-label").innerText());
     await expect(page.getByTestId("nutrition-canonical-reason")).toContainText("Aggressive preference");
 
-    await page.getByTestId("app-tab-coach").click({ force: true });
+    await domClick(page.getByTestId("app-tab-coach"));
     const coachLabel = normalizeSurfaceText(await page.getByTestId("coach-canonical-session-label").innerText());
     await expect(page.getByTestId("coach-canonical-reason")).toContainText("Aggressive preference");
 
@@ -687,19 +693,19 @@ test.describe("skeptical user adversarial coverage", () => {
 
     const surfaces = [];
 
-    await page.getByTestId("app-tab-today").click({ force: true });
+    await domClick(page.getByTestId("app-tab-today"));
     surfaces.push(normalizeSurfaceText(await page.getByTestId("today-tab").innerText()));
 
-    await page.getByTestId("app-tab-program").click({ force: true });
+    await domClick(page.getByTestId("app-tab-program"));
     await expect(page.getByTestId("program-tab")).toBeVisible();
     const programWeekText = normalizeSurfaceText(await page.getByTestId("program-this-week").innerText());
     surfaces.push(programWeekText);
     expect(programWeekText).toMatch(/strength|mobility|dryland/i);
 
-    await page.getByTestId("app-tab-nutrition").click({ force: true });
+    await domClick(page.getByTestId("app-tab-nutrition"));
     surfaces.push(normalizeSurfaceText(await page.getByTestId("nutrition-tab").innerText()));
 
-    await page.getByTestId("app-tab-coach").click({ force: true });
+    await domClick(page.getByTestId("app-tab-coach"));
     surfaces.push(normalizeSurfaceText(await page.getByTestId("coach-tab").innerText()));
 
     const combinedSurfaceText = surfaces.join(" ");

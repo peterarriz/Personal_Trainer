@@ -190,3 +190,63 @@ test("triathlon support-tier copy makes the anchor requirement explicit", () => 
   assert.match(tier.honestyLine, /swim, bike, and run anchors|conservative multisport build/i);
   assert.match(tier.basisLine, /swim, bike, and run|conservative/i);
 });
+
+test("race-focused running degrades to tier 2 when explicit baseline signal context is still incomplete", () => {
+  const tier = buildSupportTierModel({
+    goals: [{
+      active: true,
+      category: "running",
+      name: "Run a 1:45 half marathon",
+      resolvedGoal: {
+        goalFamily: "performance",
+        planningCategory: "running",
+        summary: "Run a 1:45 half marathon",
+      },
+    }],
+    domainAdapterId: DOMAIN_ADAPTER_IDS.running,
+    goalCapabilityStack: {
+      primary: {
+        primaryDomain: DOMAIN_ADAPTER_IDS.running,
+        fallbackPlanningMode: "race_prep_dominant",
+      },
+    },
+    baselineSignals: {
+      currentRunFrequency: true,
+      longestRecentRun: false,
+      recentPaceBaseline: false,
+      targetTimeline: false,
+    },
+  });
+
+  assert.equal(tier.id, "tier_2");
+  assert.match(tier.honestyLine, /run frequency|benchmark|target window|conservative/i);
+});
+
+test("swim support degrades to tier 3 when swim anchor and access reality are still missing in a signaled context", () => {
+  const tier = buildSupportTierModel({
+    goals: [{
+      active: true,
+      category: "running",
+      name: "Swim a faster mile",
+      resolvedGoal: {
+        goalFamily: "performance",
+        planningCategory: "general_fitness",
+        summary: "Swim a faster mile",
+      },
+    }],
+    domainAdapterId: DOMAIN_ADAPTER_IDS.swimming,
+    goalCapabilityStack: {
+      primary: {
+        primaryDomain: DOMAIN_ADAPTER_IDS.swimming,
+        fallbackPlanningMode: "technique_and_aerobic_foundation",
+      },
+    },
+    baselineSignals: {
+      recentSwimAnchor: false,
+      swimAccessReality: false,
+    },
+  });
+
+  assert.equal(tier.id, "tier_3");
+  assert.match(tier.honestyLine, /swim anchor|pool|open-water|start simple/i);
+});

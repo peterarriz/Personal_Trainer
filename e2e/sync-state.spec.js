@@ -200,7 +200,7 @@ test.describe("shared sync state rendering", () => {
     await expect(page.getByTestId("auth-gate")).toBeVisible();
     await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
     await expect(page.getByText(/sign in to reopen your plan/i)).toBeVisible();
-    await expect(page.getByText(/local data available on this device/i)).toBeVisible();
+    await expect(page.getByText("Saved plan on this device", { exact: true })).toBeVisible();
   });
 
   test("provider outage surfaces a fatal sync state instead of a vague broken local mode", async ({ page }) => {

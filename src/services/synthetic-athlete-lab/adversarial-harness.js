@@ -24,11 +24,16 @@ import { deriveWeeklyNutritionAdaptation } from "../weekly-nutrition-review-serv
 import {
   buildManualProgressInputsFromIntake,
   BASELINE_METRIC_KEYS,
+  normalizeStartingCapacityValue,
+  parseSwimBenchmarkText,
 } from "../intake-baseline-service.js";
 import {
   buildMissingAnchorsEngine,
   applyMissingAnchorAnswer,
 } from "../intake-machine-service.js";
+import {
+  INTAKE_COMPLETENESS_FIELDS,
+} from "../intake-completeness-service.js";
 import {
   buildGoalEditorDraft,
   buildGoalManagementPreview,
@@ -453,73 +458,170 @@ const weekStartDateKeyFor = (weekNumber = 1) => addDaysToDateKey(LAB_START_DATE_
 const scoreSeverityPenalty = (severity = "medium") => (severity === "severe" ? 30 : severity === "medium" ? 14 : 5);
 const hasLaneTheater = (value = "") => /leading now|we will maintain|support in the background|we will support|we are deferring|defer(?:ring)?/i.test(String(value || ""));
 const hasRevisionHeroCopy = (value = "") => /rev(?:ision)?\s*\d+|plan changed|timeline mechanics/i.test(String(value || ""));
+const parseNumericToken = (value = null) => {
+  const match = sanitizeText(value, 80).match(/(\d+(?:\.\d+)?)/);
+  return match?.[1] ? Number(match[1]) : null;
+};
+const normalizeStartingCapacitySeed = (value = "") => {
+  const normalized = normalizeStartingCapacityValue(value);
+  if (normalized) return normalized;
+  const lowered = sanitizeText(value, 80).toLowerCase();
+  if (!lowered) return "";
+  if (/run_walk_20|run_walk_25|20|25|30|steady/.test(lowered)) return "20_to_30_minutes";
+  if (/8_easy|8 minute|10|short|walk/.test(lowered)) return "10_easy_minutes";
+  if (/30\+|30 plus|durable/.test(lowered)) return "30_plus_minutes";
+  return "";
+};
+const describeStartingCapacitySeed = (value = "") => {
+  if (value === "walk_only") return "walk only";
+  if (value === "10_easy_minutes") return "about 10 easy minutes";
+  if (value === "20_to_30_minutes") return "about 20 to 30 minutes";
+  if (value === "30_plus_minutes") return "30+ minutes feels repeatable";
+  return sanitizeText(value.replaceAll("_", " "), 80);
+};
+const inferSwimAccessRealitySeed = (persona = {}) => {
+  const lowered = `${persona.enduranceContext || ""} ${persona.equipmentReality || ""} ${persona.scheduleReality || ""}`.toLowerCase();
+  const hasPool = /\bpool\b/.test(lowered);
+  const hasOpenWater = /open[_ -]?water|lake|ocean/.test(lowered);
+  if (hasPool && hasOpenWater) return "both";
+  if (hasOpenWater) return "open_water";
+  if (hasPool) return "pool";
+  return "";
+};
+const normalizePersonaBaselineMetrics = (persona = {}) => {
+  const baseline = cloneValue(persona?.baselineMetrics || {}) || {};
+  const runBaseline = baseline?.run || {};
+  const normalizedRun = (
+    Number.isFinite(Number(runBaseline?.distanceMiles))
+    || sanitizeText(runBaseline?.durationMinutes || "", 40)
+    || sanitizeText(runBaseline?.paceText || baseline?.pace || "", 80)
+    || baseline?.longestRun
+    || baseline?.pace
+  ) ? {
+    distanceMiles: Number.isFinite(Number(runBaseline?.distanceMiles))
+      ? Number(runBaseline.distanceMiles)
+      : parseNumericToken(baseline?.longestRun),
+    durationMinutes: sanitizeText(runBaseline?.durationMinutes || "", 40)
+      || (/\bmin|minute/i.test(sanitizeText(baseline?.longestRun || "", 80)) ? sanitizeText(baseline.longestRun, 40) : ""),
+    paceText: sanitizeText(runBaseline?.paceText || baseline?.pace || "", 80),
+  } : null;
+  const swimSeed = baseline?.swim
+    ? {
+        distance: Number.isFinite(Number(baseline.swim.distance)) ? Number(baseline.swim.distance) : null,
+        distanceUnit: sanitizeText(baseline.swim.distanceUnit || "", 12),
+        duration: sanitizeText(baseline.swim.duration || "", 40),
+        note: sanitizeText(baseline.swim.note || "", 120),
+      }
+    : parseSwimBenchmarkText(baseline?.recentSwimAnchor || "");
+  return {
+    ...baseline,
+    bodyweight: Number.isFinite(Number(baseline?.bodyweight)) ? Number(baseline.bodyweight) : null,
+    waist: Number.isFinite(Number(baseline?.waist)) ? Number(baseline.waist) : null,
+    lift: baseline?.lift ? {
+      exercise: sanitizeText(baseline.lift.exercise || "", 120),
+      weight: Number.isFinite(Number(baseline.lift.weight)) ? Number(baseline.lift.weight) : null,
+      reps: Number.isFinite(Number(baseline.lift.reps)) ? Number(baseline.lift.reps) : null,
+      sets: Number.isFinite(Number(baseline.lift.sets)) ? Number(baseline.lift.sets) : null,
+    } : null,
+    jump: baseline?.jump ? {
+      value: Number.isFinite(Number(baseline.jump.value)) ? Number(baseline.jump.value) : null,
+      unit: sanitizeText(baseline.jump.unit || "in", 12),
+    } : null,
+    run: normalizedRun,
+    swim: swimSeed ? {
+      distance: Number.isFinite(Number(swimSeed.distance)) ? Number(swimSeed.distance) : null,
+      distanceUnit: sanitizeText(swimSeed.distanceUnit || "", 12),
+      duration: sanitizeText(swimSeed.duration || "", 40),
+      note: sanitizeText(swimSeed.note || swimSeed.raw || "", 120),
+    } : null,
+    swimAccessReality: sanitizeText(baseline?.swimAccessReality || inferSwimAccessRealitySeed(persona), 40).toLowerCase(),
+    startingCapacity: normalizeStartingCapacitySeed(baseline?.startingCapacity || ""),
+  };
+};
+const upsertSeededCompletenessField = (answers = {}, fieldKey = "", record = null) => {
+  if (!fieldKey || !record || typeof record !== "object") return answers;
+  return {
+    ...answers,
+    intake_completeness: {
+      version: "2026-04-v1",
+      ...(answers?.intake_completeness || {}),
+      fields: {
+        ...(answers?.intake_completeness?.fields || {}),
+        [fieldKey]: cloneValue(record),
+      },
+    },
+  };
+};
 
-const buildManualProgressInputs = (baselineMetrics = {}, todayKey = LAB_START_DATE_KEY) => ({
+const buildManualProgressInputs = (baselineMetrics = {}, todayKey = LAB_START_DATE_KEY) => {
+  const normalizedBaselineMetrics = normalizePersonaBaselineMetrics({ baselineMetrics });
+  return ({
   measurements: {
-    [BASELINE_METRIC_KEYS.bodyweightBaseline]: baselineMetrics?.bodyweight ? [{
+    [BASELINE_METRIC_KEYS.bodyweightBaseline]: normalizedBaselineMetrics?.bodyweight ? [{
       date: todayKey,
-      value: baselineMetrics.bodyweight,
+      value: normalizedBaselineMetrics.bodyweight,
       unit: "lb",
       source: "user_override",
       note: "Seed baseline",
     }] : [],
-    waist_circumference: baselineMetrics?.waist ? [{
+    waist_circumference: normalizedBaselineMetrics?.waist ? [{
       date: todayKey,
-      value: baselineMetrics.waist,
+      value: normalizedBaselineMetrics.waist,
       unit: "in",
       source: "user_override",
       note: "Seed baseline",
     }] : [],
   },
   benchmarks: {
-    lift_results: baselineMetrics?.lift ? [{
+    lift_results: normalizedBaselineMetrics?.lift ? [{
       date: todayKey,
-      exercise: baselineMetrics.lift.exercise,
-      weight: baselineMetrics.lift.weight,
-      reps: baselineMetrics.lift.reps,
-      sets: baselineMetrics.lift.sets || 1,
+      exercise: normalizedBaselineMetrics.lift.exercise,
+      weight: normalizedBaselineMetrics.lift.weight,
+      reps: normalizedBaselineMetrics.lift.reps,
+      sets: normalizedBaselineMetrics.lift.sets || 1,
       source: "user_override",
       note: "Seed baseline",
     }] : [],
-    run_results: baselineMetrics?.run ? [{
+    run_results: normalizedBaselineMetrics?.run ? [{
       date: todayKey,
-      distanceMiles: baselineMetrics.run.distanceMiles,
-      durationMinutes: baselineMetrics.run.durationMinutes,
-      paceText: baselineMetrics.run.paceText || "",
+      distanceMiles: normalizedBaselineMetrics.run.distanceMiles,
+      durationMinutes: normalizedBaselineMetrics.run.durationMinutes,
+      paceText: normalizedBaselineMetrics.run.paceText || "",
       source: "user_override",
       note: "Seed baseline",
     }] : [],
   },
   metrics: {
-    [BASELINE_METRIC_KEYS.swimBenchmark]: baselineMetrics?.swim ? [{
+    [BASELINE_METRIC_KEYS.swimBenchmark]: normalizedBaselineMetrics?.swim ? [{
       date: todayKey,
-      distance: baselineMetrics.swim.distance,
-      distanceUnit: baselineMetrics.swim.distanceUnit || "",
-      duration: baselineMetrics.swim.duration || "",
+      distance: normalizedBaselineMetrics.swim.distance,
+      distanceUnit: normalizedBaselineMetrics.swim.distanceUnit || "",
+      duration: normalizedBaselineMetrics.swim.duration || "",
       source: "user_override",
-      note: baselineMetrics.swim.note || "Seed baseline",
+      note: normalizedBaselineMetrics.swim.note || "Seed baseline",
     }] : [],
-    [BASELINE_METRIC_KEYS.swimAccessReality]: baselineMetrics?.swimAccessReality ? [{
+    [BASELINE_METRIC_KEYS.swimAccessReality]: normalizedBaselineMetrics?.swimAccessReality ? [{
       date: todayKey,
-      value: baselineMetrics.swimAccessReality,
-      source: "user_override",
-      note: "Seed baseline",
-    }] : [],
-    [BASELINE_METRIC_KEYS.startingCapacity]: baselineMetrics?.startingCapacity ? [{
-      date: todayKey,
-      value: baselineMetrics.startingCapacity,
+      value: normalizedBaselineMetrics.swimAccessReality,
       source: "user_override",
       note: "Seed baseline",
     }] : [],
-    vertical_jump: baselineMetrics?.jump ? [{
+    [BASELINE_METRIC_KEYS.startingCapacity]: normalizedBaselineMetrics?.startingCapacity ? [{
       date: todayKey,
-      value: baselineMetrics.jump.value,
-      unit: baselineMetrics.jump.unit || "in",
+      value: normalizedBaselineMetrics.startingCapacity,
+      source: "user_override",
+      note: "Seed baseline",
+    }] : [],
+    vertical_jump: normalizedBaselineMetrics?.jump ? [{
+      date: todayKey,
+      value: normalizedBaselineMetrics.jump.value,
+      unit: normalizedBaselineMetrics.jump.unit || "in",
       source: "user_override",
       note: "Seed baseline",
     }] : [],
   },
-});
+  });
+};
 
 const normalizeIntentEntries = (persona = {}) => (
   toArray(persona?.goalIntents || [])
@@ -807,9 +909,10 @@ const buildGoalsFromPersona = (persona = {}) => {
 };
 
 const createPersonalization = ({ persona = {}, includeMetrics = true, programs = null } = {}) => {
+  const normalizedBaselineMetrics = normalizePersonaBaselineMetrics(persona);
   const age = midpointAge(persona.ageRange);
   const heightSeed = 64 + (hashString(persona.id) % 10);
-  const bodyweight = persona?.baselineMetrics?.bodyweight || (160 + (hashString(`${persona.id}:bw`) % 80));
+  const bodyweight = normalizedBaselineMetrics?.bodyweight || (160 + (hashString(`${persona.id}:bw`) % 80));
   const sessionLength = persona.sessionLength || "45";
   const equipmentReality = persona.equipmentReality || persona.equipmentAccess || "basic gym";
   return {
@@ -870,7 +973,7 @@ const createPersonalization = ({ persona = {}, includeMetrics = true, programs =
       preferredMeals: ["protein-forward breakfast", "simple lunch bowl"],
     },
     manualProgressInputs: includeMetrics
-      ? buildManualProgressInputs(persona.baselineMetrics || {}, LAB_START_DATE_KEY)
+      ? buildManualProgressInputs(normalizedBaselineMetrics, LAB_START_DATE_KEY)
       : buildManualProgressInputs({}, LAB_START_DATE_KEY),
     goalManagement: {
       version: 1,
@@ -916,6 +1019,7 @@ const buildScenarioNutritionReview = ({ persona = {}, event = {} } = {}) => {
 };
 
 const createBaseState = (persona = {}) => {
+  const normalizedBaselineMetrics = normalizePersonaBaselineMetrics(persona);
   const goals = buildGoalsFromPersona(persona);
   const barePersonalization = createPersonalization({ persona, includeMetrics: false });
   const bareAthlete = deriveCanonicalAthleteState({ goals, personalization: barePersonalization, profileDefaults: { name: persona.name } });
@@ -931,11 +1035,11 @@ const createBaseState = (persona = {}) => {
     logs: {},
     dailyCheckins: {},
     nutritionActualLogs: {},
-    bodyweights: persona?.baselineMetrics?.bodyweight ? [{ date: LAB_START_DATE_KEY, w: persona.baselineMetrics.bodyweight }] : [],
+    bodyweights: normalizedBaselineMetrics?.bodyweight ? [{ date: LAB_START_DATE_KEY, w: normalizedBaselineMetrics.bodyweight }] : [],
     planWeekRecords: {},
     weeklyCheckins: {},
     coachActions: [],
-    currentBodyweight: toNumber(persona?.baselineMetrics?.bodyweight, 0),
+    currentBodyweight: toNumber(normalizedBaselineMetrics?.bodyweight, 0),
     latestGoalSettingsView: null,
   };
 };
@@ -952,39 +1056,43 @@ const buildAnchorAnswerForPersona = ({
   anchor = null,
 } = {}) => {
   const fieldId = sanitizeText(anchor?.field_id || "", 80);
+  const baselineMetrics = normalizePersonaBaselineMetrics(persona);
   if (!fieldId) return null;
   if (fieldId === "starting_capacity_anchor") {
     const lowCapacity = /deconditioned|walking only|sedentary|obese beginner/i.test(`${persona.bodyCompContext} ${persona.strengthContext} ${persona.enduranceContext}`);
-    const value = lowCapacity ? "10_easy_minutes" : "20_to_30_minutes";
+    const value = baselineMetrics?.startingCapacity || (lowCapacity ? "10_easy_minutes" : "20_to_30_minutes");
     return {
-      rawText: lowCapacity ? "about 10 easy minutes" : "about 20 to 30 minutes",
-      answerValue: { value, raw: lowCapacity ? "about 10 easy minutes" : "about 20 to 30 minutes" },
-    };
-  }
-  if (fieldId === "current_bodyweight" && Number.isFinite(persona?.baselineMetrics?.bodyweight)) {
-    return {
-      rawText: `${persona.baselineMetrics.bodyweight} lb`,
-      answerValue: { value: persona.baselineMetrics.bodyweight, raw: `${persona.baselineMetrics.bodyweight} lb` },
-    };
-  }
-  if (fieldId === "current_waist" && Number.isFinite(persona?.baselineMetrics?.waist)) {
-    return {
-      rawText: `${persona.baselineMetrics.waist} in`,
-      answerValue: { value: persona.baselineMetrics.waist, raw: `${persona.baselineMetrics.waist} in` },
-    };
-  }
-  if (fieldId === "current_strength_baseline" && persona?.baselineMetrics?.lift) {
-    return {
-      rawText: `${persona.baselineMetrics.lift.weight}x${persona.baselineMetrics.lift.reps || 1}`,
+      rawText: describeStartingCapacitySeed(value) || (lowCapacity ? "about 10 easy minutes" : "about 20 to 30 minutes"),
       answerValue: {
-        weight: persona.baselineMetrics.lift.weight,
-        reps: persona.baselineMetrics.lift.reps || 1,
-        raw: `${persona.baselineMetrics.lift.weight}x${persona.baselineMetrics.lift.reps || 1}`,
+        value,
+        raw: describeStartingCapacitySeed(value) || (lowCapacity ? "about 10 easy minutes" : "about 20 to 30 minutes"),
       },
     };
   }
-  if (fieldId === "current_strength_baseline" && persona?.baselineMetrics?.jump) {
-    const raw = `${persona.baselineMetrics.jump.value}${persona.baselineMetrics.jump.unit || " in"} vertical`;
+  if (fieldId === "current_bodyweight" && Number.isFinite(baselineMetrics?.bodyweight)) {
+    return {
+      rawText: `${baselineMetrics.bodyweight} lb`,
+      answerValue: { value: baselineMetrics.bodyweight, raw: `${baselineMetrics.bodyweight} lb` },
+    };
+  }
+  if (fieldId === "current_waist" && Number.isFinite(baselineMetrics?.waist)) {
+    return {
+      rawText: `${baselineMetrics.waist} in`,
+      answerValue: { value: baselineMetrics.waist, raw: `${baselineMetrics.waist} in` },
+    };
+  }
+  if (fieldId === "current_strength_baseline" && baselineMetrics?.lift?.weight) {
+    return {
+      rawText: `${baselineMetrics.lift.weight}x${baselineMetrics.lift.reps || 1}`,
+      answerValue: {
+        weight: baselineMetrics.lift.weight,
+        reps: baselineMetrics.lift.reps || 1,
+        raw: `${baselineMetrics.lift.weight}x${baselineMetrics.lift.reps || 1}`,
+      },
+    };
+  }
+  if (fieldId === "current_strength_baseline" && baselineMetrics?.jump?.value) {
+    const raw = `${baselineMetrics.jump.value}${baselineMetrics.jump.unit || " in"} vertical`;
     return {
       rawText: raw,
       answerValue: { value: raw, raw },
@@ -1003,21 +1111,20 @@ const buildAnchorAnswerForPersona = ({
       answerValue: { value: inferredTimeline, raw: inferredTimeline },
     };
   }
-  if (fieldId === "recent_swim_anchor" && persona?.baselineMetrics?.swim) {
-    const raw = persona.baselineMetrics.swim.raw
-      || `${persona.baselineMetrics.swim.distance || ""} ${persona.baselineMetrics.swim.distanceUnit || ""} in ${persona.baselineMetrics.swim.duration || ""}`.trim();
+  if (fieldId === "recent_swim_anchor" && baselineMetrics?.swim) {
+    const raw = baselineMetrics.swim.note
+      || `${baselineMetrics.swim.distance || ""} ${baselineMetrics.swim.distanceUnit || ""} in ${baselineMetrics.swim.duration || ""}`.trim();
     return {
       rawText: raw,
       answerValue: { raw, value: raw },
     };
   }
   if (fieldId === "swim_access_reality") {
-    const lowered = `${persona.enduranceContext || ""} ${persona.equipmentReality || ""}`.toLowerCase();
-    const value = /open water/.test(lowered) ? "open_water" : /pool/.test(lowered) ? "pool" : "";
+    const value = sanitizeText(baselineMetrics?.swimAccessReality || inferSwimAccessRealitySeed(persona), 40).toLowerCase();
     if (!value) return null;
     return {
-      rawText: value === "open_water" ? "open water" : "pool",
-      answerValue: { value, raw: value === "open_water" ? "open water" : "pool" },
+      rawText: value === "open_water" ? "open water" : value === "both" ? "pool + open water" : "pool",
+      answerValue: { value, raw: value === "open_water" ? "open water" : value === "both" ? "pool + open water" : "pool" },
     };
   }
   if (fieldId === "current_run_frequency") {
@@ -1028,26 +1135,26 @@ const buildAnchorAnswerForPersona = ({
     };
   }
   if (fieldId === "running_endurance_anchor_kind") {
-    const usesLongest = Boolean(persona?.baselineMetrics?.run?.distanceMiles || persona?.baselineMetrics?.run?.durationMinutes);
+    const usesLongest = Boolean(baselineMetrics?.run?.distanceMiles || baselineMetrics?.run?.durationMinutes);
     const value = usesLongest ? "longest_recent_run" : "recent_pace_baseline";
     return {
       rawText: value === "longest_recent_run" ? "longest recent run" : "recent pace baseline",
       answerValue: { value, raw: value === "longest_recent_run" ? "longest recent run" : "recent pace baseline" },
     };
   }
-  if (fieldId === "longest_recent_run" && persona?.baselineMetrics?.run) {
-    const raw = persona.baselineMetrics.run.distanceMiles
-      ? `${persona.baselineMetrics.run.distanceMiles} miles`
-      : `${persona.baselineMetrics.run.durationMinutes} minutes`;
+  if (fieldId === "longest_recent_run" && baselineMetrics?.run && (baselineMetrics.run.distanceMiles || baselineMetrics.run.durationMinutes)) {
+    const raw = baselineMetrics.run.distanceMiles
+      ? `${baselineMetrics.run.distanceMiles} miles`
+      : sanitizeText(baselineMetrics.run.durationMinutes || "", 40);
     return {
       rawText: raw,
-      answerValue: { value: persona.baselineMetrics.run.distanceMiles || persona.baselineMetrics.run.durationMinutes, raw },
+      answerValue: { value: baselineMetrics.run.distanceMiles || baselineMetrics.run.durationMinutes, raw },
     };
   }
-  if (fieldId === "recent_pace_baseline" && persona?.baselineMetrics?.run?.paceText) {
+  if (fieldId === "recent_pace_baseline" && baselineMetrics?.run?.paceText) {
     return {
-      rawText: persona.baselineMetrics.run.paceText,
-      answerValue: { value: persona.baselineMetrics.run.paceText, raw: persona.baselineMetrics.run.paceText },
+      rawText: baselineMetrics.run.paceText,
+      answerValue: { value: baselineMetrics.run.paceText, raw: baselineMetrics.run.paceText },
     };
   }
   if (fieldId === "appearance_proxy_anchor_kind") {
@@ -1070,11 +1177,96 @@ const buildAnchorAnswerForPersona = ({
   return null;
 };
 
+const buildSeededCompletenessAnswers = ({
+  persona = {},
+  resolvedGoals = [],
+  answers = {},
+} = {}) => {
+  let nextAnswers = cloneValue(answers || {});
+  const seededFields = [];
+  const seedFieldIds = [
+    INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
+    INTAKE_COMPLETENESS_FIELDS.currentWaist,
+    INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline,
+    INTAKE_COMPLETENESS_FIELDS.targetTimeline,
+    INTAKE_COMPLETENESS_FIELDS.currentRunFrequency,
+    INTAKE_COMPLETENESS_FIELDS.longestRecentRun,
+    INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline,
+    INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor,
+    INTAKE_COMPLETENESS_FIELDS.swimAccessReality,
+    INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor,
+    INTAKE_COMPLETENESS_FIELDS.targetWeightChange,
+  ];
+
+  seedFieldIds.forEach((fieldId) => {
+    if (nextAnswers?.intake_completeness?.fields?.[fieldId]) return;
+    const answer = buildAnchorAnswerForPersona({
+      persona,
+      anchor: { field_id: fieldId, applies_to_goal_ids: resolvedGoals.map((goal) => goal?.id).filter(Boolean) },
+    });
+    if (!answer?.rawText) return;
+    let record = null;
+    if (fieldId === INTAKE_COMPLETENESS_FIELDS.currentBodyweight || fieldId === INTAKE_COMPLETENESS_FIELDS.currentWaist || fieldId === INTAKE_COMPLETENESS_FIELDS.targetWeightChange) {
+      record = {
+        raw: answer.rawText,
+        value: answer.answerValue?.value,
+      };
+    } else if (fieldId === INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline) {
+      record = {
+        raw: answer.rawText,
+        value: answer.answerValue?.raw || answer.rawText,
+        ...(Number.isFinite(answer.answerValue?.weight) ? { weight: answer.answerValue.weight } : {}),
+        ...(Number.isFinite(answer.answerValue?.reps) ? { reps: answer.answerValue.reps } : {}),
+      };
+    } else if (fieldId === INTAKE_COMPLETENESS_FIELDS.currentRunFrequency || fieldId === INTAKE_COMPLETENESS_FIELDS.longestRecentRun || fieldId === INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline || fieldId === INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor || fieldId === INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor || fieldId === INTAKE_COMPLETENESS_FIELDS.targetTimeline) {
+      record = {
+        raw: answer.rawText,
+        value: answer.answerValue?.value ?? answer.answerValue?.raw ?? answer.rawText,
+      };
+    } else if (fieldId === INTAKE_COMPLETENESS_FIELDS.swimAccessReality) {
+      record = {
+        raw: answer.answerValue?.raw || answer.rawText,
+        value: answer.answerValue?.value || "",
+      };
+    }
+    if (!record) return;
+    nextAnswers = upsertSeededCompletenessField(nextAnswers, fieldId, record);
+    seededFields.push(fieldId);
+  });
+
+  return {
+    answers: nextAnswers,
+    seededFields,
+  };
+};
+
+const collectSupportTierBaselineSignals = (answers = {}) => {
+  const fields = answers?.intake_completeness?.fields || {};
+  return {
+    currentBodyweight: Number.isFinite(Number(fields?.[INTAKE_COMPLETENESS_FIELDS.currentBodyweight]?.value)),
+    currentWaist: Number.isFinite(Number(fields?.[INTAKE_COMPLETENESS_FIELDS.currentWaist]?.value)),
+    currentStrengthBaseline: Boolean(sanitizeText(fields?.[INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline]?.raw || "", 160)),
+    currentRunFrequency: Number.isFinite(Number(fields?.[INTAKE_COMPLETENESS_FIELDS.currentRunFrequency]?.value)),
+    longestRecentRun: Boolean(sanitizeText(fields?.[INTAKE_COMPLETENESS_FIELDS.longestRecentRun]?.raw || "", 160)),
+    recentPaceBaseline: Boolean(sanitizeText(fields?.[INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline]?.raw || "", 160)),
+    recentSwimAnchor: Boolean(sanitizeText(fields?.[INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor]?.raw || "", 160)),
+    swimAccessReality: Boolean(sanitizeText(fields?.[INTAKE_COMPLETENESS_FIELDS.swimAccessReality]?.value || fields?.[INTAKE_COMPLETENESS_FIELDS.swimAccessReality]?.raw || "", 80)),
+    startingCapacity: Boolean(sanitizeText(fields?.[INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor]?.value || fields?.[INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor]?.raw || "", 80)),
+    targetTimeline: Boolean(sanitizeText(fields?.[INTAKE_COMPLETENESS_FIELDS.targetTimeline]?.value || fields?.[INTAKE_COMPLETENESS_FIELDS.targetTimeline]?.raw || "", 120)),
+    appearanceProxyPlan: sanitizeText(fields?.[INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan]?.value || "", 80).toLowerCase(),
+  };
+};
+
 const applyIntakeAnswersToState = ({
   persona = {},
   state = {},
 } = {}) => {
-  let nextAnswers = cloneValue(state.answers || {});
+  const seeded = buildSeededCompletenessAnswers({
+    persona,
+    resolvedGoals: state.resolvedGoals,
+    answers: state.answers || {},
+  });
+  let nextAnswers = seeded.answers;
   let bindingsByFieldId = {};
   const askedFields = [];
   const answeredFields = [];
@@ -1166,6 +1358,7 @@ const applyIntakeAnswersToState = ({
       }),
     },
     intakeReport: {
+      seededFields: seeded.seededFields,
       askedFields,
       answeredFields,
       missingRequiredFields: toArray(engine?.orderedFieldIds || []),
@@ -1856,14 +2049,20 @@ const runArchetypeQuickProbe = (persona = {}) => {
   const goals = buildGoalsFromPersona(persona);
   const personalization = createPersonalization({ persona, includeMetrics: true, programs: null });
   const athleteProfile = deriveCanonicalAthleteState({ goals, personalization, profileDefaults: { name: persona.name } });
+  const seededAnswers = buildSeededCompletenessAnswers({
+    persona,
+    resolvedGoals: goals.map((goal) => goal?.resolvedGoal || null).filter(Boolean),
+  }).answers;
   const supportTier = buildSupportTierModel({
     goals,
     domainAdapterId: athleteProfile?.primaryGoal?.resolvedGoal?.primaryDomain || athleteProfile?.goalCapabilityStack?.primary?.primaryDomain || "",
     goalCapabilityStack: athleteProfile?.goalCapabilityStack || null,
+    manualProgressInputs: personalization?.manualProgressInputs || {},
+    baselineSignals: collectSupportTierBaselineSignals(seededAnswers),
   });
   const anchorEngine = buildMissingAnchorsEngine({
     resolvedGoals: goals.map((goal) => goal?.resolvedGoal || null).filter(Boolean),
-    answers: {},
+    answers: seededAnswers,
     userContext: buildUserContextForAnchors(persona),
   });
   const composer = composeGoalNativePlan({
@@ -2292,6 +2491,8 @@ const runPersona = (persona = {}, { weeks = LAB_SIMULATION_WEEKS, weekSequence =
     goals: state.goals,
     domainAdapterId: state.athleteProfile?.primaryGoal?.resolvedGoal?.primaryDomain || state.athleteProfile?.goalCapabilityStack?.primary?.primaryDomain || "",
     goalCapabilityStack: state.athleteProfile?.goalCapabilityStack || null,
+    manualProgressInputs: state.personalization?.manualProgressInputs || {},
+    baselineSignals: collectSupportTierBaselineSignals(state.answers),
   });
   const expectedSupportTierRank = SUPPORT_TIER_RANK[persona.supportTierExpectation] || 0;
   const actualSupportTierRank = SUPPORT_TIER_RANK[initialSupportTier?.id] || 0;
@@ -2782,6 +2983,8 @@ const runPersona = (persona = {}, { weeks = LAB_SIMULATION_WEEKS, weekSequence =
     goals: state.goals,
     domainAdapterId: state.athleteProfile?.primaryGoal?.resolvedGoal?.primaryDomain || state.athleteProfile?.goalCapabilityStack?.primary?.primaryDomain || "",
     goalCapabilityStack: state.athleteProfile?.goalCapabilityStack || null,
+    manualProgressInputs: state.personalization?.manualProgressInputs || {},
+    baselineSignals: collectSupportTierBaselineSignals(state.answers),
   });
 
   return {

@@ -148,7 +148,7 @@ const resolveAccessibleCtaPresentation = (tokenSet = {}) => {
 
 export const PRODUCT_BRAND = {
   name: "FORMA",
-  strapline: "Personal training plan",
+  strapline: "Personal trainer",
   mark: "F",
   wordmarkTreatment: "Wide uppercase wordmark with a compact athletic monogram.",
   logoDirection: "Rounded monogram tile with a sharp editorial wordmark and restrained motion accents.",

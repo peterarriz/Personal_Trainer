@@ -106,3 +106,31 @@ test("launch simulation can refresh an existing deterministic run with deployed 
   assert.equal(refreshed.deployedReachability.reachable, true);
   assert.match(refreshed.artifacts.launchReportMarkdown, /Browser mode: deployed_smoke_probe/i);
 });
+
+test("launch simulation honors an explicit browser target count for representative local persona chunks", () => {
+  const simulation = runLaunchSimulation({
+    personaCount: 18,
+    weeks: 26,
+    mode: "full",
+    browserTargetPersonaCount: 6,
+    browserResults: {
+      mode: "browser_persona_chunk_local",
+      targetPersonaCount: 6,
+      attemptedPersonaCount: 6,
+      passedPersonaCount: 5,
+      runs: [
+        { ok: true, accessibilityChecked: false, title: "persona 1" },
+        { ok: true, accessibilityChecked: false, title: "persona 2" },
+        { ok: true, accessibilityChecked: false, title: "persona 3" },
+        { ok: true, accessibilityChecked: false, title: "persona 4" },
+        { ok: true, accessibilityChecked: false, title: "persona 5" },
+        { ok: false, accessibilityChecked: false, title: "persona 6" },
+      ],
+    },
+  });
+
+  assert.equal(simulation.browserSummary.targetPersonaCount, 6);
+  assert.equal(simulation.browserSummary.attemptedPersonaCount, 6);
+  assert.equal(simulation.browserSummary.complete, true);
+  assert.equal(simulation.browserSummary.releaseGateIncomplete, false);
+});

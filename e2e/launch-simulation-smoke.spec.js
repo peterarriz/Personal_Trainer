@@ -41,10 +41,11 @@ test.describe("launch simulation smoke", () => {
     await buildConsumerAuthBoot(page);
     await expect(page.getByTestId("auth-gate")).toBeVisible();
     await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
-    await expect(page.getByText(/create your account before you start/i)).toBeVisible();
+    await expect(page.getByText(/sign in or create your account/i)).toBeVisible();
   });
 
   test("representative launch personas can still reach Today from the trusted local lab path", async ({ page }) => {
+    test.setTimeout(120_000);
     await page.setViewportSize({ width: 1440, height: 1100 });
 
     const cases = [

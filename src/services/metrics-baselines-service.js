@@ -197,6 +197,7 @@ export const buildMetricsBaselinesModel = ({
     goals,
     domainAdapterId: athleteProfile?.primaryGoal?.resolvedGoal?.primaryDomain || athleteProfile?.goalCapabilityStack?.primary?.primaryDomain || "",
     goalCapabilityStack: athleteProfile?.goalCapabilityStack || null,
+    manualProgressInputs: manualInputs,
   });
   const latestBodyweight = pickLatestRow(
     buildLogBodyweightRow(bodyweights),

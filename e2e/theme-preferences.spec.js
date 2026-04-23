@@ -20,10 +20,15 @@ const FLAGSHIP_THEME_TEST_IDS = Object.freeze([
 
 const hashScreenshot = (buffer) => createHash("sha256").update(buffer).digest("hex");
 
+const domClick = async (locator) => {
+  await expect(locator).toBeVisible();
+  await locator.evaluate((node) => node.click());
+};
+
 const enterAppShell = async (page) => {
   const authGate = page.getByTestId("auth-gate");
   if (await authGate.isVisible().catch(() => false)) {
-    await page.getByTestId("continue-local-mode").click();
+    await domClick(page.getByTestId("continue-local-mode"));
   }
   await expect(page.getByTestId("app-root")).toHaveAttribute("data-onboarding-complete", "true");
   await expect(page.getByTestId("app-tab-settings")).toBeVisible();

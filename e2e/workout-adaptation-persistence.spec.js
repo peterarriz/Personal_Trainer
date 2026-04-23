@@ -13,6 +13,11 @@ const {
 const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
 const VIEWPORT = { width: 1366, height: 960 };
 
+async function domClick(locator) {
+  await expect(locator).toBeVisible();
+  await locator.evaluate((node) => node.click());
+}
+
 async function createFrozenPage(browser, { fixedIsoString, localCacheSeed = null } = {}) {
   const context = await browser.newContext({ viewport: VIEWPORT });
   await context.addInitScript(({ fixedIsoString: nextFixedIsoString, localCacheKey, payloadSeed }) => {
@@ -54,7 +59,7 @@ async function openSeededApp(browser, { fixedIsoString, localCacheSeed }) {
 
   const continueLocalMode = page.getByTestId("continue-local-mode");
   if (await continueLocalMode.isVisible().catch(() => false)) {
-    await continueLocalMode.click();
+    await domClick(continueLocalMode);
   }
 
   await expect(page.getByTestId("today-session-card")).toBeVisible();

@@ -9329,16 +9329,21 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  <div className="auth-eyebrow">{authEntryView.eyebrow}</div>
  <div className="auth-title">{authEntryView.title}</div>
  <div className="auth-subtitle">{authEntryView.subtitle}</div>
+ {authEntryView.statusBadges.length > 0 && (
  <div className="auth-status-row">
  {authEntryView.statusBadges.map((badge) => (
  <div key={badge} className="auth-status-badge">{badge}</div>
  ))}
  </div>
+ )}
+ {authEntryView.showExceptionalContext && (
  <SyncStateCallout
  model={syncSurfaceModels?.auth || null}
  dataTestId="auth-sync-status"
  style={{ background:"var(--auth-panel-soft)", borderColor:"var(--auth-border)" }}
  />
+ )}
+ {authEntryView.pathCards.length > 0 && (
  <div className="auth-path-grid">
  {authEntryView.pathCards.map((card) => (
  <article
@@ -9364,10 +9369,11 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  </article>
  ))}
  </div>
+ )}
  </section>
  <section className="auth-entry-form" data-testid="auth-entry-form">
  <div className="auth-form-head">
- <div className="auth-section-label">Account flow</div>
+ <div className="auth-section-label">Account</div>
  <div className="auth-form-title">{authEntryView.form.title}</div>
  <div className="auth-form-support">{authEntryView.form.description}</div>
  </div>

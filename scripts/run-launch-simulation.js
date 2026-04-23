@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
 
 const { chromium } = require("@playwright/test");
 
@@ -24,22 +25,30 @@ const MODE_CONFIG = Object.freeze({
     personaCount: 120,
     weeks: 52,
     shouldProbeDeployment: false,
+    shouldRunBrowserChunk: false,
+    browserPersonaCount: 0,
   },
   full: {
     personaCount: LAUNCH_SIMULATION_PERSONA_COUNT,
     weeks: LAUNCH_SIMULATION_WEEKS,
     shouldProbeDeployment: false,
+    shouldRunBrowserChunk: true,
+    browserPersonaCount: 40,
   },
   deployed: {
     personaCount: LAUNCH_SIMULATION_PERSONA_COUNT,
     weeks: LAUNCH_SIMULATION_WEEKS,
     shouldProbeDeployment: true,
+    shouldRunBrowserChunk: false,
+    browserPersonaCount: 0,
   },
   report: {
     personaCount: LAUNCH_SIMULATION_PERSONA_COUNT,
     weeks: LAUNCH_SIMULATION_WEEKS,
     shouldProbeDeployment: false,
     readExisting: true,
+    shouldRunBrowserChunk: false,
+    browserPersonaCount: 0,
   },
 });
 
@@ -79,6 +88,38 @@ const loadExistingJsonArtifact = (fileName = "") => {
   const filePath = path.join(ARTIFACT_ROOT, fileName);
   if (!fs.existsSync(filePath)) return null;
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
+};
+
+const loadExistingBrowserResultsArtifact = () => {
+  const payload = loadExistingJsonArtifact("browser-results.json");
+  if (!payload) return null;
+  const runs = Array.isArray(payload?.results) ? payload.results : [];
+  const targetPersonaCount = Number(payload?.chunkCount || payload?.targetPersonaCount || 0);
+  return {
+    mode: "browser_persona_chunk_local",
+    targetPersonaCount,
+    attemptedPersonaCount: Number(payload?.attemptedPersonaCount || runs.length || 0),
+    passedPersonaCount: Number(payload?.passedPersonaCount || runs.filter((entry) => entry.ok).length || 0),
+    runs: runs.map((entry) => ({
+      personaId: entry.personaId,
+      ok: Boolean(entry.ok),
+      accessibilityChecked: false,
+      title: entry.ok
+        ? `${entry.personaId} completed the initial product journey`
+        : `${entry.personaId} failed the initial product journey`,
+      categories: entry.ok ? [] : ["browser journey failure"],
+      severity: entry.ok ? "low" : "high",
+      rootCauseHypothesis: entry.error || (entry.ok ? "No browser failure observed in this persona slice." : "The initial intake or landing flow failed in a real browser."),
+      recommendedFix: entry.ok
+        ? "No immediate browser-flow fix required for this persona."
+        : "Fix the intake / local-mode / initial-surface path for this persona slice.",
+      expectedUserImpact: entry.ok
+        ? "This persona reached Today after the initial journey."
+        : "A real user with this profile could fail before reaching a usable day plan.",
+      screenshots: entry.screenshotPath ? [entry.screenshotPath] : [],
+      traces: [],
+    })),
+  };
 };
 
 const writeArtifacts = ({
@@ -222,6 +263,88 @@ const buildBrowserResultsFromReachability = (reachability = null, {
   };
 };
 
+const runBrowserChunk = ({
+  totalPersonaCount = LAUNCH_SIMULATION_PERSONA_COUNT,
+  browserPersonaCount = 0,
+  outputDir = ARTIFACT_ROOT,
+} = {}) => {
+  const targetPersonaCount = Math.max(0, Number(browserPersonaCount || 0));
+  if (!targetPersonaCount) return null;
+
+  const outputFile = path.join(outputDir, "browser-results.json");
+  if (fs.existsSync(outputFile)) {
+    fs.rmSync(outputFile, { force: true });
+  }
+  const run = spawnSync(
+    process.execPath,
+    [
+      path.join(process.cwd(), "scripts", "run-launch-browser-chunk.js"),
+      "--start", "0",
+      "--count", String(targetPersonaCount),
+      "--total", String(Math.max(targetPersonaCount, Number(totalPersonaCount || 0))),
+      "--output-dir", path.join(outputDir, "browser-chunks"),
+      "--output-file", outputFile,
+      "--resume", "0",
+      "--fail-on-error", "0",
+    ],
+    {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: "inherit",
+    }
+  );
+
+  if (!fs.existsSync(outputFile)) {
+    return {
+      mode: "browser_persona_chunk_local",
+      targetPersonaCount,
+      attemptedPersonaCount: 0,
+      passedPersonaCount: 0,
+      runs: [{
+        personaId: "browser_chunk_runner",
+        ok: false,
+        accessibilityChecked: false,
+        title: "Launch browser chunk did not produce results",
+        categories: ["flaky-test/instrumentation issue"],
+        severity: "high",
+        rootCauseHypothesis: run.error?.message || `Chunk runner exited with status ${run.status ?? "unknown"}.`,
+        recommendedFix: "Inspect the launch browser chunk runner and the local browser flow before trusting the launch gate.",
+        expectedUserImpact: "The launch simulation did not get a real browser-backed persona slice.",
+        screenshots: [],
+        traces: [],
+      }],
+    };
+  }
+
+  const payload = JSON.parse(fs.readFileSync(outputFile, "utf8"));
+  const runs = Array.isArray(payload?.results) ? payload.results : [];
+  return {
+    mode: "browser_persona_chunk_local",
+    targetPersonaCount,
+    attemptedPersonaCount: Number(payload?.attemptedPersonaCount || runs.length || 0),
+    passedPersonaCount: Number(payload?.passedPersonaCount || runs.filter((entry) => entry.ok).length || 0),
+    runs: runs.map((entry) => ({
+      personaId: entry.personaId,
+      ok: Boolean(entry.ok),
+      accessibilityChecked: false,
+      title: entry.ok
+        ? `${entry.personaId} completed the initial product journey`
+        : `${entry.personaId} failed the initial product journey`,
+      categories: entry.ok ? [] : ["browser journey failure"],
+      severity: entry.ok ? "low" : "high",
+      rootCauseHypothesis: entry.error || (entry.ok ? "No browser failure observed in this persona slice." : "The initial intake or landing flow failed in a real browser."),
+      recommendedFix: entry.ok
+        ? "No immediate browser-flow fix required for this persona."
+        : "Fix the intake / local-mode / initial-surface path for this persona slice.",
+      expectedUserImpact: entry.ok
+        ? "This persona reached Today after the initial journey."
+        : "A real user with this profile could fail before reaching a usable day plan.",
+      screenshots: entry.screenshotPath ? [entry.screenshotPath] : [],
+      traces: [],
+    })),
+  };
+};
+
 const main = async () => {
   const args = parseArgs();
   const modeConfig = MODE_CONFIG[args.mode] || MODE_CONFIG.full;
@@ -230,12 +353,23 @@ const main = async () => {
 
   if (modeConfig.readExisting) {
     const existing = loadExistingResults();
-    writeArtifacts({ simulation: existing });
+    const refreshed = refreshLaunchSimulationFromExisting({
+      existingResults: {
+        ...existing,
+        personas: loadExistingJsonArtifact("personas.json") || existing?.personas || [],
+        personaCoverage: loadExistingJsonArtifact("persona-coverage.json") || existing?.personaCoverage || {},
+      },
+      browserResults: loadExistingBrowserResultsArtifact(),
+      deployedReachability: loadExistingJsonArtifact("deployed-reachability.json") || existing?.deployedReachability || null,
+      mode: args.mode,
+    });
+    writeArtifacts({ simulation: refreshed });
     console.log(JSON.stringify({
       mode: args.mode,
       artifactRoot: ARTIFACT_ROOT,
       reusedExistingResults: true,
-      verdict: existing?.verdict?.verdict || null,
+      refreshedFromArtifacts: true,
+      verdict: refreshed?.verdict?.verdict || null,
     }, null, 2));
     return;
   }
@@ -261,6 +395,12 @@ const main = async () => {
     browserResults = buildBrowserResultsFromReachability(deployedReachability, {
       targetPersonaCount: personaCount,
     });
+  } else if (modeConfig.shouldRunBrowserChunk) {
+    browserResults = runBrowserChunk({
+      totalPersonaCount: personaCount,
+      browserPersonaCount: modeConfig.browserPersonaCount,
+      outputDir: ARTIFACT_ROOT,
+    });
   }
 
   const existingResults = modeConfig.shouldProbeDeployment ? loadExistingResults() : null;
@@ -279,6 +419,7 @@ const main = async () => {
         personaCount,
         weeks,
         browserResults,
+        browserTargetPersonaCount: modeConfig.shouldRunBrowserChunk ? modeConfig.browserPersonaCount : personaCount,
         deployedReachability,
         implementedFixIds: ["anonymous_access_before_account"],
         mode: args.mode,

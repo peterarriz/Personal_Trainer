@@ -256,3 +256,50 @@ test("synthetic athlete lab only flags support-tier dishonesty when the product 
   assert.ok(persona);
   assert.ok(!persona.failures.some((failure) => failure.clusterId === "support_tier_dishonesty"));
 });
+
+test("synthetic athlete lab seeds running and swimming anchors from persona baselines before the first clarify loop", () => {
+  const report = runSyntheticAthleteLab({
+    personas: [
+      {
+        id: "seeded_running_probe",
+        name: "Seeded running probe",
+        ageRange: "35-35",
+        trainingAgeYears: 4,
+        goalIntents: ["Run a 1:45 half marathon this season"],
+        supportTierExpectation: "tier_1",
+        enduranceContext: "consistent recreational runner",
+        scheduleReality: "4 runs per week",
+        baselineMetrics: {
+          bodyweight: 158,
+          pace: "8:20/mi",
+          longestRun: "10 mi",
+        },
+      },
+      {
+        id: "seeded_swim_probe",
+        name: "Seeded swim probe",
+        ageRange: "33-33",
+        trainingAgeYears: 3,
+        goalIntents: ["Swim a sub-30-minute mile by the end of summer"],
+        supportTierExpectation: "tier_2",
+        enduranceContext: "pool swimmer",
+        equipmentReality: "pool access",
+        scheduleReality: "3 swim sessions",
+        baselineMetrics: {
+          recentSwimAnchor: "1000 yd in 22:30",
+        },
+      },
+    ],
+    weeks: 8,
+    includeArchetypeMatrix: false,
+  });
+
+  const runningPersona = report.personaResults.find((entry) => entry.personaId === "seeded_running_probe");
+  const swimPersona = report.personaResults.find((entry) => entry.personaId === "seeded_swim_probe");
+
+  assert.ok(runningPersona);
+  assert.ok(swimPersona);
+  assert.ok(!runningPersona.failures.some((failure) => failure.clusterId === "baseline_timing_problems"));
+  assert.ok(!swimPersona.failures.some((failure) => failure.clusterId === "baseline_timing_problems"));
+  assert.ok(!swimPersona.failures.some((failure) => failure.clusterId === "support_tier_dishonesty"));
+});

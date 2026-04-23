@@ -149,9 +149,12 @@ export const buildSharedSessionSummaryModel = ({
   const display = surfaceModel?.display || {};
   const dayKind = resolveDayKind({ commandCenterModel, surfaceModel });
   const canonicalSessionType = sanitizeText(display?.sessionType || "", 120);
-  const title = dayKind === "hybrid"
-    ? "Run + strength"
-    : cleanSessionLabel(display?.sessionLabel || canonicalSessionType || "Today", "Today");
+  const title = cleanSessionLabel(
+    display?.sessionLabel
+    || canonicalSessionType
+    || (dayKind === "hybrid" ? "Run + strength" : "Today"),
+    "Today"
+  );
   const durationLabel = sanitizeText(display?.expectedDuration || "", 60);
   const statusLabel = sanitizeText(commandCenterModel?.statusLabel || display?.sessionType || "", 80);
   const structureLabel = sanitizeText(display?.structure || currentWeekFocus || "", 120);

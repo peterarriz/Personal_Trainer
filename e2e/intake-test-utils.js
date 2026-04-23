@@ -368,7 +368,7 @@ async function enterLocalIntakeIfNeeded(page) {
   const authGate = page.getByTestId("auth-gate");
   if (await authGate.count()) {
     await expect(authGate).toBeVisible();
-    await page.getByTestId("continue-local-mode").click();
+    await domClick(page.getByTestId("continue-local-mode"));
     await expect.poll(async () => {
       const intakeVisible = await page.getByTestId("intake-root").isVisible().catch(() => false);
       return intakeVisible ? "intake" : "";
@@ -377,6 +377,33 @@ async function enterLocalIntakeIfNeeded(page) {
   await expect(page.getByTestId("profile-setup-gate")).toHaveCount(0);
   await expect(page.getByTestId("intake-root")).toBeVisible();
   await waitForIntakeSurface();
+}
+
+async function domClick(locator) {
+  await expect(locator).toBeVisible();
+  await locator.evaluate((node) => node.click());
+}
+
+async function domFill(locator, value) {
+  await expect(locator).toBeVisible();
+  await locator.evaluate((node, nextValue) => {
+    if (!node) return;
+    node.focus?.();
+    const nextStringValue = String(nextValue ?? "");
+    const prototype = node.tagName === "TEXTAREA"
+      ? window.HTMLTextAreaElement?.prototype
+      : node.tagName === "SELECT"
+      ? window.HTMLSelectElement?.prototype
+      : window.HTMLInputElement?.prototype;
+    const descriptor = prototype ? Object.getOwnPropertyDescriptor(prototype, "value") : null;
+    if (descriptor?.set) {
+      descriptor.set.call(node, nextStringValue);
+    } else {
+      node.value = nextStringValue;
+    }
+    node.dispatchEvent(new InputEvent("input", { bubbles: true, data: nextStringValue, inputType: "insertText" }));
+    node.dispatchEvent(new Event("change", { bubbles: true }));
+  }, value);
 }
 
 async function gotoIntakeInLocalMode(page, handlers = {}, {
@@ -454,59 +481,59 @@ async function completeIntroQuestionnaire(page, {
   if (String(goalText || "").trim()) {
     if (await page.getByTestId("intake-goals-primary-input").count() === 0) {
       if (await page.getByTestId("intake-goal-type-custom").count() > 0) {
-        await page.getByTestId("intake-goal-type-custom").click();
+        await domClick(page.getByTestId("intake-goal-type-custom"));
       } else {
-        await page.getByTestId("intake-goals-toggle-custom").click();
+        await domClick(page.getByTestId("intake-goals-toggle-custom"));
       }
       await expect(page.getByTestId("intake-goals-primary-input")).toBeVisible();
     }
-    await page.getByTestId("intake-goals-primary-input").fill(goalText);
-    await page.getByTestId("intake-goals-add").click();
+    await domFill(page.getByTestId("intake-goals-primary-input"), goalText);
+    await domClick(page.getByTestId("intake-goals-add"));
     await commitPendingGoalSelection(page);
   } else {
-    await page.getByTestId("intake-footer-foundation").click();
+    await domClick(page.getByTestId("intake-footer-foundation"));
     return;
   }
 
   for (const goal of additionalGoals) {
     if (await page.getByTestId("intake-goals-primary-input").count() === 0) {
-      await page.getByTestId("intake-goals-toggle-custom").click();
+      await domClick(page.getByTestId("intake-goals-toggle-custom"));
       await expect(page.getByTestId("intake-goals-primary-input")).toBeVisible();
     }
     await page.getByTestId("intake-goals-primary-input").fill(String(goal));
     const addGoalButton = page.getByTestId("intake-goals-add");
     await expect(addGoalButton).toBeEnabled();
-    await addGoalButton.click();
+    await domClick(addGoalButton);
     await commitPendingGoalSelection(page);
     await expect(page.getByTestId("intake-goals-primary-input")).toHaveValue("");
   }
 
-  await page.getByTestId(`intake-goals-option-experience-level-${toTestIdFragment(experienceLevelValue)}`).click();
-  await page.getByTestId(`intake-goals-option-training-days-${toTestIdFragment(trainingDays)}`).click();
-  await page.getByTestId(`intake-goals-option-session-length-${toTestIdFragment(sessionLengthValue)}`).click();
-  await page.getByTestId(`intake-goals-option-training-location-${toTestIdFragment(trainingLocation)}`).click();
+  await domClick(page.getByTestId(`intake-goals-option-experience-level-${toTestIdFragment(experienceLevelValue)}`));
+  await domClick(page.getByTestId(`intake-goals-option-training-days-${toTestIdFragment(trainingDays)}`));
+  await domClick(page.getByTestId(`intake-goals-option-session-length-${toTestIdFragment(sessionLengthValue)}`));
+  await domClick(page.getByTestId(`intake-goals-option-training-location-${toTestIdFragment(trainingLocation)}`));
 
   if (trainingLocation === "Home" || trainingLocation === "Both") {
     for (const option of homeEquipment) {
-      await page.getByTestId(`intake-goals-option-home-equipment-${toTestIdFragment(option)}`).click();
+      await domClick(page.getByTestId(`intake-goals-option-home-equipment-${toTestIdFragment(option)}`));
     }
     if (homeEquipment.includes("Other") && homeEquipmentOther) {
-      await page.getByTestId("intake-goals-input-home-equipment-other").fill(homeEquipmentOther);
+      await domFill(page.getByTestId("intake-goals-input-home-equipment-other"), homeEquipmentOther);
     }
   }
 
   if (String(injuryText || "").trim()) {
-    await page.getByTestId("intake-goals-input-injury-text").fill(injuryText);
+    await domFill(page.getByTestId("intake-goals-input-injury-text"), injuryText);
   }
   if (injuryImpact) {
-    await page.getByTestId(`intake-goals-option-injury-impact-${toTestIdFragment(injuryImpact)}`).click();
+    await domClick(page.getByTestId(`intake-goals-option-injury-impact-${toTestIdFragment(injuryImpact)}`));
   }
 
   const coachingChip = page.getByTestId(`intake-goals-option-coaching-style-${toTestIdFragment(coachingStyle)}`);
   if (await coachingChip.count()) {
-    await coachingChip.click();
+    await domClick(coachingChip);
   }
-  await page.getByTestId("intake-footer-continue").click();
+  await domClick(page.getByTestId("intake-footer-continue"));
   await expect.poll(async () => await getCurrentPhase(page), { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
   if (stopAtInterpretation) return;
   const phase = await getCurrentPhase(page);
@@ -542,33 +569,33 @@ async function fillPlanningRealityInputs(page, {
   )
     ? ["Bodyweight only"]
     : normalizedHomeEquipment;
-  await page.getByTestId(`intake-goals-option-experience-level-${toTestIdFragment(experienceLevelValue)}`).click();
-  await page.getByTestId(`intake-goals-option-training-days-${toTestIdFragment(trainingDays)}`).click();
-  await page.getByTestId(`intake-goals-option-session-length-${toTestIdFragment(sessionLengthValue)}`).click();
-  await page.getByTestId(`intake-goals-option-training-location-${toTestIdFragment(trainingLocation)}`).click();
+  await domClick(page.getByTestId(`intake-goals-option-experience-level-${toTestIdFragment(experienceLevelValue)}`));
+  await domClick(page.getByTestId(`intake-goals-option-training-days-${toTestIdFragment(trainingDays)}`));
+  await domClick(page.getByTestId(`intake-goals-option-session-length-${toTestIdFragment(sessionLengthValue)}`));
+  await domClick(page.getByTestId(`intake-goals-option-training-location-${toTestIdFragment(trainingLocation)}`));
 
   if (trainingLocation === "Home" || trainingLocation === "Both") {
     for (const option of resolvedHomeEquipment) {
-      await page.getByTestId(`intake-goals-option-home-equipment-${toTestIdFragment(option)}`).click();
+      await domClick(page.getByTestId(`intake-goals-option-home-equipment-${toTestIdFragment(option)}`));
     }
     if (resolvedHomeEquipment.includes("Other") && homeEquipmentOther) {
-      await page.getByTestId("intake-goals-input-home-equipment-other").fill(homeEquipmentOther);
+      await domFill(page.getByTestId("intake-goals-input-home-equipment-other"), homeEquipmentOther);
     }
   }
 
   for (const day of Array.isArray(availableTrainingDays) ? availableTrainingDays : [availableTrainingDays].filter(Boolean)) {
-    await page.getByTestId(`intake-goals-option-available-days-${toTestIdFragment(day)}`).click();
+    await domClick(page.getByTestId(`intake-goals-option-available-days-${toTestIdFragment(day)}`));
   }
 
   if (String(injuryText || "").trim()) {
-    await page.getByTestId("intake-goals-input-injury-text").fill(injuryText);
+    await domFill(page.getByTestId("intake-goals-input-injury-text"), injuryText);
   }
   if (injuryImpact) {
-    await page.getByTestId(`intake-goals-option-injury-impact-${toTestIdFragment(injuryImpact)}`).click();
+    await domClick(page.getByTestId(`intake-goals-option-injury-impact-${toTestIdFragment(injuryImpact)}`));
   }
   if (coachingStyle) {
     const coachingChip = page.getByTestId(`intake-goals-option-coaching-style-${toTestIdFragment(coachingStyle)}`);
-    if (await coachingChip.count()) await coachingChip.click();
+    if (await coachingChip.count()) await domClick(coachingChip);
   }
 }
 
@@ -589,13 +616,13 @@ async function fillStarterMetricInputs(page, quickMetrics = {}) {
     const choiceTarget = page.getByTestId(`intake-goal-metric-${fieldKey}-${toTestIdFragment(choiceValue)}`);
     const visibleChoiceTarget = await pickVisibleTarget(choiceTarget);
     if (visibleChoiceTarget) {
-      await visibleChoiceTarget.click();
+      await domClick(visibleChoiceTarget);
       continue;
     }
     const inputTarget = page.getByTestId(`intake-goal-metric-${toTestIdFragment(fieldKey)}`);
     const visibleInputTarget = await pickVisibleTarget(inputTarget);
     if (visibleInputTarget) {
-      await visibleInputTarget.fill(String(choiceValue));
+      await domFill(visibleInputTarget, String(choiceValue));
     }
   }
 }
@@ -604,7 +631,7 @@ async function commitPendingGoalSelection(page) {
   const commitButton = page.getByTestId("intake-goal-selection-commit");
   await expect(commitButton).toBeVisible();
   await expect(commitButton).toBeEnabled();
-  await commitButton.click();
+  await domClick(commitButton);
 }
 
 const GOAL_TYPE_ALIASES = Object.freeze({
@@ -771,6 +798,169 @@ function normalizeLegacyQuickMetrics(templateId, quickMetrics = {}) {
   return next;
 }
 
+function inferStructuredIntakeAnchorResponses({
+  goalType = "",
+  templateId = "",
+  quickMetrics = {},
+  experienceLevel = "Intermediate",
+  trainingDays = "3",
+  sessionLength = "45 min",
+  trainingLocation = "Gym",
+  coachingStyle = "",
+} = {}) {
+  const normalizedGoalType = GOAL_TYPE_ALIASES[goalType] || goalType;
+  const templateAlias = TEMPLATE_ID_ALIASES[templateId] || null;
+  const normalizedTemplateId = templateAlias?.templateId || templateId;
+  const normalizedQuickMetrics = normalizeLegacyQuickMetrics(normalizedTemplateId, {
+    ...(templateAlias?.metricDefaults || {}),
+    ...(quickMetrics || {}),
+  });
+  const normalizedExperienceLevel = normalizeExperienceLevelValue(experienceLevel);
+  const normalizedTrainingDays = String(trainingDays || "").trim() || "3";
+  const normalizedSessionLength = normalizeSessionLengthValue(sessionLength);
+  const normalizedTrainingLocation = String(trainingLocation || "").trim();
+  const normalizedCoachingStyle = String(coachingStyle || "").trim().toLowerCase();
+
+  const resolveRunPace = () => {
+    if (normalizedQuickMetrics.recent_pace_baseline) {
+      return String(normalizedQuickMetrics.recent_pace_baseline);
+    }
+    if (normalizedQuickMetrics.event_distance === "marathon") {
+      return normalizedExperienceLevel === "beginner" ? "10:15/mi" : normalizedExperienceLevel === "advanced" ? "7:45/mi" : "8:40/mi";
+    }
+    if (normalizedQuickMetrics.event_distance === "half_marathon") {
+      return normalizedExperienceLevel === "beginner" ? "9:45/mi" : normalizedExperienceLevel === "advanced" ? "7:15/mi" : "8:25/mi";
+    }
+    if (normalizedQuickMetrics.event_distance === "10k") {
+      return normalizedExperienceLevel === "beginner" ? "9:20/mi" : normalizedExperienceLevel === "advanced" ? "6:55/mi" : "8:05/mi";
+    }
+    return normalizedExperienceLevel === "beginner" ? "9:00/mi" : normalizedExperienceLevel === "advanced" ? "6:35/mi" : "7:50/mi";
+  };
+
+  const resolveBodyweight = () => {
+    if (normalizedQuickMetrics.current_bodyweight) return Number(normalizedQuickMetrics.current_bodyweight);
+    if (normalizedTemplateId === "lose_body_fat") return 228;
+    if (normalizedTemplateId === "get_leaner") return 193;
+    if (normalizedTemplateId === "recomp") return 198;
+    if (normalizedGoalType === "physique") return 193;
+    return normalizedExperienceLevel === "beginner" ? 205 : 185;
+  };
+
+  const resolveWaist = () => {
+    if (normalizedQuickMetrics.current_waist) return Number(normalizedQuickMetrics.current_waist);
+    if (normalizedTemplateId === "lose_body_fat") return 42;
+    if (normalizedTemplateId === "get_leaner") return 36;
+    if (normalizedTemplateId === "recomp") return 37;
+    return normalizedExperienceLevel === "beginner" ? 39 : 34;
+  };
+
+  const resolveWeightChange = () => {
+    if (normalizedQuickMetrics.target_weight_change) {
+      const parsed = Number(String(normalizedQuickMetrics.target_weight_change).replace(/[^-\d.]/g, ""));
+      if (Number.isFinite(parsed) && parsed !== 0) return Math.abs(parsed);
+    }
+    if (normalizedTemplateId === "lose_body_fat") return 28;
+    if (normalizedTemplateId === "get_leaner") return 12;
+    if (normalizedTemplateId === "recomp") return 8;
+    return 10;
+  };
+
+  const resolveLongRun = () => {
+    const value = normalizedQuickMetrics.longest_recent_run_value || "";
+    const unit = normalizedQuickMetrics.longest_recent_run_unit || "";
+    if (value && unit) return `${value} ${unit}`;
+    if (normalizedTemplateId === "return_to_running") return "20 minutes";
+    if (normalizedQuickMetrics.event_distance === "marathon") return "12 miles";
+    if (normalizedQuickMetrics.event_distance === "half_marathon") return "8 miles";
+    if (normalizedQuickMetrics.event_distance === "10k") return "5 miles";
+    return normalizedExperienceLevel === "beginner" ? "3 miles" : "4 miles";
+  };
+
+  const resolveRunFrequency = () => {
+    if (normalizedQuickMetrics.current_run_frequency) return String(normalizedQuickMetrics.current_run_frequency);
+    if (normalizedTemplateId === "return_to_running") return "2";
+    return /^2$|^3$|^4$|^5$|^6$/.test(normalizedTrainingDays)
+      ? normalizedTrainingDays
+      : normalizedExperienceLevel === "beginner"
+      ? "2"
+      : "3";
+  };
+
+  const resolveStrengthBaseline = () => {
+    const weight = normalizedQuickMetrics.current_strength_baseline_weight
+      || (normalizedExperienceLevel === "beginner" ? "135" : normalizedExperienceLevel === "advanced" ? "225" : "185");
+    const reps = normalizedQuickMetrics.current_strength_baseline_reps || (normalizedTemplateId === "improve_big_lifts" ? "5" : "5");
+    return {
+      type: "strength_top_set",
+      weight: Number(weight),
+      reps: Number(reps),
+    };
+  };
+
+  const resolveSwimAnchor = () => {
+    const distanceValue = normalizedQuickMetrics.recent_swim_distance_value || "1000";
+    const distanceUnit = normalizedQuickMetrics.recent_swim_distance_unit || "yd";
+    const timeMinutes = normalizedQuickMetrics.recent_swim_time_minutes || "22";
+    const timeSeconds = normalizedQuickMetrics.recent_swim_time_seconds || "30";
+    return `${distanceValue} ${distanceUnit} in ${timeMinutes}:${String(timeSeconds).padStart(2, "0")}`;
+  };
+
+  const resolveSwimAccessReality = () => {
+    if (normalizedQuickMetrics.swim_access_reality) return String(normalizedQuickMetrics.swim_access_reality);
+    if (normalizedQuickMetrics.goal_focus === "open_water") return "open_water";
+    if (normalizedTrainingLocation === "Both") return "pool";
+    return "pool";
+  };
+
+  const resolveStartingCapacity = () => {
+    if (normalizedQuickMetrics.starting_capacity_anchor) {
+      return String(normalizedQuickMetrics.starting_capacity_anchor);
+    }
+    if (normalizedExperienceLevel === "beginner" || normalizedSessionLength === "20" || normalizedCoachingStyle.includes("consistent")) {
+      return "10_easy_minutes";
+    }
+    return "20_to_30_minutes";
+  };
+
+  const resolveTimeline = () => {
+    if (normalizedQuickMetrics.target_timeline) return String(normalizedQuickMetrics.target_timeline);
+    if (normalizedTemplateId === "improve_big_lifts") return "12 weeks";
+    if (normalizedTemplateId === "lose_body_fat" || normalizedTemplateId === "get_leaner" || normalizedTemplateId === "recomp") {
+      return "late summer";
+    }
+    return "October";
+  };
+
+  const responsesByFieldId = {
+    target_timeline: { type: "natural", value: resolveTimeline() },
+    current_run_frequency: { type: "natural", value: `${resolveRunFrequency()} runs/week` },
+    running_endurance_anchor_kind: {
+      type: "choice",
+      value: normalizedQuickMetrics.recent_pace_baseline && !normalizedQuickMetrics.longest_recent_run_value
+        ? "recent_pace_baseline"
+        : "longest_recent_run",
+    },
+    longest_recent_run: { type: "natural", value: resolveLongRun() },
+    recent_pace_baseline: { type: "natural", value: resolveRunPace() },
+    current_strength_baseline: resolveStrengthBaseline(),
+    target_weight_change: { type: "number", value: resolveWeightChange(), unit: "lb" },
+    appearance_proxy_anchor_kind: {
+      type: "choice",
+      value: normalizedQuickMetrics.appearance_proxy_anchor_kind
+        || (normalizedQuickMetrics.current_waist
+        ? "current_waist"
+        : "current_bodyweight"),
+    },
+    current_bodyweight: { type: "number", value: resolveBodyweight(), unit: "lb" },
+    current_waist: { type: "number", value: resolveWaist(), unit: "in" },
+    recent_swim_anchor: { type: "natural", value: resolveSwimAnchor() },
+    swim_access_reality: { type: "choice", value: resolveSwimAccessReality() },
+    starting_capacity_anchor: { type: "choice", value: resolveStartingCapacity() },
+  };
+
+  return responsesByFieldId;
+}
+
 async function completeGoalLibraryIntakeStep(page, {
   goalType = "running",
   templateId = "",
@@ -786,15 +976,17 @@ async function completeGoalLibraryIntakeStep(page, {
     ...(quickMetrics || {}),
   });
   await expect(page.getByTestId("intake-goals-step")).toBeVisible();
-  await page.getByTestId(`intake-goal-type-${normalizedGoalType}`).click();
+  await domClick(page.getByTestId(`intake-goal-type-${normalizedGoalType}`));
   if (normalizedTemplateId) {
-    await page.getByTestId(`intake-featured-goal-${normalizedTemplateId}`).click();
+    await domClick(page.getByTestId(`intake-featured-goal-${normalizedTemplateId}`));
     await fillStarterMetricInputs(page, normalizedQuickMetrics);
     await commitPendingGoalSelection(page);
   }
   await fillStarterMetricInputs(page, normalizedQuickMetrics);
   await fillPlanningRealityInputs(page, planningOverrides);
-  await page.getByTestId("intake-footer-continue").click();
+  const continueButton = page.getByTestId("intake-footer-continue");
+  await expect(continueButton).toBeEnabled();
+  await domClick(continueButton);
   let phaseState = "";
   await expect.poll(async () => {
     const phase = await getCurrentPhase(page);
@@ -846,17 +1038,50 @@ async function completeStructuredIntakeOnOneScreen(page, {
     ...(templateAlias?.metricDefaults || {}),
     ...(quickMetrics || {}),
   });
+  const anchorResponses = inferStructuredIntakeAnchorResponses({
+    goalType: normalizedGoalType,
+    templateId: normalizedTemplateId,
+    quickMetrics: normalizedQuickMetrics,
+    ...planningOverrides,
+  });
 
   await expect(page.getByTestId("intake-goals-step")).toBeVisible();
-  await page.getByTestId(`intake-goal-type-${normalizedGoalType}`).click();
+  await domClick(page.getByTestId(`intake-goal-type-${normalizedGoalType}`));
   if (normalizedTemplateId) {
-    await page.getByTestId(`intake-featured-goal-${normalizedTemplateId}`).click();
+    await domClick(page.getByTestId(`intake-featured-goal-${normalizedTemplateId}`));
     await fillStarterMetricInputs(page, normalizedQuickMetrics);
     await commitPendingGoalSelection(page);
   }
   await fillStarterMetricInputs(page, normalizedQuickMetrics);
   await fillPlanningRealityInputs(page, planningOverrides);
-  await page.getByTestId("intake-footer-continue").click();
+  const continueButton = page.getByTestId("intake-footer-continue");
+  await expect(continueButton).toBeEnabled();
+  await domClick(continueButton);
+  await expect.poll(async () => {
+    const currentPhase = await getCurrentPhase(page);
+    if (["clarify", "confirm", "building"].includes(String(currentPhase || ""))) return currentPhase;
+    const onboardingComplete = await page.getByTestId("app-root").getAttribute("data-onboarding-complete").catch(() => "");
+    const todayVisible = await page.getByTestId("today-session-card").isVisible().catch(() => false);
+    return onboardingComplete === "true" || todayVisible ? "completed" : currentPhase || "pending";
+  }, {
+    timeout: 20_000,
+  }).toMatch(/clarify|confirm|building|completed/);
+  const resolvedPhase = await getCurrentPhase(page);
+  if (resolvedPhase === "clarify") {
+    await completeAnchors(page, anchorResponses, { maxSteps: 12 });
+  }
+  const reviewVisible = await page.getByTestId("intake-confirm-step").isVisible().catch(() => false);
+  const buildingVisible = await page.getByTestId("intake-building").isVisible().catch(() => false);
+  if (!reviewVisible && !buildingVisible) {
+    await waitForReview(page);
+  } else if (reviewVisible) {
+    await waitForReview(page);
+  }
+  const confirmButtonVisible = await page.getByTestId("intake-confirm-build").isVisible().catch(() => false);
+  const confirmationStatus = confirmButtonVisible ? await getConfirmationStatus(page) : "";
+  if (confirmButtonVisible && ["proceed", "warn"].includes(String(confirmationStatus || ""))) {
+    await confirmIntakeBuild(page);
+  }
   await waitForPostOnboarding(page);
 }
 
@@ -931,58 +1156,58 @@ async function fillAnchorResponse(page, fieldId, response = {}) {
   const fieldFragment = toTestIdFragment(fieldId);
 
   if (response.type === "choice") {
-    await page.getByTestId(`intake-anchor-choice-${fieldFragment}-${toTestIdFragment(response.value)}`).click();
+    await domClick(page.getByTestId(`intake-anchor-choice-${fieldFragment}-${toTestIdFragment(response.value)}`));
   } else if (response.type === "natural") {
     const naturalToggle = page.getByTestId("intake-anchor-toggle-natural");
     const naturalInput = page.getByTestId("intake-anchor-natural-input");
     if (await naturalToggle.isVisible({ timeout: 1500 }).catch(() => false)) {
-      await naturalToggle.click();
+      await domClick(naturalToggle);
       await expect(naturalInput).toBeVisible();
-      await naturalInput.fill(response.value);
+      await domFill(naturalInput, response.value);
     } else {
       const structuredInput = page.getByTestId(`intake-anchor-input-${fieldFragment}`);
       await expect(structuredInput).toBeVisible();
       const nativeInputType = await structuredInput.evaluate((node) => (node && node.type) || "");
       if (nativeInputType === "month" || nativeInputType === "date") {
-        await structuredInput.fill(normalizeNativeTimelineInput(response.value, nativeInputType));
+        await domFill(structuredInput, normalizeNativeTimelineInput(response.value, nativeInputType));
       } else if (nativeInputType === "number") {
-        await structuredInput.fill(normalizeNumericInput(response.value));
+        await domFill(structuredInput, normalizeNumericInput(response.value));
       } else {
-        await structuredInput.fill(String(response.value));
+        await domFill(structuredInput, String(response.value));
       }
     }
   } else if (response.type === "number") {
     const structuredToggle = page.getByTestId("intake-anchor-toggle-structured");
     if (await structuredToggle.isVisible({ timeout: 1500 }).catch(() => false)) {
-      await structuredToggle.click();
+      await domClick(structuredToggle);
     }
-    await page.getByTestId(`intake-anchor-input-${fieldFragment}`).fill(String(response.value));
+    await domFill(page.getByTestId(`intake-anchor-input-${fieldFragment}`), String(response.value));
     if (response.unit) {
       const unitButton = page.getByTestId(`intake-anchor-unit-${fieldFragment}-${toTestIdFragment(response.unit)}`);
       if (await unitButton.count()) {
-        await unitButton.click();
+        await domClick(unitButton);
       }
     }
   } else if (response.type === "text") {
-    await page.getByTestId(`intake-anchor-input-${fieldFragment}`).fill(String(response.value));
+    await domFill(page.getByTestId(`intake-anchor-input-${fieldFragment}`), String(response.value));
   } else if (response.type === "date_or_month") {
     const structuredToggle = page.getByTestId("intake-anchor-toggle-structured");
     if (await structuredToggle.isVisible({ timeout: 1500 }).catch(() => false)) {
-      await structuredToggle.click();
+      await domClick(structuredToggle);
     }
     const input = page.getByTestId(`intake-anchor-input-${fieldFragment}`);
-    await input.fill(String(response.value));
+    await domFill(input, String(response.value));
   } else if (response.type === "strength_top_set") {
     const structuredToggle = page.getByTestId("intake-anchor-toggle-structured");
     if (await structuredToggle.isVisible({ timeout: 1500 }).catch(() => false)) {
-      await structuredToggle.click();
+      await domClick(structuredToggle);
     }
     if (response.mode === "estimated_max") {
-      await page.getByTestId(`intake-anchor-mode-${fieldFragment}-estimated-max`).click();
+      await domClick(page.getByTestId(`intake-anchor-mode-${fieldFragment}-estimated-max`));
     }
-    await page.getByTestId(`intake-anchor-input-${fieldFragment}-weight`).fill(String(response.weight));
+    await domFill(page.getByTestId(`intake-anchor-input-${fieldFragment}-weight`), String(response.weight));
     if (response.mode !== "estimated_max") {
-      await page.getByTestId(`intake-anchor-input-${fieldFragment}-reps`).fill(String(response.reps));
+      await domFill(page.getByTestId(`intake-anchor-input-${fieldFragment}-reps`), String(response.reps));
     }
   } else {
     throw new Error(`Unsupported anchor response type for ${fieldId}: ${response.type || "unknown"}`);
@@ -1045,7 +1270,7 @@ async function completeAnchors(page, responsesByFieldId = {}, options = {}) {
       if (!visited.includes(fieldId)) visited.push(fieldId);
       await fillAnchorResponse(page, fieldId, typeof response === "function" ? await response(page, fieldId) : response);
     }
-    await page.getByTestId("intake-footer-continue").click();
+    await domClick(page.getByTestId("intake-footer-continue"));
     await expect.poll(async () => JSON.stringify({
       phase: await getCurrentPhase(page),
       fieldIds: await getVisibleAnchorFieldIds(page),
@@ -1125,15 +1350,15 @@ async function confirmIntakeBuild(page, { rapidRepeat = false } = {}) {
     await confirmButton.dblclick();
     return;
   }
-  await confirmButton.click();
+  await domClick(confirmButton);
 }
 
 async function getStorageOps(page) {
-  return page.evaluate(() => Array.isArray(window.__E2E_STORAGE_OPS) ? window.__E2E_STORAGE_OPS : []);
+  return page.evaluate(() => Array.isArray(window.__E2E_STORAGE_OPS) ? window.__E2E_STORAGE_OPS : []).catch(() => []);
 }
 
 async function getAppEvents(page) {
-  return page.evaluate(() => Array.isArray(window.__E2E_APP_EVENTS) ? window.__E2E_APP_EVENTS : []);
+  return page.evaluate(() => Array.isArray(window.__E2E_APP_EVENTS) ? window.__E2E_APP_EVENTS : []).catch(() => []);
 }
 
 async function readLocalCache(page) {
@@ -1144,7 +1369,7 @@ async function readLocalCache(page) {
     } catch {
       return null;
     }
-  }, LOCAL_CACHE_KEY);
+  }, LOCAL_CACHE_KEY).catch(() => null);
 }
 
 async function readIntakeSession(page) {
@@ -1155,7 +1380,7 @@ async function readIntakeSession(page) {
     } catch {
       return null;
     }
-  }, INTAKE_SESSION_STORAGE_KEY);
+  }, INTAKE_SESSION_STORAGE_KEY).catch(() => null);
 }
 
 module.exports = {

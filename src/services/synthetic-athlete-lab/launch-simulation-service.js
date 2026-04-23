@@ -795,7 +795,8 @@ export const refreshLaunchSimulationFromExisting = ({
     && cluster?.source !== "unverified_hypothesis"
   ));
   const browserSummary = buildBrowserSummary(browserResults, {
-    targetPersonaCount: existingResults?.browserSummary?.targetPersonaCount
+    targetPersonaCount: browserResults?.targetPersonaCount
+      || existingResults?.browserSummary?.targetPersonaCount
       || existingResults?.deterministicReport?.summary?.personaCount
       || LAUNCH_SIMULATION_PERSONA_COUNT,
   });
@@ -846,6 +847,7 @@ export const runLaunchSimulation = ({
   personaCount = LAUNCH_SIMULATION_PERSONA_COUNT,
   weeks = LAUNCH_SIMULATION_WEEKS,
   browserResults = null,
+  browserTargetPersonaCount = 0,
   deployedReachability = null,
   implementedFixIds = [],
   mode = "full",
@@ -862,7 +864,7 @@ export const runLaunchSimulation = ({
     includeArchetypeMatrix: true,
   });
   const browserSummary = buildBrowserSummary(browserResults, {
-    targetPersonaCount: personaCount,
+    targetPersonaCount: browserTargetPersonaCount || browserResults?.targetPersonaCount || personaCount,
   });
   const metrics = buildLaunchMetrics({
     personas,

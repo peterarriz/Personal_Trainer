@@ -1,4 +1,5 @@
 import { DOMAIN_ADAPTER_IDS } from "./goal-capability-resolution-service.js";
+import { BASELINE_METRIC_KEYS } from "./intake-baseline-service.js";
 
 const sanitizeText = (value = "", maxLength = 160) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 
@@ -6,6 +7,12 @@ export const SUPPORT_TIER_LEVELS = Object.freeze({
   tier1: "tier_1",
   tier2: "tier_2",
   tier3: "tier_3",
+});
+
+const TIER_RANK = Object.freeze({
+  [SUPPORT_TIER_LEVELS.tier1]: 3,
+  [SUPPORT_TIER_LEVELS.tier2]: 2,
+  [SUPPORT_TIER_LEVELS.tier3]: 1,
 });
 
 export const SUPPORT_TIER_META = Object.freeze({
@@ -64,14 +71,143 @@ const collectGoalSignals = (goals = []) => {
   };
 };
 
+const pickLatestRow = (rows = []) => (
+  [...(Array.isArray(rows) ? rows : [])]
+    .filter(Boolean)
+    .sort((left, right) => String(right?.date || "").localeCompare(String(left?.date || "")))[0] || null
+);
+
+const collectBaselineSignals = ({
+  baselineSignals = {},
+  manualProgressInputs = null,
+} = {}) => {
+  const manual = manualProgressInputs || {};
+  const latestBodyweight = pickLatestRow(manual?.measurements?.[BASELINE_METRIC_KEYS.bodyweightBaseline] || []);
+  const latestWaist = pickLatestRow(manual?.measurements?.waist_circumference || []);
+  const latestLift = pickLatestRow(manual?.benchmarks?.lift_results || []);
+  const latestRun = pickLatestRow(manual?.benchmarks?.run_results || []);
+  const latestSwim = pickLatestRow(manual?.metrics?.[BASELINE_METRIC_KEYS.swimBenchmark] || []);
+  const latestSwimReality = pickLatestRow(manual?.metrics?.[BASELINE_METRIC_KEYS.swimAccessReality] || []);
+  const latestStartingCapacity = pickLatestRow(manual?.metrics?.[BASELINE_METRIC_KEYS.startingCapacity] || []);
+  return {
+    currentBodyweight: Boolean(Number.isFinite(Number(baselineSignals?.currentBodyweight)) ? baselineSignals.currentBodyweight : Number.isFinite(Number(latestBodyweight?.value))),
+    currentWaist: Boolean(Number.isFinite(Number(baselineSignals?.currentWaist)) ? baselineSignals.currentWaist : Number.isFinite(Number(latestWaist?.value))),
+    currentStrengthBaseline: Boolean(baselineSignals?.currentStrengthBaseline || Number.isFinite(Number(latestLift?.weight))),
+    currentRunFrequency: Boolean(baselineSignals?.currentRunFrequency),
+    longestRecentRun: Boolean(baselineSignals?.longestRecentRun || Number.isFinite(Number(latestRun?.distanceMiles)) || sanitizeText(latestRun?.durationMinutes || "", 40)),
+    recentPaceBaseline: Boolean(baselineSignals?.recentPaceBaseline || sanitizeText(latestRun?.paceText || "", 60)),
+    recentSwimAnchor: Boolean(baselineSignals?.recentSwimAnchor || Number.isFinite(Number(latestSwim?.distance)) || sanitizeText(latestSwim?.duration || "", 40)),
+    swimAccessReality: Boolean(baselineSignals?.swimAccessReality || sanitizeText(latestSwimReality?.value || "", 40)),
+    startingCapacity: Boolean(baselineSignals?.startingCapacity || sanitizeText(latestStartingCapacity?.value || "", 40)),
+    targetTimeline: Boolean(baselineSignals?.targetTimeline),
+    appearanceProxyPlan: sanitizeText(baselineSignals?.appearanceProxyPlan || "", 80).toLowerCase(),
+  };
+};
+
+const hasSignalContext = ({
+  baselineSignals = {},
+  manualProgressInputs = null,
+} = {}) => {
+  const signals = collectBaselineSignals({ baselineSignals, manualProgressInputs });
+  const explicit = Object.keys(baselineSignals || {}).length > 0;
+  return explicit || Object.values(signals).some((value) => {
+    if (typeof value === "string") return Boolean(sanitizeText(value, 80));
+    return Boolean(value);
+  });
+};
+
+const capTier = (currentTier = SUPPORT_TIER_LEVELS.tier3, ceilingTier = SUPPORT_TIER_LEVELS.tier3) => (
+  TIER_RANK[currentTier] > TIER_RANK[ceilingTier] ? ceilingTier : currentTier
+);
+
+const determineSupportTierCeiling = ({
+  adapterId = "",
+  signals = {},
+  goalSignals = {},
+} = {}) => {
+  const activeGoals = goalSignals.activeGoals || [];
+  const hasExactStrengthGoal = activeGoals.some((goal) => (
+    String(goal?.category || "").toLowerCase() === "strength"
+    && (
+      goal?.resolvedGoal?.primaryMetric?.targetValue
+      || /\b(bench|squat|deadlift|press|overhead press|dunk|jump)\b/i.test(goal?.resolvedGoal?.summary || goal?.name || "")
+    )
+  ));
+  const hasRaceRunGoal = activeGoals.some((goal) => (
+    String(goal?.category || "").toLowerCase() === "running"
+    && /\b(5k|10k|half marathon|marathon|race)\b/i.test(goal?.resolvedGoal?.summary || goal?.name || "")
+  ));
+  const runningAnchorReady = Boolean(signals.currentRunFrequency && (signals.longestRecentRun || signals.recentPaceBaseline));
+  const swimAnchorReady = Boolean(signals.recentSwimAnchor && signals.swimAccessReality);
+  const bodyCompAnchorReady = Boolean(signals.currentBodyweight || signals.currentWaist);
+  const hybridHasDualAnchors = Boolean(runningAnchorReady && signals.currentStrengthBaseline);
+
+  if ((adapterId === DOMAIN_ADAPTER_IDS.durability || adapterId === DOMAIN_ADAPTER_IDS.foundation) && goalSignals.hasDurability && !signals.startingCapacity) {
+    return {
+      ceilingTier: SUPPORT_TIER_LEVELS.tier3,
+      reason: "Return-to-training and rebuild goals stay simpler until your current safe starting capacity is explicit.",
+    };
+  }
+
+  if ((adapterId === DOMAIN_ADAPTER_IDS.swimming || adapterId === DOMAIN_ADAPTER_IDS.triathlon) && !swimAnchorReady) {
+    return {
+      ceilingTier: SUPPORT_TIER_LEVELS.tier3,
+      reason: "Swim-supported plans stay simpler until a recent swim anchor and the real pool/open-water setup are confirmed.",
+    };
+  }
+
+  if (adapterId === DOMAIN_ADAPTER_IDS.hybrid && !hybridHasDualAnchors) {
+    return {
+      ceilingTier: SUPPORT_TIER_LEVELS.tier3,
+      reason: "Hybrid plans need at least one real run anchor and one strength anchor before the product should sound highly specific.",
+    };
+  }
+
+  if (adapterId === DOMAIN_ADAPTER_IDS.running && hasRaceRunGoal && (!runningAnchorReady || !signals.targetTimeline)) {
+    return {
+      ceilingTier: SUPPORT_TIER_LEVELS.tier2,
+      reason: "Race-focused running stays a little more conservative until run frequency, one real benchmark, and the target window are confirmed.",
+    };
+  }
+
+  if (hasExactStrengthGoal && !signals.currentStrengthBaseline) {
+    return {
+      ceilingTier: SUPPORT_TIER_LEVELS.tier2,
+      reason: "Explicit lift goals should not sound fully specific until the current strength baseline is known.",
+    };
+  }
+
+  if (goalSignals.hasBodyComp && !goalSignals.hasAppearance && !signals.currentBodyweight) {
+    return {
+      ceilingTier: SUPPORT_TIER_LEVELS.tier2,
+      reason: "Body-composition goals stay a little more guarded until current bodyweight is anchored.",
+    };
+  }
+
+  if (goalSignals.hasAppearance && !goalSignals.hasBodyComp && !bodyCompAnchorReady && signals.appearanceProxyPlan !== "skip_for_now") {
+    return {
+      ceilingTier: SUPPORT_TIER_LEVELS.tier3,
+      reason: "Appearance-only goals should stay simple until bodyweight or waist gives the product a real proxy.",
+    };
+  }
+
+  return {
+    ceilingTier: null,
+    reason: "",
+  };
+};
+
 export const resolveSupportTier = ({
   goals = [],
   domainAdapterId = "",
   goalCapabilityStack = null,
+  baselineSignals = {},
+  manualProgressInputs = null,
 } = {}) => {
   const adapterId = String(domainAdapterId || goalCapabilityStack?.primary?.primaryDomain || "").trim();
   const signals = collectGoalSignals(goals);
   const fallbackMode = sanitizeText(goalCapabilityStack?.primary?.fallbackPlanningMode || "", 80).toLowerCase();
+  let resolvedTier = SUPPORT_TIER_LEVELS.tier3;
 
   if (
     adapterId === DOMAIN_ADAPTER_IDS.foundation
@@ -85,10 +221,8 @@ export const resolveSupportTier = ({
     && !signals.hasDurability
     && !signals.hasHybrid
   ) {
-    return SUPPORT_TIER_LEVELS.tier3;
-  }
-
-  if (
+    resolvedTier = SUPPORT_TIER_LEVELS.tier3;
+  } else if (
     adapterId === DOMAIN_ADAPTER_IDS.bodyComp
     && signals.activeGoals.length > 0
     && signals.hasAppearance
@@ -102,10 +236,8 @@ export const resolveSupportTier = ({
     && !signals.hasDurability
     && !signals.hasHybrid
   ) {
-    return SUPPORT_TIER_LEVELS.tier2;
-  }
-
-  if (
+    resolvedTier = SUPPORT_TIER_LEVELS.tier2;
+  } else if (
     [
       DOMAIN_ADAPTER_IDS.foundation,
       DOMAIN_ADAPTER_IDS.strength,
@@ -114,10 +246,8 @@ export const resolveSupportTier = ({
       DOMAIN_ADAPTER_IDS.cycling,
     ].includes(adapterId)
   ) {
-    return SUPPORT_TIER_LEVELS.tier1;
-  }
-
-  if (
+    resolvedTier = SUPPORT_TIER_LEVELS.tier1;
+  } else if (
     [
       DOMAIN_ADAPTER_IDS.swimming,
       DOMAIN_ADAPTER_IDS.triathlon,
@@ -126,28 +256,36 @@ export const resolveSupportTier = ({
       DOMAIN_ADAPTER_IDS.hybrid,
     ].includes(adapterId)
   ) {
-    return SUPPORT_TIER_LEVELS.tier2;
+    resolvedTier = SUPPORT_TIER_LEVELS.tier2;
+  } else if (signals.hasDurability) {
+    resolvedTier = SUPPORT_TIER_LEVELS.tier2;
+  } else if (signals.hasRunning || signals.hasStrength || signals.hasBodyComp) {
+    resolvedTier = SUPPORT_TIER_LEVELS.tier1;
+  } else if (signals.hasSwim || signals.hasCycling || signals.hasTriathlon || signals.hasPower || signals.hasHybrid || signals.hasAppearance) {
+    resolvedTier = SUPPORT_TIER_LEVELS.tier2;
   }
 
-  if (signals.hasDurability) {
-    return SUPPORT_TIER_LEVELS.tier2;
+  if (hasSignalContext({ baselineSignals, manualProgressInputs })) {
+    const baselineState = collectBaselineSignals({ baselineSignals, manualProgressInputs });
+    const tierCeiling = determineSupportTierCeiling({
+      adapterId,
+      signals: baselineState,
+      goalSignals: signals,
+    });
+    if (tierCeiling.ceilingTier) {
+      resolvedTier = capTier(resolvedTier, tierCeiling.ceilingTier);
+    }
   }
 
-  if (signals.hasRunning || signals.hasStrength || signals.hasBodyComp) {
-    return SUPPORT_TIER_LEVELS.tier1;
-  }
-
-  if (signals.hasSwim || signals.hasCycling || signals.hasTriathlon || signals.hasPower || signals.hasHybrid || signals.hasAppearance) {
-    return SUPPORT_TIER_LEVELS.tier2;
-  }
-
-  return SUPPORT_TIER_LEVELS.tier3;
+  return resolvedTier;
 };
 
 export const buildSupportTierModel = ({
   goals = [],
   domainAdapterId = "",
   goalCapabilityStack = null,
+  baselineSignals = {},
+  manualProgressInputs = null,
 } = {}) => {
   const adapterId = String(domainAdapterId || goalCapabilityStack?.primary?.primaryDomain || "").trim();
   const fallbackMode = sanitizeText(goalCapabilityStack?.primary?.fallbackPlanningMode || "", 80).toLowerCase();
@@ -155,9 +293,19 @@ export const buildSupportTierModel = ({
     goals,
     domainAdapterId,
     goalCapabilityStack,
+    baselineSignals,
+    manualProgressInputs,
   });
   const meta = SUPPORT_TIER_META[id] || SUPPORT_TIER_META[SUPPORT_TIER_LEVELS.tier3];
   const signals = collectGoalSignals(goals);
+  const tierCeiling = hasSignalContext({ baselineSignals, manualProgressInputs })
+    ? determineSupportTierCeiling({
+        adapterId,
+        signals: collectBaselineSignals({ baselineSignals, manualProgressInputs }),
+        goalSignals: signals,
+      })
+    : { ceilingTier: null, reason: "" };
+
   const honestyLine = adapterId === DOMAIN_ADAPTER_IDS.hybrid
     ? "FORMA can guide hybrid training credibly, but it will not pretend every lane can peak at once. One lane leads and the other stays supportive."
     : adapterId === DOMAIN_ADAPTER_IDS.triathlon
@@ -197,7 +345,11 @@ export const buildSupportTierModel = ({
 
   return {
     ...meta,
-    honestyLine,
-    basisLine,
+    honestyLine: tierCeiling.reason && id !== SUPPORT_TIER_LEVELS.tier1
+      ? sanitizeText(`${honestyLine} ${tierCeiling.reason}`, 220)
+      : honestyLine,
+    basisLine: tierCeiling.reason && id === SUPPORT_TIER_LEVELS.tier3
+      ? sanitizeText(tierCeiling.reason, 220)
+      : basisLine,
   };
 };

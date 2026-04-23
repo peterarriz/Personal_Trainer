@@ -892,8 +892,8 @@ const startedAt = Date.now();
   const canonicalCoachLabel = compressCoachCopy(
   resolveCanonicalSurfaceSessionLabel({
   sessionType: surfaceModel?.display?.sessionType || "",
-  sessionLabel: surfaceModel?.display?.sessionLabel
-  || todayWorkout?.label
+  sessionLabel: todayWorkout?.label
+  || surfaceModel?.display?.sessionLabel
   || "Today's session",
   fallback: "Today's session",
   isHybrid: Boolean(todayWorkout?.run && todayWorkout?.strengthDuration)

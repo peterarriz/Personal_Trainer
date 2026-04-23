@@ -113,6 +113,65 @@ test.describe("one-screen structured intake", () => {
     await expect(page.getByTestId("today-session-card")).toBeVisible();
   });
 
+  test("physique intake can lock and build from one screen after proxy anchors", async ({ page }) => {
+    await completeStructuredIntakeOnOneScreen(page, {
+      goalType: "physique",
+      templateId: "get_leaner",
+      quickMetrics: {
+        body_comp_tempo: "steady",
+        muscle_retention_priority: "high",
+        cardio_preference: "walks",
+      },
+      experienceLevel: "Intermediate",
+      trainingDays: "5",
+      sessionLength: "45 min",
+      trainingLocation: "Both",
+      homeEquipment: ["Bodyweight only"],
+      coachingStyle: "Push me (with guardrails)",
+    });
+
+    const cache = await readLocalCache(page);
+    expect(cache?.personalization?.profile?.onboardingComplete).toBe(true);
+    await expect(page.getByTestId("today-session-card")).toBeVisible();
+  });
+
+  test("re-entry intake can lock and build from one screen after safe-capacity anchors", async ({ page }) => {
+    await completeStructuredIntakeOnOneScreen(page, {
+      goalType: "re_entry",
+      templateId: "restart_safely",
+      quickMetrics: {},
+      experienceLevel: "Beginner",
+      trainingDays: "3",
+      sessionLength: "20 min",
+      trainingLocation: "Home",
+      homeEquipment: ["Resistance bands"],
+      coachingStyle: "Keep me consistent",
+    });
+
+    const cache = await readLocalCache(page);
+    expect(cache?.personalization?.profile?.onboardingComplete).toBe(true);
+    await expect(page.getByTestId("today-session-card")).toBeVisible();
+  });
+
+  test("swim intake can lock and build from one screen after swim-context anchors", async ({ page }) => {
+    await completeStructuredIntakeOnOneScreen(page, {
+      goalType: "endurance",
+      templateId: "swim_better",
+      quickMetrics: {
+        goal_focus: "endurance",
+      },
+      experienceLevel: "Advanced",
+      trainingDays: "4",
+      sessionLength: "45 min",
+      trainingLocation: "Gym",
+      coachingStyle: "Balanced coaching",
+    });
+
+    const cache = await readLocalCache(page);
+    expect(cache?.personalization?.profile?.onboardingComplete).toBe(true);
+    await expect(page.getByTestId("today-session-card")).toBeVisible();
+  });
+
   test("weekday availability selections persist into the saved training context", async ({ page }) => {
     await completeStructuredIntakeOnOneScreen(page, {
       goalType: "hybrid",

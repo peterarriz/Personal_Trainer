@@ -73,8 +73,8 @@ test("auth entry view model exposes clear primary, secondary, and tertiary actio
   assert.equal(model.form.primaryAction.variant, AUTH_ACTION_VARIANTS.primary);
   assert.equal(model.localAction?.variant, AUTH_ACTION_VARIANTS.tertiary);
   assert.ok(model.form.modeOptions.every((option) => option.variant === AUTH_ACTION_VARIANTS.tertiary));
-  assert.match(model.localAction?.description || "", /device|cloud/i);
-  assert.equal(model.pathCards[0]?.id, "cloud");
+  assert.match(model.localAction?.description || "", /device|sign in|sync/i);
+  assert.equal(model.pathCards[0]?.id, "resume");
   assert.equal(model.pathCards.length, 1);
   assert.match(model.localAction?.label || "", /use local data instead/i);
 });
@@ -86,10 +86,10 @@ test("provider-unavailable auth model keeps the local path explicit as a fallbac
     authProviderUnavailable: true,
   });
 
-  assert.ok(model.statusBadges.some((badge) => /cloud sign-in temporarily unavailable/i.test(badge)));
+  assert.ok(model.statusBadges.some((badge) => /sign-in temporarily unavailable/i.test(badge)));
   assert.equal(model.localAction, null);
   assert.match(model.pathCards[0]?.description || "", /temporarily unavailable|offline/i);
-  assert.match(model.subtitle || "", /account is still required/i);
+  assert.match(model.subtitle || "", /temporarily unavailable/i);
 });
 
 test("first-time auth model requires an account before a user can start", () => {
@@ -100,9 +100,9 @@ test("first-time auth model requires an account before a user can start", () => 
   });
 
   assert.equal(model.localAction, null);
-  assert.match(model.title, /create your account/i);
-  assert.match(model.subtitle, /account before you start/i);
-  assert.match(model.form.primaryCaption, /required before FORMA can build or save your plan/i);
+  assert.match(model.title, /sign in or create your account/i);
+  assert.match(model.subtitle, /one account for your plan, progress, and recovery/i);
+  assert.match(model.form.primaryCaption, /create your account to start FORMA/i);
 });
 
 test("saved local context in consumer mode still requires sign-in before reopening the app", () => {
@@ -115,7 +115,7 @@ test("saved local context in consumer mode still requires sign-in before reopeni
 
   assert.equal(model.localAction, null);
   assert.match(model.title, /sign in to reopen your plan/i);
-  assert.match(model.subtitle, /account is required before FORMA can reopen it/i);
+  assert.match(model.subtitle, /sign in to reopen the plan already saved on this device/i);
   assert.match(model.form.primaryCaption, /reopens the saved plan on this device/i);
 });
 

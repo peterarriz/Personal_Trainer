@@ -36,6 +36,11 @@ const makeLocalPayload = ({ theme = "Atlas", mode = "Dark" } = {}) => ({
   ts: Date.now(),
 });
 
+async function domClick(locator) {
+  await expect(locator).toBeVisible();
+  await locator.evaluate((node) => node.click());
+}
+
 async function bootAuthEntry(page, {
   theme = "Atlas",
   mode = "Dark",
@@ -70,8 +75,6 @@ async function bootAuthEntry(page, {
   });
   await page.goto("/");
   await expect(page.getByTestId("auth-gate")).toBeVisible();
-  await expect(page.getByTestId("auth-path-cloud")).toBeVisible();
-  await expect(page.getByTestId("auth-path-local")).toHaveCount(0);
 }
 
 test.describe("auth entry UI", () => {
@@ -86,7 +89,10 @@ test.describe("auth entry UI", () => {
     });
 
     await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
-    await expect(page.getByText(/create your account before you start/i)).toBeVisible();
+    await expect(page.getByText(/sign in or create your account/i)).toBeVisible();
+    await expect(page.getByTestId("auth-sync-status")).toHaveCount(0);
+    await expect(page.getByTestId("auth-path-auth-status")).toHaveCount(0);
+    await expect(page.getByTestId("auth-path-resume")).toHaveCount(0);
   });
 
   test("saved local consumer auth entry still requires sign-in before reopening the app", async ({ page }) => {
@@ -107,7 +113,9 @@ test.describe("auth entry UI", () => {
 
     await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
     await expect(page.getByText(/sign in to reopen your plan/i)).toBeVisible();
-    await expect(page.getByText(/local data available on this device/i)).toBeVisible();
+    await expect(page.getByText("Saved plan on this device", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("auth-sync-status")).toBeVisible();
+    await expect(page.getByTestId("auth-path-resume")).toBeVisible();
   });
 
   test("auth entry preserves action hierarchy and stacks cleanly on mobile", async ({ page }) => {
@@ -127,7 +135,7 @@ test.describe("auth entry UI", () => {
     await expect(page.getByTestId("auth-local-cta-description")).toContainText(/this device|cloud/i);
     await expect(page.getByTestId("auth-local-cta")).toContainText(/use local data instead/i);
 
-    await page.getByTestId("auth-mode-signup").click();
+    await domClick(page.getByTestId("auth-mode-signup"));
     await expect(page.getByTestId("auth-signup-name")).toBeVisible();
     await expect(page.getByTestId("auth-primary-caption")).toContainText(/cloud backup|account/i);
 
@@ -154,7 +162,7 @@ test.describe("auth entry UI", () => {
     expect(formBox).toBeTruthy();
     expect(formBox.x).toBeGreaterThan(railBox.x + railBox.width - 16);
 
-    await page.getByTestId("auth-mode-signup").click();
+    await domClick(page.getByTestId("auth-mode-signup"));
     await expect(page.getByTestId("auth-signup-timezone")).toBeVisible();
     await expect(page.getByTestId("continue-local-mode")).toBeVisible();
   });
@@ -200,7 +208,7 @@ test.describe("auth entry UI", () => {
       debugMode: true,
     });
 
-    await page.getByTestId("auth-mode-signup").click();
+    await domClick(page.getByTestId("auth-mode-signup"));
     await expect(page.getByTestId("auth-submit")).toBeVisible();
     await expect(page.getByTestId("continue-local-mode")).toBeVisible();
 

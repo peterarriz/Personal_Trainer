@@ -38,6 +38,15 @@ export function PlanTab({
  runtime = {},
 }) {
  const { C, PLAN_STATUS_TONES, sanitizeDisplayText, toTestIdFragment, SyncStateCallout, CompactSyncStatus } = runtime;
+ const buildCurrentDaySessionLabel = useCallback((day = null, { isHybrid = false, fallbackLabel = "" } = {}) => {
+  if (!day) return "";
+  if (isHybrid || day?.isHybrid) return "Run + strength";
+  if (day?.isRest) return sanitizeDisplayText(fallbackLabel || day?.title || "Recovery");
+  if (fallbackLabel) return sanitizeDisplayText(fallbackLabel);
+  const title = sanitizeDisplayText(day?.title || "");
+  const detail = sanitizeDisplayText(day?.detail || "");
+  return detail ? `${title} - ${detail}` : title;
+ }, [sanitizeDisplayText]);
  const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout || null;
  const todayKey = sanitizeDisplayText(planDay?.dateKey || new Date().toISOString().split("T")[0]);
  const athleteGoals = athleteProfile?.goals || [];
@@ -77,18 +86,52 @@ export function PlanTab({
  const currentDayModel = planModel?.currentDay || currentWeekDays.find((day) => day?.isToday) || currentWeekDays[0] || null;
  const selectedCurrentDay = currentWeekDays.find((day) => String(day?.dayKey) === String(selectedCurrentDayKey)) || null;
  const selectedPreviewDay = previewWeekDays.find((day) => String(day?.dayKey) === String(selectedPreviewDayKey)) || null;
+ const currentDayIsHybrid = useMemo(() => (
+  /run \+ strength/i.test(String(surfaceModel?.display?.sessionType || ""))
+  || Boolean(currentDayModel?.isHybrid)
+  || Boolean(todayWorkout?.run && todayWorkout?.strengthDuration)
+  || String(todayWorkout?.type || "").toLowerCase() === "run+strength"
+ ), [
+  surfaceModel?.display?.sessionType,
+  currentDayModel?.isHybrid,
+  todayWorkout?.run,
+  todayWorkout?.strengthDuration,
+  todayWorkout?.type,
+ ]);
  const currentDaySummary = useMemo(() => buildSharedSessionSummaryModel({
-  surfaceModel,
+  surfaceModel: currentDayModel
+   ? {
+    ...surfaceModel,
+    display: {
+     ...(surfaceModel?.display || {}),
+     sessionLabel: buildCurrentDaySessionLabel(currentDayModel, {
+      isHybrid: currentDayIsHybrid,
+      fallbackLabel: currentDayModel?.isToday ? sanitizeDisplayText(todayWorkout?.label || "") : "",
+     }) || surfaceModel?.display?.sessionLabel || "",
+     sessionType: currentDayModel?.isRest
+      ? "Recovery"
+      : currentDayIsHybrid
+      ? surfaceModel?.display?.sessionType || "Run + strength"
+      : currentDayModel?.title || surfaceModel?.display?.sessionType || "",
+     structure: currentDayModel?.detail || surfaceModel?.display?.structure || "",
+    },
+   }
+   : surfaceModel,
   sessionContextLine: currentDayModel?.isToday
    ? "Today is the active session inside the committed week."
    : "This is where the current day sits inside the committed week.",
   currentWeekFocus: planModel?.intentLine || currentPlanWeek?.weeklyIntent?.focus || currentPlanWeek?.summary || "",
  }), [
   surfaceModel,
+  currentDayModel,
   currentDayModel?.isToday,
+  currentDayIsHybrid,
+  buildCurrentDaySessionLabel,
   planModel?.intentLine,
   currentPlanWeek?.weeklyIntent?.focus,
   currentPlanWeek?.summary,
+  todayWorkout?.label,
+  sanitizeDisplayText,
  ]);
 
  useEffect(() => {
