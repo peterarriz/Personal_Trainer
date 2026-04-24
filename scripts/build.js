@@ -395,19 +395,48 @@ window.__SUPABASE_ANON_KEY = window.__SUPABASE_ANON_KEY || ${JSON.stringify(SUPA
 `;
 
 const buildServiceWorkerRegistrationScript = () => `
-if ("serviceWorker" in navigator && location.protocol !== "file:") {
+(function () {
+  if (!("serviceWorker" in navigator) || location.protocol === "file:") {
+    return;
+  }
   const hostname = String(location.hostname || "");
   const isLocalHost =
     hostname === "localhost"
     || hostname === "127.0.0.1"
-    || hostname === "[::1]";
-  const isHostedVercelAlias = /\\.vercel\\.app$/i.test(hostname);
-  if (!isHostedVercelAlias || isLocalHost) {
-    window.addEventListener("load", function () {
-      navigator.serviceWorker.register("./service-worker.js").catch(function () {});
-    });
+    || hostname === "[::1]"
+    || hostname === "::1";
+  const serviceWorkersEnabled = isLocalHost;
+  const clearFormaCaches = function () {
+    if (!("caches" in window) || typeof window.caches.keys !== "function") {
+      return;
+    }
+    window.caches.keys().then(function (keys) {
+      return Promise.all(
+        keys
+          .filter(function (key) {
+            return /^forma-(static|runtime)-/.test(String(key || ""));
+          })
+          .map(function (key) {
+            return window.caches.delete(key).catch(function () {});
+          })
+      );
+    }).catch(function () {});
+  };
+  if (!serviceWorkersEnabled) {
+    if (typeof navigator.serviceWorker.getRegistrations === "function") {
+      navigator.serviceWorker.getRegistrations().then(function (registrations) {
+        registrations.forEach(function (registration) {
+          registration.unregister().catch(function () {});
+        });
+      }).catch(function () {});
+    }
+    clearFormaCaches();
+    return;
   }
-}
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("./service-worker.js").catch(function () {});
+  });
+}());
 `;
 
 const buildBaseHtml = ({ bodyScripts = "", extraHead = "", buildMode, buildVersion }) => `<!DOCTYPE html>
