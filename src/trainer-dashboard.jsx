@@ -10573,20 +10573,28 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  --space-5:1.5rem;
  --space-6:2rem;
  --space-7:2.65rem;
- --radius-sm:10px;
- --radius-md:14px;
+ --radius-sm:8px;
+ --radius-md:12px;
  --radius-lg:18px;
- --shell-max:1080px;
+ --shell-max:1180px;
  --shell-gutter:clamp(0.9rem, 2.8vw, 1.45rem);
  --hairline:rgba(255,255,255,0.06);
  --control-height:2.55rem;
  --control-height-sm:2.05rem;
- --pill-height:1.72rem;
+ --pill-height:1.44rem;
  --divider-weight:1px;
  --type-label:0.48rem;
  --type-meta:0.54rem;
  --type-body:0.6rem;
- --type-title:0.95rem;
+ --type-title:1.04rem;
+ --instrument-cyan:#57e8ff;
+ --instrument-green:#2ff0a0;
+ --instrument-amber:#ffb35a;
+ --instrument-red:#ff537d;
+ --ink-black:#03070d;
+ --graphite:#07111a;
+ --lux-border:color-mix(in srgb, var(--border-strong) 74%, rgba(255,255,255,0.16));
+ --signal-rail:linear-gradient(180deg, transparent 0%, var(--instrument-cyan) 18%, var(--instrument-green) 54%, transparent 100%);
  --state-success:${C.green};
  --state-info:${C.blue};
  --state-warning:${C.amber};
@@ -10626,9 +10634,9 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  .fi{animation:fi 0.22s ease forwards}
  .hov{transition:background 0.18s ease,border-color 0.18s ease;cursor:pointer} .hov:hover{background:var(--brand-accent-soft)!important}
  .btn{
- background:linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 94%, transparent) 0%, color-mix(in srgb, var(--surface-1) 96%, transparent) 100%);
+ background:linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 88%, rgba(255,255,255,0.06)) 0%, color-mix(in srgb, var(--surface-1) 98%, transparent) 100%);
  border:1px solid color-mix(in srgb, var(--border) 90%, var(--hairline));
- border-radius:var(--radius-sm);
+ border-radius:calc(var(--radius-sm) + 1px);
  display:inline-flex;
  align-items:center;
  justify-content:center;
@@ -10636,7 +10644,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  font-family:var(--font-body);
  font-size:clamp(0.52rem, 0.5rem + 0.08vw, 0.58rem);
  font-weight:650;
- letter-spacing:0.03em;
+ letter-spacing:0.015em;
  line-height:1.2;
  cursor:pointer;
  min-height:var(--control-height-sm);
@@ -10644,7 +10652,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  padding:0.52rem 0.78rem;
  transition:background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
  color:var(--text);
- box-shadow:var(--button-shadow-rest), inset 0 1px 0 rgba(255,255,255,0.04);
+ box-shadow:var(--button-shadow-rest), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -12px 20px rgba(0,0,0,0.08);
  touch-action:manipulation;
  -webkit-tap-highlight-color:transparent;
  }
@@ -10653,13 +10661,13 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  .btn:focus-visible{outline:none;border-color:var(--border-strong);box-shadow:0 0 0 3px var(--focus-ring), var(--button-shadow-hover)}
  .btn:disabled{cursor:not-allowed;opacity:0.58;transform:none!important;box-shadow:none;background:var(--surface-2);color:var(--text-soft)}
  .btn-primary{
- background:var(--cta-bg)!important;
+ background:linear-gradient(135deg, color-mix(in srgb, var(--instrument-cyan) 82%, var(--cta-bg)) 0%, color-mix(in srgb, var(--cta-bg) 78%, #2f7cff) 52%, color-mix(in srgb, var(--instrument-green) 34%, var(--cta-bg)) 100%)!important;
  border:1px solid var(--cta-border)!important;
  color:var(--cta-text, var(--accent-contrast))!important;
- font-weight:750;
- box-shadow:var(--button-shadow-hover), inset 0 1px 0 rgba(255,255,255,0.1);
+ font-weight:800;
+ box-shadow:0 16px 34px rgba(0,0,0,0.22), 0 0 22px color-mix(in srgb, var(--instrument-cyan) 18%, transparent), inset 0 1px 0 rgba(255,255,255,0.28), inset 0 -16px 24px rgba(0,0,0,0.12);
  }
- .btn-primary:hover{filter:none;background:var(--cta-bg-hover)!important;border-color:var(--border-strong)!important;box-shadow:0 18px 34px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.1)}
+ .btn-primary:hover{filter:none;background:linear-gradient(135deg, color-mix(in srgb, var(--instrument-cyan) 92%, var(--cta-bg-hover)) 0%, color-mix(in srgb, var(--cta-bg-hover) 78%, #3988ff) 52%, color-mix(in srgb, var(--instrument-green) 42%, var(--cta-bg-hover)) 100%)!important;border-color:var(--border-strong)!important;box-shadow:0 20px 42px rgba(0,0,0,0.24), 0 0 28px color-mix(in srgb, var(--instrument-cyan) 22%, transparent), inset 0 1px 0 rgba(255,255,255,0.28)}
  .btn-primary:disabled{background:var(--cta-bg)!important;color:var(--cta-text, var(--accent-contrast))!important;opacity:0.52}
  .btn-selected{background:var(--accent-soft)!important;border-color:var(--border-strong)!important;color:var(--text-strong)!important;box-shadow:var(--shadow-1)}
  .btn-selected:hover{background:var(--accent-soft)!important}
@@ -10704,19 +10712,19 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  from{opacity:0; transform:translateY(6px)}
  to{opacity:1; transform:translateY(0)}
  }
- .tag{display:inline-flex;align-items:center;justify-content:center;min-height:var(--pill-height);padding:0.18rem 0.56rem;border-radius:999px;letter-spacing:0.05em;line-height:1.1;white-space:nowrap;background:var(--badge-bg);color:var(--badge-text);border:1px solid var(--badge-border);font-weight:700}
- .ui-pill{display:inline-flex;align-items:center;justify-content:center;min-height:var(--pill-height);padding:0.2rem 0.54rem;border-radius:999px;border:1px solid color-mix(in srgb, var(--border) 88%, var(--hairline));background:color-mix(in srgb, var(--surface-2) 92%, transparent);color:var(--text-soft);font-size:0.46rem;line-height:1.1;font-weight:650;white-space:nowrap;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04)}
+ .tag{display:inline-flex;align-items:center;justify-content:center;min-height:var(--pill-height);padding:0.16rem 0.5rem;border-radius:9px;letter-spacing:0.045em;line-height:1.1;white-space:nowrap;background:var(--badge-bg);color:var(--badge-text);border:1px solid var(--badge-border);font-weight:750}
+ .ui-pill{display:inline-flex;align-items:center;justify-content:center;min-height:var(--pill-height);padding:0.16rem 0.48rem;border-radius:9px;border:1px solid color-mix(in srgb, var(--border) 86%, var(--hairline));background:linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 70%, transparent) 0%, color-mix(in srgb, var(--surface-1) 92%, transparent) 100%);color:var(--text-soft);font-size:0.44rem;line-height:1.1;font-weight:700;white-space:nowrap;box-shadow:inset 0 1px 0 rgba(255,255,255,0.06)}
  .ui-pill-strong{font-weight:750;letter-spacing:0.08em;text-transform:uppercase}
  .ui-eyebrow{font-size:0.47rem;color:var(--text-soft);letter-spacing:0.12em;text-transform:uppercase;line-height:1.35}
  .ui-divider{border-top:var(--divider-weight) solid var(--border);padding-top:0.62rem}
  .card{
  position:relative;
  overflow:hidden;
- background:linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 76%, transparent) 0%, color-mix(in srgb, var(--panel) 98%, transparent) 100%);
+ background:linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 64%, rgba(255,255,255,0.02)) 0%, color-mix(in srgb, var(--panel) 98%, transparent) 100%);
  border:1px solid color-mix(in srgb, var(--card-border) 88%, var(--hairline));
  border-radius:var(--radius-md);
  padding:var(--surface-card-padding);
- box-shadow:var(--card-shadow), inset 0 1px 0 rgba(255,255,255,0.04);
+ box-shadow:var(--card-shadow), inset 0 1px 0 rgba(255,255,255,0.055), inset 0 -28px 52px rgba(0,0,0,0.08);
  transition:transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease
  }
  .card::before{
@@ -10726,7 +10734,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  height:28%;
  pointer-events:none;
  background:var(--card-top-light);
- opacity:0.38;
+ opacity:0.28;
  }
  .card::after{
  content:"";
@@ -10736,9 +10744,9 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  height:180px;
  background:var(--card-bloom);
  pointer-events:none;
- opacity:0.55;
+ opacity:0.28;
  }
- .card:hover{transform:translateY(-1px); box-shadow:var(--card-shadow-hover), inset 0 1px 0 rgba(255,255,255,0.05); border-color:var(--border-strong)}
+ .card:hover{transform:translateY(-1px); box-shadow:var(--card-shadow-hover), 0 0 0 1px color-mix(in srgb, var(--instrument-cyan) 8%, transparent), inset 0 1px 0 rgba(255,255,255,0.06); border-color:var(--border-strong)}
  .card-strong{
  background:linear-gradient(180deg, color-mix(in srgb, var(--panel-3) 62%, transparent) 0%, color-mix(in srgb, var(--panel-2) 98%, transparent) 100%);
  border-color:var(--border-strong);
@@ -10754,7 +10762,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  border-color:var(--card-soft-border);
  box-shadow:var(--card-soft-shadow), inset 0 1px 0 rgba(255,255,255,0.03);
  }
- .sect-title{font-family:var(--font-display);font-size:var(--type-title);font-weight:700;letter-spacing:0.01em;text-transform:none;color:var(--text-strong)}
+ .sect-title{font-family:var(--font-display);font-size:var(--type-title);font-weight:800;letter-spacing:0;text-transform:none;color:var(--text-strong)}
  .mono{font-family:var(--font-mono); letter-spacing:0.01em}
  .coach-copy{font-family:var(--font-body); color:var(--text); line-height:1.65}
  .completion-pop{animation:completePop 0.35s ease-out}
@@ -10916,6 +10924,36 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  padding:var(--shell-gutter);
  background:linear-gradient(180deg, color-mix(in srgb, var(--shell-overlay) 78%, transparent) 0%, color-mix(in srgb, var(--shell-overlay) 60%, transparent) 100%);
  color:var(--text);
+ position:relative;
+ isolation:isolate;
+ border-left:1px solid color-mix(in srgb, var(--instrument-cyan) 9%, transparent);
+ border-right:1px solid color-mix(in srgb, var(--instrument-green) 8%, transparent);
+ }
+ .app-shell-frame::before{
+ content:"";
+ position:fixed;
+ inset:0;
+ z-index:-2;
+ pointer-events:none;
+ background:
+  linear-gradient(90deg, color-mix(in srgb, var(--instrument-cyan) 8%, transparent) 1px, transparent 1px),
+  linear-gradient(180deg, color-mix(in srgb, var(--instrument-cyan) 5%, transparent) 1px, transparent 1px);
+ background-size:72px 72px;
+ mask-image:linear-gradient(180deg, rgba(0,0,0,0.32), rgba(0,0,0,0.08) 45%, transparent 100%);
+ opacity:0.55;
+ }
+ .app-shell-frame::after{
+ content:"";
+ position:fixed;
+ top:0;
+ bottom:0;
+ left:max(0.55rem, env(safe-area-inset-left, 0px));
+ width:2px;
+ z-index:-1;
+ pointer-events:none;
+ background:var(--signal-rail);
+ opacity:0.58;
+ box-shadow:0 0 18px color-mix(in srgb, var(--instrument-cyan) 38%, transparent);
  }
  .app-shell-header{
  display:grid;
@@ -10926,24 +10964,46 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  padding:0.88rem 0.98rem;
  border-radius:calc(var(--radius-lg) + 4px);
  border:1px solid color-mix(in srgb, var(--border) 90%, var(--hairline));
- background:linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 86%, transparent) 0%, color-mix(in srgb, var(--panel) 98%, transparent) 100%);
+ background:linear-gradient(135deg, color-mix(in srgb, var(--panel-2) 86%, transparent) 0%, color-mix(in srgb, var(--panel) 98%, transparent) 54%, color-mix(in srgb, var(--instrument-cyan) 5%, transparent) 100%);
  box-shadow:var(--shadow-1), inset 0 1px 0 rgba(255,255,255,0.04);
  backdrop-filter:blur(16px);
  }
  .app-brand-mark{
  width:54px;
  height:54px;
- border-radius:18px;
+ border-radius:14px;
  display:grid;
  place-items:center;
- background:linear-gradient(135deg, color-mix(in srgb, var(--brand-mark-bg) 92%, transparent) 0%, color-mix(in srgb, var(--surface-1) 96%, transparent) 100%);
+ background:linear-gradient(145deg, color-mix(in srgb, var(--instrument-cyan) 20%, var(--brand-mark-bg)) 0%, color-mix(in srgb, var(--brand-mark-bg) 88%, var(--surface-1)) 52%, color-mix(in srgb, var(--ink-black) 52%, var(--surface-1)) 100%);
  border:1px solid color-mix(in srgb, var(--brand-mark-border) 84%, var(--hairline));
  box-shadow:var(--shadow-2);
  color:var(--text-strong);
  font-family:var(--font-display);
- font-size:1.22rem;
- font-weight:700;
- letter-spacing:0.08em;
+ font-size:1.12rem;
+ font-weight:850;
+ letter-spacing:0.02em;
+ position:relative;
+ overflow:hidden;
+ clip-path:polygon(0 0, 88% 0, 100% 12%, 100% 100%, 12% 100%, 0 88%);
+ }
+ .app-brand-mark::before{
+ content:"";
+ position:absolute;
+ inset:8px 9px;
+ border-top:2px solid color-mix(in srgb, var(--instrument-cyan) 76%, var(--text-strong));
+ border-left:2px solid color-mix(in srgb, var(--instrument-cyan) 52%, transparent);
+ opacity:0.62;
+ }
+ .app-brand-mark::after{
+ content:"";
+ position:absolute;
+ right:-10px;
+ bottom:8px;
+ width:38px;
+ height:2px;
+ background:color-mix(in srgb, var(--instrument-green) 70%, transparent);
+ transform:rotate(-32deg);
+ box-shadow:0 0 14px color-mix(in srgb, var(--instrument-green) 44%, transparent);
  }
  .app-settings-button{
  width:46px;
@@ -10961,7 +11021,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  margin-bottom:1.1rem;
  background:linear-gradient(180deg, color-mix(in srgb, var(--tab-strip-bg) 94%, transparent) 0%, color-mix(in srgb, var(--surface-1) 88%, transparent) 100%);
  padding:0.34rem;
- border-radius:calc(var(--radius-lg) + 2px);
+ border-radius:16px;
  border:1px solid color-mix(in srgb, var(--tab-strip-border) 88%, var(--hairline));
  overflow-x:auto;
  box-shadow:var(--shadow-1), inset 0 1px 0 rgba(255,255,255,0.03);
@@ -10981,7 +11041,292 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  background:linear-gradient(180deg, color-mix(in srgb, var(--tab-active-bg) 100%, transparent) 0%, color-mix(in srgb, var(--surface-1) 70%, transparent) 100%);
  border-color:var(--border-strong);
  font-weight:750;
- box-shadow:var(--shadow-1), inset 0 1px 0 rgba(255,255,255,0.06);
+ box-shadow:var(--shadow-1), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -2px 0 color-mix(in srgb, var(--instrument-cyan) 76%, transparent);
+ }
+ [data-testid="today-session-card"],
+ [data-testid="program-trajectory-header"],
+ [data-testid="program-roadmap"],
+ [data-testid="program-this-week"],
+ [data-testid="nutrition-execution-plan-header"],
+ [data-testid="nutrition-execution-plan-meals"],
+ [data-testid="nutrition-execution-rules"],
+ [data-testid="nutrition-weekly-meal-calendar"],
+ [data-testid="nutrition-weekly-grocery-list"],
+ [data-testid="nutrition-quick-log"],
+ [data-testid="settings-tab"] > .card.card-subtle{
+ border-radius:var(--radius-lg)!important;
+ border-color:var(--lux-border)!important;
+ background:linear-gradient(135deg, color-mix(in srgb, var(--ink-black) 30%, var(--panel-2)) 0%, color-mix(in srgb, var(--panel) 96%, transparent) 62%, color-mix(in srgb, var(--instrument-cyan) 4%, transparent) 100%)!important;
+ }
+ [data-testid="today-session-card"],
+ [data-testid="program-trajectory-header"],
+ [data-testid="program-roadmap"],
+ [data-testid="program-this-week"],
+ [data-testid="nutrition-execution-plan-header"],
+ [data-testid="nutrition-execution-plan-meals"],
+ [data-testid="nutrition-weekly-meal-calendar"],
+ [data-testid="settings-tab"] > .card.card-subtle{
+ position:relative;
+ isolation:isolate;
+ }
+ [data-testid="today-session-card"]::before,
+ [data-testid="program-trajectory-header"]::before,
+ [data-testid="program-roadmap"]::before,
+ [data-testid="nutrition-execution-plan-header"]::before,
+ [data-testid="settings-tab"] > .card.card-subtle::before{
+ content:"";
+ position:absolute;
+ left:0;
+ top:0.85rem;
+ bottom:0.85rem;
+ width:3px;
+ border-radius:999px;
+ background:var(--signal-rail);
+ opacity:0.66;
+ box-shadow:0 0 18px color-mix(in srgb, var(--instrument-cyan) 28%, transparent);
+ }
+ [data-testid="today-full-workout"] > div,
+ [data-testid^="program-current-week-cell-"],
+ [data-testid^="program-roadmap-week-"],
+ [data-testid="nutrition-execution-plan-meals"] > div:nth-child(2) > div,
+ [data-testid^="nutrition-meal-calendar-day-"],
+ [data-testid^="nutrition-meal-calendar-slot-"]{
+ border-radius:12px!important;
+ border-color:color-mix(in srgb, var(--consumer-border-strong) 72%, rgba(255,255,255,0.08))!important;
+ background:linear-gradient(145deg, color-mix(in srgb, var(--ink-black) 18%, var(--consumer-subpanel)) 0%, color-mix(in srgb, var(--consumer-panel) 95%, transparent) 100%)!important;
+ box-shadow:inset 0 1px 0 rgba(255,255,255,0.055)!important;
+ }
+ [data-testid="today-full-workout"] > div > div:first-child{
+ border-radius:8px!important;
+ box-shadow:0 0 18px color-mix(in srgb, var(--instrument-cyan) 12%, transparent), inset 0 1px 0 rgba(255,255,255,0.08)!important;
+ }
+ [data-testid="program-roadmap-grid"]{
+ position:relative;
+ }
+ [data-testid="program-roadmap-grid"]::before{
+ content:"";
+ position:absolute;
+ left:0.5rem;
+ right:0.5rem;
+ top:1.05rem;
+ height:2px;
+ background:linear-gradient(90deg, color-mix(in srgb, var(--instrument-cyan) 72%, transparent), color-mix(in srgb, var(--instrument-green) 62%, transparent), color-mix(in srgb, var(--instrument-amber) 58%, transparent));
+ opacity:0.64;
+ box-shadow:0 0 16px color-mix(in srgb, var(--instrument-cyan) 18%, transparent);
+ pointer-events:none;
+ }
+ [data-testid^="program-roadmap-week-"]{
+ position:relative;
+ padding-top:1.35rem!important;
+ }
+ [data-testid^="program-roadmap-week-"]::before{
+ content:"";
+ position:absolute;
+ top:0.78rem;
+ left:0.75rem;
+ width:0.46rem;
+ height:0.46rem;
+ border-radius:999px;
+ background:var(--instrument-cyan);
+ box-shadow:0 0 0 4px color-mix(in srgb, var(--instrument-cyan) 12%, transparent), 0 0 16px color-mix(in srgb, var(--instrument-cyan) 34%, transparent);
+ }
+ [data-testid^="program-current-week-cell-"]{
+ overflow:hidden;
+ }
+ [data-testid^="program-current-week-cell-"][data-current-day="true"]{
+ border-color:color-mix(in srgb, var(--instrument-cyan) 48%, var(--border-strong))!important;
+ background:linear-gradient(145deg, color-mix(in srgb, var(--instrument-cyan) 16%, var(--consumer-panel-strong)) 0%, color-mix(in srgb, var(--consumer-panel) 94%, transparent) 100%)!important;
+ box-shadow:0 0 0 1px color-mix(in srgb, var(--instrument-cyan) 18%, transparent), 0 14px 30px rgba(0,0,0,0.18)!important;
+ }
+ [data-testid="nutrition-execution-plan-header"] > div:nth-child(2) > div,
+ [data-testid="nutrition-plan-objectives"] > div:last-child > div{
+ border-radius:10px!important;
+ border-color:color-mix(in srgb, var(--instrument-cyan) 20%, #22324a)!important;
+ background:linear-gradient(180deg, color-mix(in srgb, #0f172a 70%, var(--ink-black)) 0%, color-mix(in srgb, #0b1321 92%, transparent) 100%)!important;
+ }
+ [data-testid="nutrition-execution-plan-meals"] > div:nth-child(2) > div{
+ position:relative;
+ padding-left:0.94rem!important;
+ }
+ [data-testid="nutrition-execution-plan-meals"] > div:nth-child(2) > div::before{
+ content:"";
+ position:absolute;
+ left:0.48rem;
+ top:0.66rem;
+ bottom:0.66rem;
+ width:2px;
+ border-radius:999px;
+ background:linear-gradient(180deg, var(--instrument-amber), color-mix(in srgb, var(--instrument-green) 70%, transparent));
+ opacity:0.76;
+ }
+ [data-testid="nutrition-weekly-meal-calendar"]{
+ overflow:hidden;
+ }
+ [data-testid^="nutrition-meal-calendar-day-"]{
+ align-content:start;
+ }
+ [data-testid^="nutrition-meal-calendar-slot-"]{
+ border-radius:9px!important;
+ }
+ [data-testid="nutrition-execution-rules"]{
+ border-style:dashed!important;
+ }
+ [data-testid="nutrition-quick-log"]{
+ background:linear-gradient(135deg, color-mix(in srgb, var(--instrument-green) 10%, #0d1410) 0%, color-mix(in srgb, var(--ink-black) 12%, #0d1410) 100%)!important;
+ }
+ [data-testid="log-detailed-entry"] > .surface-card:first-child{
+ border-color:color-mix(in srgb, var(--instrument-cyan) 20%, var(--border-strong))!important;
+ background:linear-gradient(145deg, color-mix(in srgb, var(--consumer-panel-strong) 82%, var(--ink-black)) 0%, color-mix(in srgb, var(--consumer-panel) 96%, transparent) 100%)!important;
+ }
+ [data-testid="planned-session-plan"]{
+ border-radius:14px!important;
+ }
+ [data-testid="program-trajectory-header"]{
+ border-radius:var(--radius-lg)!important;
+ border-color:var(--lux-border)!important;
+ background:linear-gradient(135deg, color-mix(in srgb, var(--ink-black) 34%, var(--consumer-panel-strong)) 0%, color-mix(in srgb, var(--consumer-panel) 94%, transparent) 56%, color-mix(in srgb, var(--instrument-cyan) 5%, transparent) 100%)!important;
+ }
+ [data-testid="program-trajectory-header"] .surface-title-hero{
+ font-size:1.42rem!important;
+ font-weight:850!important;
+ letter-spacing:0!important;
+ }
+ [data-testid="program-current-day-context"]{
+ border-radius:14px!important;
+ border-color:color-mix(in srgb, var(--instrument-cyan) 18%, var(--consumer-border))!important;
+ background:linear-gradient(180deg, color-mix(in srgb, var(--ink-black) 14%, var(--consumer-panel)) 0%, color-mix(in srgb, var(--consumer-subpanel) 92%, transparent) 100%)!important;
+ }
+ [data-testid="program-this-week"] > div:nth-child(3) > div:nth-child(2){
+ border:1px solid color-mix(in srgb, var(--instrument-green) 14%, var(--consumer-border));
+ border-radius:14px;
+ padding:0.74rem;
+ background:linear-gradient(145deg, color-mix(in srgb, var(--ink-black) 18%, var(--consumer-panel)) 0%, color-mix(in srgb, var(--consumer-subpanel) 86%, transparent) 100%);
+ min-height:9.6rem;
+ }
+ .settings-surface-nav-grid{
+ grid-template-columns:repeat(auto-fit,minmax(148px,1fr))!important;
+ }
+ [data-testid="settings-surface-nav"] button{
+ border-radius:10px!important;
+ box-shadow:none!important;
+ letter-spacing:0!important;
+ }
+ [data-testid="settings-surface-nav"] button[data-active="true"]{
+ border-color:color-mix(in srgb, var(--instrument-cyan) 46%, var(--border-strong))!important;
+ background:linear-gradient(135deg, color-mix(in srgb, var(--instrument-cyan) 13%, var(--surface-2)) 0%, color-mix(in srgb, var(--surface-1) 94%, transparent) 100%)!important;
+ box-shadow:inset 2px 0 0 color-mix(in srgb, var(--instrument-cyan) 88%, transparent), 0 10px 24px rgba(0,0,0,0.14)!important;
+ }
+ @media (min-width:860px){
+ [data-testid="program-trajectory-header"] > .surface-stack{
+ display:grid!important;
+ grid-template-columns:minmax(0,0.74fr) minmax(360px,1fr)!important;
+ gap:0.72rem 0.95rem!important;
+ align-items:stretch;
+ }
+ [data-testid="program-trajectory-header"] .surface-hero-header{
+ grid-column:1;
+ display:grid!important;
+ gap:0.7rem!important;
+ align-content:start;
+ }
+ [data-testid="program-current-day-context"]{
+ grid-column:2;
+ grid-row:1 / span 5;
+ align-content:start;
+ min-height:100%;
+ padding:0.86rem!important;
+ }
+ [data-testid="program-trajectory-header"] > .surface-stack > :nth-child(3),
+ [data-testid="program-trajectory-header"] > .surface-stack > :nth-child(4),
+ [data-testid="program-trajectory-header"] > .surface-stack > :nth-child(5){
+ grid-column:1;
+ }
+ [data-testid="today-session-card"]{
+ grid-template-columns:minmax(0,0.78fr) minmax(360px,1.08fr)!important;
+ gap:0.92rem 1.05rem!important;
+ align-items:start;
+ padding:1rem 1.05rem 1rem 1.12rem!important;
+ }
+ [data-testid="today-session-card"] > :nth-child(1),
+ [data-testid="today-session-card"] > :nth-child(2),
+ [data-testid="today-session-card"] > :nth-child(3),
+ [data-testid="today-session-card"] > :nth-child(4),
+ [data-testid="today-session-card"] > :nth-child(6){
+ grid-column:1;
+ }
+ [data-testid="today-session-card"] > :nth-child(5){
+ grid-column:2;
+ grid-row:1 / span 6;
+ align-self:stretch;
+ display:grid;
+ align-content:start;
+ gap:0.52rem!important;
+ padding:0.72rem;
+ border:1px solid color-mix(in srgb, var(--instrument-cyan) 18%, var(--consumer-border));
+ border-radius:16px;
+ background:linear-gradient(180deg, color-mix(in srgb, var(--ink-black) 18%, var(--consumer-panel)) 0%, color-mix(in srgb, var(--consumer-subpanel) 90%, transparent) 100%);
+ box-shadow:inset 0 1px 0 rgba(255,255,255,0.06);
+ }
+ [data-testid="today-full-workout"]{
+ gap:0.42rem!important;
+ }
+ [data-testid="program-roadmap-grid"]{
+ grid-template-columns:repeat(4,minmax(0,1fr))!important;
+ gap:0.52rem!important;
+ }
+ [data-testid="program-current-week-grid"]{
+ grid-template-columns:repeat(7,minmax(0,1fr))!important;
+ gap:0.32rem!important;
+ }
+ [data-testid="program-this-week"] > div:nth-child(3){
+ grid-template-columns:minmax(420px,0.95fr) minmax(300px,1.05fr)!important;
+ align-items:start;
+ }
+ [data-testid^="program-current-week-cell-"]{
+ min-height:128px!important;
+ }
+ [data-testid="nutrition-execution-plan-header"]{
+ padding:0.95rem 1rem!important;
+ }
+ [data-testid="nutrition-execution-plan-meals"] > div:nth-child(2){
+ grid-template-columns:repeat(2,minmax(0,1fr))!important;
+ align-items:start;
+ }
+ [data-testid="nutrition-weekly-meal-calendar"] > div:nth-child(2){
+ grid-template-columns:repeat(7,minmax(150px,1fr))!important;
+ overflow-x:auto;
+ padding-bottom:0.2rem;
+ }
+ [data-testid="settings-tab"] > .card.card-subtle > div:nth-child(2){
+ grid-template-columns:220px minmax(0,1fr)!important;
+ align-items:start;
+ gap:0.92rem!important;
+ }
+ .settings-surface-nav{
+ position:sticky;
+ top:0.8rem;
+ }
+ .settings-surface-nav-grid{
+ grid-template-columns:1fr!important;
+ gap:0.28rem!important;
+ }
+ [data-testid="settings-surface-nav"] button{
+ min-height:2.75rem!important;
+ justify-items:start;
+ }
+ }
+ @media (max-width:859px){
+ [data-testid="today-session-card"],
+ [data-testid="program-roadmap"],
+ [data-testid="program-this-week"],
+ [data-testid="nutrition-execution-plan-header"],
+ [data-testid="nutrition-execution-plan-meals"],
+ [data-testid="settings-tab"] > .card.card-subtle{
+ border-radius:16px!important;
+ }
+ [data-testid="program-roadmap-grid"]::before{
+ display:none;
+ }
  }
  details > summary{
  list-style:none;

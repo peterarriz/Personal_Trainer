@@ -7,8 +7,8 @@ import {
 
 export function SettingsSurfaceNav({ activeSurface = "account", onSelectSurface = () => {} }) {
   return (
-    <div data-testid="settings-surface-nav" style={{ display:"grid", gap:"0.45rem" }}>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(148px,1fr))", gap:"0.4rem" }}>
+    <div data-testid="settings-surface-nav" className="settings-surface-nav" style={{ display:"grid", gap:"0.45rem" }}>
+      <div className="settings-surface-nav-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(148px,1fr))", gap:"0.4rem" }}>
         {SETTINGS_SURFACES.map((surface) => {
           const selected = activeSurface === surface.key;
           return (
@@ -17,6 +17,7 @@ export function SettingsSurfaceNav({ activeSurface = "account", onSelectSurface 
               type="button"
               className={`btn ${selected ? "btn-selected" : ""}`}
               data-testid={`settings-surface-${surface.key}`}
+              data-active={selected ? "true" : "false"}
               onClick={() => onSelectSurface(surface.key)}
               style={{
                 textAlign:"left",
