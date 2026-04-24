@@ -9390,12 +9390,14 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  data-testid={`auth-mode-${option.id}`}
  className="auth-mode-button"
  onClick={() => {
+ const nextAuthMode = option.id;
+ const applyAuthModeSwitch = () => {
  trackFrictionEvent({
  flow: "auth",
  action: "mode_switch",
  outcome: "selected",
  props: {
- mode: option.id,
+ mode: nextAuthMode,
  },
  });
  if (authRecoveryActive) {
@@ -9405,10 +9407,16 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  setAuthPasswordConfirm("");
  }
  setAuthNotice("");
- if (option.id !== "signin") {
+ if (nextAuthMode !== "signin") {
  setAuthPendingConfirmationEmail("");
  }
- setAuthMode(option.id);
+ setAuthMode(nextAuthMode);
+ };
+ if (typeof window !== "undefined" && typeof window.setTimeout === "function") {
+ window.setTimeout(applyAuthModeSwitch, 0);
+ return;
+ }
+ applyAuthModeSwitch();
  }}
  >
  <span className="auth-mode-title">{option.label}</span>
