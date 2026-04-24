@@ -5416,9 +5416,17 @@ if (!persistQueueRef.current) {
  }
  setTimeout(finalizeBoot, 0);
  }, [authInitializing, authSession?.user?.id, loading, personalization?.profile?.onboardingComplete, recordBootMetric, tab]);
- const trackFrictionEvent = useMemo(() => ({ flow = "app", action = "interaction", outcome = "observed", props = {} } = {}) => {
- frictionAnalytics.track({ flow, action, outcome, props });
- }, [frictionAnalytics]);
+const trackFrictionEvent = useMemo(() => ({ flow = "app", action = "interaction", outcome = "observed", props = {} } = {}) => {
+ const eventPayload = { flow, action, outcome, props };
+ const sendEvent = () => {
+  frictionAnalytics.track(eventPayload);
+ };
+ if (typeof window !== "undefined" && typeof window.setTimeout === "function") {
+  window.setTimeout(sendEvent, 0);
+  return;
+ }
+ sendEvent();
+}, [frictionAnalytics]);
  const recordAdaptiveLearningEvent = useCallback(({
  eventName = "",
  payload = {},
