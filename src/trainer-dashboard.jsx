@@ -5353,6 +5353,10 @@ const skipNextGoalsPersistRef = useRef(false);
 const suspendLocalPersistenceRef = useRef(false);
 const authSessionRef = useRef(null);
 const authSessionUserIdRef = useRef("");
+const authEmailInputRef = useRef(null);
+const authPasswordInputRef = useRef(null);
+const authPasswordConfirmInputRef = useRef(null);
+const authDisplayNameInputRef = useRef(null);
 const sbLoadRef = useRef(null);
 const persistExecutorRef = useRef(null);
 const persistQueueRef = useRef(null);
@@ -6856,6 +6860,68 @@ useEffect(() => {
  ? "active"
  : "signed_out";
  const authGateSignatureRef = useRef("");
+ const readAuthInputValue = useCallback((inputRef, fallback = "") => {
+ const inputValue = inputRef?.current && typeof inputRef.current.value === "string"
+ ? inputRef.current.value
+ : null;
+ return String(inputValue ?? fallback ?? "");
+ }, []);
+ const readAuthFormValues = useCallback(() => ({
+ email: readAuthInputValue(authEmailInputRef, authEmail).trim(),
+ password: readAuthInputValue(authPasswordInputRef, authPassword),
+ passwordConfirm: readAuthInputValue(authPasswordConfirmInputRef, authPasswordConfirm),
+ displayName: readAuthInputValue(authDisplayNameInputRef, authDisplayName).trim(),
+ }), [authDisplayName, authEmail, authPassword, authPasswordConfirm, readAuthInputValue]);
+ const syncAuthFormStateFromDom = useCallback(() => {
+ const nextValues = readAuthFormValues();
+ if (nextValues.email !== authEmail) setAuthEmail(nextValues.email);
+ if (nextValues.password !== authPassword) setAuthPassword(nextValues.password);
+ if (nextValues.passwordConfirm !== authPasswordConfirm) setAuthPasswordConfirm(nextValues.passwordConfirm);
+ if (nextValues.displayName !== authDisplayName) setAuthDisplayName(nextValues.displayName);
+ return nextValues;
+ }, [authDisplayName, authEmail, authPassword, authPasswordConfirm, readAuthFormValues]);
+ const scheduleAuthAction = useCallback((action) => {
+ const runAction = () => {
+  try {
+  const result = action?.();
+  if (result && typeof result.catch === "function") {
+  result.catch((error) => {
+  console.error("Auth action failed", error);
+  setAuthError("That action could not finish. Try again.");
+  });
+  }
+  } catch (error) {
+  console.error("Auth action failed", error);
+  setAuthError("That action could not finish. Try again.");
+  }
+ };
+ if (typeof window !== "undefined" && typeof window.setTimeout === "function") {
+  window.setTimeout(runAction, 0);
+  return;
+ }
+ runAction();
+ }, []);
+
+ useEffect(() => {
+ if (!authGateVisible) return undefined;
+ const syncAutofill = () => {
+ syncAuthFormStateFromDom();
+ };
+ syncAutofill();
+ if (typeof window === "undefined") return undefined;
+ const timers = [50, 250, 800, 1600].map((delay) => window.setTimeout(syncAutofill, delay));
+ window.addEventListener("focus", syncAutofill);
+ if (typeof document !== "undefined") {
+ document.addEventListener("visibilitychange", syncAutofill);
+ }
+ return () => {
+ timers.forEach((timerId) => window.clearTimeout(timerId));
+ window.removeEventListener("focus", syncAutofill);
+ if (typeof document !== "undefined") {
+ document.removeEventListener("visibilitychange", syncAutofill);
+ }
+ };
+ }, [authGateVisible, authMode, syncAuthFormStateFromDom]);
 
  useEffect(() => {
  recordSyncDiagnostic({
@@ -6906,6 +6972,11 @@ useEffect(() => {
  }, [SB_CONFIG_ERROR, authGateVisible, authMode, authRecoveryActive, startupUsableLocalResumeAvailable]);
 
  const handleSignIn = async () => {
+ const authValues = syncAuthFormStateFromDom();
+ if (!authValues.email || !String(authValues.password || "").trim()) {
+ setAuthError("Enter your email and password first.");
+ return;
+ }
  suspendLocalPersistenceRef.current = false;
  setAuthNotice("");
  authStorage.clearPasswordRecoverySession?.();
@@ -6919,10 +6990,20 @@ useEffect(() => {
  mode: authMode,
  },
  });
- await authStorage.handleSignIn({ authEmail, authPassword, setAuthError, setAuthSession });
+ await authStorage.handleSignIn({
+ authEmail: authValues.email,
+ authPassword: authValues.password,
+ setAuthError,
+ setAuthSession,
+ });
  };
 
  const handleSignUp = async () => {
+ const authValues = syncAuthFormStateFromDom();
+ if (!authValues.displayName || !authValues.email || !String(authValues.password || "").trim()) {
+ setAuthError("Enter your name, email, and password first.");
+ return;
+ }
  suspendLocalPersistenceRef.current = false;
  setAuthNotice("");
  authStorage.clearPasswordRecoverySession?.();
@@ -6937,10 +7018,10 @@ useEffect(() => {
  },
  });
  const result = await authStorage.handleSignUp({
- authEmail,
- authPassword,
+ authEmail: authValues.email,
+ authPassword: authValues.password,
  authProfile: {
- displayName: authDisplayName,
+ displayName: authValues.displayName,
  units: authUnits,
  timezone: authTimezone,
  },
@@ -6953,7 +7034,7 @@ useEffect(() => {
  setPersonalization((current) => mergePersonalization(current, {
  profile: {
  ...current?.profile,
- name: String(authDisplayName || "").trim() || current?.profile?.name || DEFAULT_PERSONALIZATION.profile.name,
+ name: authValues.displayName || current?.profile?.name || DEFAULT_PERSONALIZATION.profile.name,
  timezone: String(authTimezone || "").trim() || current?.profile?.timezone || DEFAULT_PERSONALIZATION.profile.timezone,
  profileSetupComplete: false,
  },
@@ -6965,7 +7046,7 @@ useEffect(() => {
  },
  }));
  if (result?.needsEmailConfirmation) {
- setAuthPendingConfirmationEmail(String(result?.pendingConfirmationEmail || authEmail || "").trim());
+ setAuthPendingConfirmationEmail(String(result?.pendingConfirmationEmail || authValues.email || "").trim());
  setAuthMode("signin");
  setAuthPassword("");
  } else if (result?.alreadyRegistered) {
@@ -6995,6 +7076,7 @@ useEffect(() => {
 
  const handleForgotPassword = async ({ source = "auth_gate", emailOverride = "" } = {}) => {
  if (authPasswordResetBusy) return;
+ const authValues = syncAuthFormStateFromDom();
  setAuthPasswordResetBusy(true);
  trackFrictionEvent({
  flow: "auth",
@@ -7006,7 +7088,7 @@ useEffect(() => {
  });
  try {
  await authStorage.handleForgotPassword({
- authEmail: emailOverride || authEmail,
+ authEmail: emailOverride || authValues.email,
  setAuthError,
  setAuthNotice,
  redirectTo: buildAuthReturnRedirectUrl(),
@@ -7019,7 +7101,8 @@ useEffect(() => {
  const handleResendSignupConfirmation = async ({ source = "auth_gate" } = {}) => {
  if (authConfirmationResendBusy) return;
  setAuthConfirmationResendBusy(true);
- const pendingEmail = String(authPendingConfirmationEmail || authEmail || "").trim();
+ const authValues = syncAuthFormStateFromDom();
+ const pendingEmail = String(authPendingConfirmationEmail || authValues.email || "").trim();
  trackFrictionEvent({
  flow: "auth",
  action: "resend_confirmation",
@@ -7045,7 +7128,8 @@ useEffect(() => {
 
  const handlePasswordRecoverySubmit = async () => {
  if (authRecoveryBusy) return;
- const trimmedPassword = String(authPassword || "");
+ const authValues = syncAuthFormStateFromDom();
+ const trimmedPassword = String(authValues.password || "");
  if (!authRecoverySession?.access_token || !authRecoverySession?.user?.id) {
  setAuthError("This reset link is no longer valid. Request a new one.");
  exitPasswordRecovery({ keepError: true });
@@ -7061,7 +7145,7 @@ useEffect(() => {
  setAuthError("Choose a password with at least 8 characters.");
  return;
  }
- if (trimmedPassword !== String(authPasswordConfirm || "")) {
+ if (trimmedPassword !== String(authValues.passwordConfirm || "")) {
  setAuthError("Passwords do not match yet.");
  return;
  }
@@ -9307,10 +9391,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  const authRecoveryMode = authMode === "recovery";
  const authSubmitDisabled = Boolean(
  authProviderUnavailable
- || !String(authPassword || "").trim()
- || (authRecoveryMode && (!authRecoveryActive || !String(authPasswordConfirm || "").trim()))
- || (!authRecoveryMode && !String(authEmail || "").trim())
- || (authMode === "signup" && !String(authDisplayName || "").trim())
+ || (authRecoveryMode && authRecoveryBusy)
  );
  const authBrandThemeState = bootBrandThemeState;
  const authEntryTheme = buildAuthEntryTheme({ brandThemeState: authBrandThemeState });
@@ -9442,7 +9523,9 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  id="auth-signup-name"
  data-testid="auth-signup-name"
  className="auth-field-input"
- value={authDisplayName}
+ ref={authDisplayNameInputRef}
+ defaultValue={authDisplayName}
+ onInput={e=>setAuthDisplayName(e.currentTarget.value)}
  onChange={e=>setAuthDisplayName(e.target.value)}
  placeholder="First name or display name"
  autoComplete="given-name"
@@ -9497,7 +9580,9 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  id="auth-email"
  data-testid="auth-email"
  className="auth-field-input"
- value={authEmail}
+ ref={authEmailInputRef}
+ defaultValue={authEmail}
+ onInput={e=>setAuthEmail(e.currentTarget.value)}
  onChange={e=>setAuthEmail(e.target.value)}
  placeholder="you@example.com"
  autoComplete="email"
@@ -9508,10 +9593,13 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  <label className="auth-field-label" htmlFor="auth-password">{authRecoveryMode ? "New password" : "Password"}</label>
  <input
  id="auth-password"
+ key={`auth-password-${authMode}`}
  data-testid="auth-password"
  className="auth-field-input"
  type="password"
- value={authPassword}
+ ref={authPasswordInputRef}
+ defaultValue={authPassword}
+ onInput={e=>setAuthPassword(e.currentTarget.value)}
  onChange={e=>setAuthPassword(e.target.value)}
  placeholder={authRecoveryMode ? "Choose a new password" : authMode === "signup" ? "Create a password" : "Enter your password"}
  autoComplete={authMode === "signin" ? "current-password" : "new-password"}
@@ -9525,7 +9613,9 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  data-testid="auth-password-confirm"
  className="auth-field-input"
  type="password"
- value={authPasswordConfirm}
+ ref={authPasswordConfirmInputRef}
+ defaultValue={authPasswordConfirm}
+ onInput={e=>setAuthPasswordConfirm(e.currentTarget.value)}
  onChange={e=>setAuthPasswordConfirm(e.target.value)}
  placeholder="Enter it one more time"
  autoComplete="new-password"
@@ -9541,7 +9631,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  data-auth-variant="tertiary"
  className="auth-action"
  disabled={authPasswordResetBusy}
- onClick={() => handleForgotPassword({ source: "auth_gate" })}
+ onClick={() => scheduleAuthAction(() => handleForgotPassword({ source: "auth_gate" }))}
  >
  {authPasswordResetBusy ? "Sending reset link..." : "Forgot password?"}
  </button>
@@ -9555,7 +9645,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  data-auth-variant="tertiary"
  className="auth-action"
  disabled={authConfirmationResendBusy}
- onClick={() => handleResendSignupConfirmation({ source: "auth_gate" })}
+ onClick={() => scheduleAuthAction(() => handleResendSignupConfirmation({ source: "auth_gate" }))}
  >
  {authConfirmationResendBusy ? "Resending confirmation..." : "Resend confirmation email"}
  </button>
@@ -9569,7 +9659,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  data-auth-variant="tertiary"
  className="auth-action"
  disabled={authRecoveryBusy}
- onClick={() => exitPasswordRecovery()}
+ onClick={() => scheduleAuthAction(() => exitPasswordRecovery())}
  >
  Back to sign in
  </button>
@@ -9581,7 +9671,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  data-testid="auth-submit"
  data-auth-variant={authEntryView.form.primaryAction.variant}
  className="auth-action"
- onClick={authMode === "signup" ? handleSignUp : authRecoveryMode ? handlePasswordRecoverySubmit : handleSignIn}
+ onClick={() => scheduleAuthAction(authMode === "signup" ? handleSignUp : authRecoveryMode ? handlePasswordRecoverySubmit : handleSignIn)}
  disabled={authSubmitDisabled}
  >
  {authRecoveryMode && authRecoveryBusy ? "Updating password..." : authEntryView.form.primaryAction.label}
@@ -9603,7 +9693,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  data-testid="continue-local-mode"
  data-auth-variant={authEntryView.localAction.variant}
  className="auth-action"
- onClick={() => {
+ onClick={() => scheduleAuthAction(() => {
  trackFrictionEvent({
  flow: "auth",
  action: "continue_local_mode",
@@ -9647,7 +9737,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  }
  setAuthError("");
  setStartupLocalResumeAccepted(true);
- }}
+ })}
  >
  {authEntryView.localAction.label}
  </button>

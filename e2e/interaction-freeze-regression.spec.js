@@ -84,6 +84,24 @@ test.describe("interaction freeze regression", () => {
     await expect(page.evaluate(() => document.body.innerText.includes("Sign in"))).resolves.toBe(true);
   });
 
+  test("auth gate accepts browser-autofilled credentials that React did not see yet", async ({ page }) => {
+    const session = makeSession({ email: "autofill-athlete@example.com" });
+    const payload = makeSignedInPayload();
+    await mockSupabaseRuntime(page, { session, payload, signInStatus: 200 });
+    await bootAuthGate(page);
+
+    await page.evaluate(() => {
+      const email = document.querySelector('[data-testid="auth-email"]');
+      const password = document.querySelector('[data-testid="auth-password"]');
+      if (email) email.value = "autofill-athlete@example.com";
+      if (password) password.value = "correct-horse-battery-staple";
+    });
+
+    await expect(page.getByTestId("auth-submit")).toBeEnabled();
+    await page.getByTestId("auth-submit").click();
+    await expect(page.getByTestId("app-root")).toBeVisible();
+  });
+
   test("signed-in shell remains clickable across lazy-loaded surfaces", async ({ page }) => {
     const session = makeSession();
     const payload = makeSignedInPayload();
