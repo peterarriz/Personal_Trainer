@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, normalizeGoals, getActiveTimeBoundGoal, generateTodayPlan } from "./modules-planning.js";
-import { createAuthStorageModule, buildStorageStatus, classifyStorageError, createPersistQueueController, createPersistedPayloadFingerprint, STORAGE_STATUS_REASONS } from "./modules-auth-storage.js";
+import { createAuthStorageModule, buildStorageStatus, classifyStorageError, createPersistQueueController, createPersistedPayloadFingerprint, LOCAL_CACHE_KEY, STORAGE_STATUS_REASONS } from "./modules-auth-storage.js";
 import { getGoalContext, normalizeActualNutritionLog, resolveNutritionActualLogStoreCompat, compareNutritionPrescriptionToActual, getPlaceRecommendations, buildGroceryBasket, mergeActualNutritionLogUpdate, applyHydrationQuickAdd } from "./modules-nutrition.js";
 import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, resolveEffectiveStatus, buildPlannedDayRecord, comparePlannedDayToActual } from "./modules-checkins.js";
 import { COACH_TOOL_ACTIONS, deterministicCoachPacket } from "./modules-coach-engine.js";
@@ -6803,18 +6803,33 @@ useEffect(() => {
  clientCloudConfigDiagnostics.supabaseUrlSource,
  ]);
  const readLocalResumeSnapshot = () => {
- const snapshot = localLoad();
+ const rawSnapshot = typeof window !== "undefined" ? safeStorageGet(localStorage, LOCAL_CACHE_KEY, "") : "";
+ const hasRawCache = Boolean(
+ rawSnapshot
+ && rawSnapshot !== "null"
+ && rawSnapshot !== "{}"
+ && rawSnapshot !== "undefined"
+ );
+ const shouldParseNow = hasRawCache && rawSnapshot.length < 750000;
+ const snapshot = shouldParseNow ? localLoad() : null;
+ const hasCache = shouldParseNow
+ ? Boolean(snapshot && typeof snapshot === "object")
+ : hasRawCache;
+ const hasUsableState = shouldParseNow
+ ? hasUsableLocalResumePayload(snapshot)
+ : hasRawCache;
  recordSyncDiagnostic({
  type: SYNC_DIAGNOSTIC_EVENT_TYPES.localCacheState,
  at: Date.now(),
- hasPendingWrites: Boolean(snapshot?.syncMeta?.pendingCloudWrite),
- lastLocalMutationTs: snapshot?.syncMeta?.lastLocalMutationTs,
- lastCloudSyncTs: snapshot?.syncMeta?.lastCloudSyncTs,
+ hasPendingWrites: shouldParseNow ? Boolean(snapshot?.syncMeta?.pendingCloudWrite) : false,
+ lastLocalMutationTs: shouldParseNow ? snapshot?.syncMeta?.lastLocalMutationTs : 0,
+ lastCloudSyncTs: shouldParseNow ? snapshot?.syncMeta?.lastCloudSyncTs : 0,
  });
  return {
  payload: snapshot,
- hasCache: Boolean(snapshot && typeof snapshot === "object"),
- hasUsableState: hasUsableLocalResumePayload(snapshot),
+ hasCache,
+ hasUsableState,
+ deferredParse: hasRawCache && !shouldParseNow,
  };
  };
  const syncLocalResumeFlags = () => {
@@ -7427,6 +7442,16 @@ useEffect(() => {
  reason: "persistence_suspended",
  };
  }
+ const requestUserId = String(authSessionRef.current?.user?.id || authSession?.user?.id || "").trim();
+ const localOnlyPersistenceAllowed = TRUSTED_DEBUG_MODE && startupLocalResumeAccepted;
+ if (!requestUserId && !localOnlyPersistenceAllowed) {
+ return {
+ ok: false,
+ skipped: true,
+ stale: true,
+ reason: "auth_gate_persistence_blocked",
+ };
+ }
  const normalizedGoalPayload = normalizeGoals(newGoals || []);
  const runtimeState = buildCanonicalRuntimeState({
  logs: newLogs,
@@ -7450,7 +7475,6 @@ useEffect(() => {
  runtimeState,
  transformPersonalization: (draftPersonalization) => buildPersistedPersonalization(draftPersonalization, normalizedGoalPayload),
  });
- const requestUserId = String(authSessionRef.current?.user?.id || authSession?.user?.id || "").trim();
  return (
  persistQueueRef.current?.enqueue({
  key: createPersistedPayloadFingerprint(payload),

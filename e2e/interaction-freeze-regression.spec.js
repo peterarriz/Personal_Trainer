@@ -44,6 +44,54 @@ const makeAuthGatePayload = () => ({
   ts: Date.now(),
 });
 
+const makeLargeLocalResumePayload = (days = 1800) => {
+  const logs = {};
+  const dailyCheckins = {};
+  const plannedDayRecords = {};
+  const planWeekRecords = {};
+  const nutritionActualLogs = {};
+  for (let index = 0; index < days; index += 1) {
+    const dateKey = new Date(Date.UTC(2020, 0, 1 + index)).toISOString().slice(0, 10);
+    logs[dateKey] = {
+      date: dateKey,
+      completed: true,
+      notes: "training note ".repeat(12),
+      exercises: Array.from({ length: 8 }, (_, exerciseIndex) => ({
+        name: `Lift ${exerciseIndex}`,
+        sets: [{ reps: 10, weight: 95 + exerciseIndex }, { reps: 8, weight: 105 + exerciseIndex }],
+      })),
+    };
+    dailyCheckins[dateKey] = { energy: index % 5, soreness: index % 4, sleep: 7, note: "check ".repeat(8) };
+    plannedDayRecords[dateKey] = {
+      dateKey,
+      base: { training: { label: "Base session", blocks: [] } },
+      resolved: { training: { label: "Resolved session", blocks: [] } },
+      decision: { mode: "base" },
+    };
+    nutritionActualLogs[dateKey] = { calories: 2300, protein: 175, note: "meal ".repeat(8) };
+    if (index % 7 === 0) planWeekRecords[`week_${index / 7}`] = { summary: "week ".repeat(16), score: index % 100 };
+  }
+  return {
+    ...makeAuthGatePayload(),
+    logs,
+    dailyCheckins,
+    plannedDayRecords,
+    planWeekRecords,
+    nutritionActualLogs,
+    personalization: {
+      ...makeAuthGatePayload().personalization,
+      profile: {
+        name: "Large Local Athlete",
+        timezone: "America/Chicago",
+        onboardingComplete: true,
+        profileSetupComplete: true,
+      },
+    },
+    goals: [{ id: "large-local-goal", name: "Keep the large saved plan responsive", active: true, priority: 1 }],
+    syncMeta: { pendingCloudWrite: true, lastLocalMutationTs: Date.now(), lastCloudSyncTs: 0 },
+  };
+};
+
 const bootAuthGate = async (page) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.addInitScript(({ payloadSeed, supabaseUrl, supabaseKey }) => {
@@ -58,6 +106,21 @@ const bootAuthGate = async (page) => {
     supabaseUrl: SUPABASE_URL,
     supabaseKey: SUPABASE_KEY,
   });
+  await page.goto("/");
+  await expect(page.getByTestId("auth-gate")).toBeVisible();
+};
+
+const bootAuthGateWithLargeLocalCache = async (page) => {
+  const payloadSeed = makeLargeLocalResumePayload();
+  const serializedPayload = JSON.stringify(payloadSeed);
+  expect(serializedPayload.length).toBeGreaterThan(2_000_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.addInitScript(({ payload }) => {
+    localStorage.removeItem("trainer_auth_session_v1");
+    localStorage.removeItem("trainer_auth_recovery_v1");
+    localStorage.removeItem("trainer_debug");
+    localStorage.setItem("trainer_local_cache_v4", payload);
+  }, { payload: serializedPayload });
   await page.goto("/");
   await expect(page.getByTestId("auth-gate")).toBeVisible();
 };
@@ -100,6 +163,16 @@ test.describe("interaction freeze regression", () => {
     await expect(page.getByTestId("auth-submit")).toBeEnabled();
     await page.getByTestId("auth-submit").click();
     await expect(page.getByTestId("app-root")).toBeVisible();
+  });
+
+  test("large saved local plans do not block auth field input", async ({ page }) => {
+    await bootAuthGateWithLargeLocalCache(page);
+
+    await page.getByTestId("auth-email").fill("large-local@example.com", { timeout: 10_000 });
+    await page.getByTestId("auth-password").fill("password123", { timeout: 10_000 });
+
+    await expect(page.getByTestId("auth-email")).toHaveValue("large-local@example.com");
+    await expect(page.getByTestId("auth-password")).toHaveValue("password123");
   });
 
   test("signed-in shell remains clickable across lazy-loaded surfaces", async ({ page }) => {

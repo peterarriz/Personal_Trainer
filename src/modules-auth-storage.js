@@ -502,6 +502,8 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   let activeLoadPromise = null;
   let activeLoadUserId = "";
   let localCacheWriteFence = 0;
+  let lastLocalCacheRaw = undefined;
+  let lastLocalCacheParsed = null;
   let persistenceLifecycleVersion = 0;
   const trackAnalytics = ({ flow = "sync", action = "storage", outcome = "observed", props = {} } = {}) => {
     try {
@@ -716,14 +718,26 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   const localLoad = () => {
     try {
       const raw = localStorage.getItem(LOCAL_CACHE_KEY);
-      return raw ? JSON.parse(raw) : null;
+      if (!raw) {
+        lastLocalCacheRaw = raw;
+        lastLocalCacheParsed = null;
+        return null;
+      }
+      if (raw === lastLocalCacheRaw) return lastLocalCacheParsed;
+      const parsed = JSON.parse(raw);
+      lastLocalCacheRaw = raw;
+      lastLocalCacheParsed = parsed;
+      return parsed;
     } catch { return null; }
   };
 
   const localSave = (payload, { fence = localCacheWriteFence } = {}) => {
     try {
       if (fence !== localCacheWriteFence) return;
-      localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(payload));
+      const raw = JSON.stringify(payload);
+      localStorage.setItem(LOCAL_CACHE_KEY, raw);
+      lastLocalCacheRaw = raw;
+      lastLocalCacheParsed = payload;
       emitLocalCacheDiagnostics(payload, Date.now());
     } catch {}
   };
@@ -736,6 +750,8 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       } else {
         localStorage.setItem(LOCAL_CACHE_KEY, "null");
       }
+      lastLocalCacheRaw = undefined;
+      lastLocalCacheParsed = null;
       emitLocalCacheDiagnostics(null, Date.now());
     } catch {}
   };
