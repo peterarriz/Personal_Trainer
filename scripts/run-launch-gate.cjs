@@ -1,6 +1,11 @@
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const {
+  getSyncProofWarning,
+  getVisualReviewWarning,
+  readLaunchProofArtifacts,
+} = require("./_lib/launch-proof-artifacts.cjs");
 
 const repoRoot = path.resolve(__dirname, "..");
 
@@ -193,18 +198,12 @@ const CATEGORY_DEFINITIONS = [
     label: "Sync and auth reliability",
     description: "Local/cloud/auth transitions stay boring and predictable.",
     checkIds: ["build", "sync_unit", "account_e2e", "sync_state_e2e"],
-    manualReview: [
-      "Run the real staging two-device sync pack with live Supabase before launch.",
-    ],
   },
   {
     id: "design",
     label: "Design and craft proxy checks",
     description: "Clarity budgets, CTA discipline, theme intent, and density controls.",
     checkIds: ["build", "today_unit", "intake_unit", "trust_e2e", "design_e2e"],
-    manualReview: [
-      "A human premium-read pass is still required across dark, light, and small-phone hardware.",
-    ],
   },
   {
     id: "journeys",
@@ -248,7 +247,12 @@ const runCommand = ({ id = "", label = "", command = "" } = {}) => {
   };
 };
 
-const evaluateCategory = ({ category = null, checkResults = {}, buildMetrics = {} } = {}) => {
+const evaluateCategory = ({
+  category = null,
+  checkResults = {},
+  buildMetrics = {},
+  proofArtifacts = {},
+} = {}) => {
   const checks = (category?.checkIds || []).map((checkId) => checkResults[checkId]).filter(Boolean);
   const failedChecks = checks.filter((check) => check.status !== "PASS");
   const warnings = [];
@@ -256,7 +260,14 @@ const evaluateCategory = ({ category = null, checkResults = {}, buildMetrics = {
   if (category?.id === "design" && Number.isFinite(buildMetrics?.appBundleKb) && buildMetrics.appBundleKb > 4500) {
     warnings.push(`Split app bundle is still heavy at ${buildMetrics.appBundleKb.toFixed(1)} KB.`);
   }
-  if (Array.isArray(category?.manualReview)) warnings.push(...category.manualReview);
+  if (category?.id === "sync") {
+    const syncWarning = getSyncProofWarning(proofArtifacts?.syncProof);
+    if (syncWarning) warnings.push(syncWarning);
+  }
+  if (category?.id === "design") {
+    const visualWarning = getVisualReviewWarning(proofArtifacts?.visualReview);
+    if (visualWarning) warnings.push(visualWarning);
+  }
 
   const status = failedChecks.length > 0
     ? "FAIL"
@@ -333,6 +344,7 @@ const renderMarkdown = ({
   checkResults = [],
   buildMetrics = {},
   manualPack = {},
+  proofArtifacts = {},
   weaknesses = [],
 } = {}) => {
   const categoryTable = [
@@ -362,11 +374,17 @@ const renderMarkdown = ({
     ? `- Split app bundle: ${buildMetrics.appBundleKb.toFixed(1)} KB\n- Vendor bundle: ${Number.isFinite(buildMetrics?.vendorBundleKb) ? buildMetrics.vendorBundleKb.toFixed(1) : "n/a"} KB`
     : "- Build metrics were not parsed from the current run.";
 
+  const syncProof = proofArtifacts?.syncProof || {};
+  const visualReview = proofArtifacts?.visualReview || {};
   const manualSection = [
     "## Manual / External Review Still Required",
     "",
-    "- Real two-device staging sync: run `npm run e2e:sync:staging` against a live environment.",
-    "- Premium visual review: dark, light, and small-phone passes still need human signoff.",
+    syncProof.pass
+      ? `- Real sync proof: PASS via ${syncProof.proofMode === "local_real_backend" ? "local build + real Supabase" : "remote staging"} (${syncProof.generatedAt}).`
+      : "- Real sync proof: run `npm run qa:sync:proof` until a fresh passing artifact is attached.",
+    visualReview.pass
+      ? `- Visual review signoff: PASS by ${visualReview.reviewer} (${visualReview.generatedAt}).`
+      : "- Premium visual review: run `npm run qa:visual-review -- --reviewer <name> --approve` to attach a reviewed signoff.",
     manualPack?.worksheetPath
       ? `- Manual review pack: [manual-qa-run.md](../${relativePath(manualPack.worksheetPath)})`
       : "- Manual review pack: not generated in this run.",
@@ -433,11 +451,13 @@ const main = () => {
     logPath: manualPackLogPath,
     worksheetPath: parseManualPackWorksheetPath(manualPackOutput),
   };
+  const proofArtifacts = readLaunchProofArtifacts({ root: repoRoot });
 
   const categoryResults = CATEGORY_DEFINITIONS.map((category) => evaluateCategory({
     category,
     checkResults: checkResultsById,
     buildMetrics,
+    proofArtifacts,
   }));
   const summary = summarizeOverallVerdict(categoryResults);
   const weaknesses = buildWeaknesses({ categoryResults, buildMetrics });
@@ -456,6 +476,7 @@ const main = () => {
       logPath: relativePath(manualPack.logPath),
       worksheetPath: manualPack.worksheetPath ? relativePath(manualPack.worksheetPath) : "",
     },
+    proofArtifacts,
     weaknesses,
   };
 
@@ -465,6 +486,7 @@ const main = () => {
     checkResults: Object.values(checkResultsById),
     buildMetrics,
     manualPack,
+    proofArtifacts,
     weaknesses,
   });
 

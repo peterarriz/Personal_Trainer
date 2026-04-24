@@ -25,6 +25,7 @@ npm run qa:visual-review
 
 - `qa:sync:proof` writes a staging-sync artifact and records whether the real two-device proof was run or skipped because env is missing.
 - `qa:visual-review` builds a screenshot pack for auth, Today, Log, Plan, Nutrition, and Settings across desktop/mobile theme states.
+- Fresh passing proof artifacts clear the sync/design `WARN` state inside `qa:launch-gate`.
 
 ## Output
 
@@ -73,7 +74,7 @@ Some launch decisions cannot be honestly automated in a local repo-only run. The
 - premium visual review across dark/light themes and real phone hardware
 - any deployment/vendor validation that depends on external configuration
 
-The harness generates a companion manual review worksheet each run so those checks stay attached to the same artifact set.
+The harness generates a companion manual review worksheet each run so those checks stay attached to the same artifact set. It also reads the latest sync-proof and visual-review artifacts; once those artifacts are fresh and marked `PASS`, the corresponding category warning is removed.
 
 The adjacent proof commands above are intentionally separate so we can keep the launch gate deterministic while still attaching fresh staging-sync and screenshot artifacts to a release candidate when needed.
 

@@ -250,3 +250,30 @@ test("swim support degrades to tier 3 when swim anchor and access reality are st
   assert.equal(tier.id, "tier_3");
   assert.match(tier.honestyLine, /swim anchor|pool|open-water|start simple/i);
 });
+
+test("tactical fitness goals stay tier 2 even when the planner backbone leans strength", () => {
+  const tier = buildSupportTierModel({
+    goals: [{
+      active: true,
+      category: "general_fitness",
+      name: "Train for tactical or occupational fitness",
+      resolvedGoal: {
+        goalFamily: "hybrid",
+        planningCategory: "general_fitness",
+        structuredIntentId: "tactical_fitness",
+        summary: "Train for tactical or occupational fitness",
+      },
+    }],
+    domainAdapterId: DOMAIN_ADAPTER_IDS.strength,
+    goalCapabilityStack: {
+      primary: {
+        primaryDomain: DOMAIN_ADAPTER_IDS.strength,
+        fallbackPlanningMode: "strength_foundation",
+      },
+    },
+  });
+
+  assert.equal(tier.id, "tier_2");
+  assert.match(tier.honestyLine, /tactical|job demands|recovery debt/i);
+  assert.match(tier.basisLine, /strength|work capacity|durability/i);
+});

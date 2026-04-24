@@ -2,6 +2,8 @@ const { test, expect } = require("@playwright/test");
 const {
   commitPendingGoalSelection,
   completeStructuredIntakeOnOneScreen,
+  domClick,
+  domFill,
   gotoIntakeInLocalMode,
   readIntakeSession,
   readLocalCache,
@@ -16,16 +18,16 @@ test.describe("one-screen structured intake", () => {
   test("featured fast path reaches a visible draft preview within eight primary taps", async ({ page }) => {
     let clickCount = 0;
     const clickAndCount = async (testId) => {
-      await page.getByTestId(testId).click();
+      await domClick(page.getByTestId(testId));
       clickCount += 1;
     };
 
     await clickAndCount("intake-goal-type-endurance");
     await clickAndCount("intake-featured-goal-train_for_run_race");
     await clickAndCount("intake-goal-metric-event_distance-half-marathon");
-    await page.getByTestId("intake-goal-metric-target-timeline").fill("October");
-    await page.getByTestId("intake-goal-metric-current-run-frequency").fill("4");
-    await page.getByTestId("intake-goal-metric-longest-recent-run-value").fill("8");
+    await domFill(page.getByTestId("intake-goal-metric-target-timeline"), "October");
+    await domFill(page.getByTestId("intake-goal-metric-current-run-frequency"), "4");
+    await domFill(page.getByTestId("intake-goal-metric-longest-recent-run-value"), "8");
     await clickAndCount("intake-goal-metric-longest_recent_run_unit-miles");
     await commitPendingGoalSelection(page);
     clickCount += 1;
@@ -217,19 +219,19 @@ test.describe("one-screen structured intake", () => {
       coachingStyle: "Balanced coaching",
     });
 
-    await page.getByTestId("app-tab-settings").click();
+    await domClick(page.getByTestId("app-tab-settings"));
     await expect(page.getByTestId("settings-tab")).toBeVisible();
-    await page.getByTestId("settings-surface-baselines").click();
+    await domClick(page.getByTestId("settings-surface-baselines"));
     await expect(page.getByTestId("metrics-baselines-section")).toBeVisible();
 
     for (const day of ["Tue", "Thu", "Sun"]) {
-      await page.getByTestId(`metrics-input-environment-available-days-${day.toLowerCase()}`).click();
+      await domClick(page.getByTestId(`metrics-input-environment-available-days-${day.toLowerCase()}`));
     }
     for (const day of ["Mon", "Wed", "Fri"]) {
-      await page.getByTestId(`metrics-input-environment-available-days-${day.toLowerCase()}`).click();
+      await domClick(page.getByTestId(`metrics-input-environment-available-days-${day.toLowerCase()}`));
     }
 
-    await page.getByTestId("metrics-save-environment").click();
+    await domClick(page.getByTestId("metrics-save-environment"));
     await expect(page.getByTestId("settings-save-status")).toContainText(/training setup|future planning/i);
 
     let cache = await readLocalCache(page);
@@ -239,9 +241,9 @@ test.describe("one-screen structured intake", () => {
     await page.reload();
     await expect(page.getByTestId("today-session-card")).toBeVisible();
 
-    await page.getByTestId("app-tab-settings").click();
+    await domClick(page.getByTestId("app-tab-settings"));
     await expect(page.getByTestId("settings-tab")).toBeVisible();
-    await page.getByTestId("settings-surface-baselines").click();
+    await domClick(page.getByTestId("settings-surface-baselines"));
     await expect(page.getByTestId("metrics-baselines-section")).toBeVisible();
 
     await expect(page.getByTestId("metrics-input-environment-available-days-mon")).toHaveClass(/btn-primary/);

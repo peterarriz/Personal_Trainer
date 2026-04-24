@@ -13,11 +13,15 @@ export function ExerciseHowDisclosure({
   if (!resolvedLabel || isGenericPlaceholder(resolvedLabel)) return null;
 
   const model = getMovementExplanation(resolvedLabel);
-  const canRender = Boolean(
-    model?.found
-    || model?.demoSearchUrl
-  );
-  if (!canRender) return null;
+  const guideRows = [
+    { label: "What it trains", value: model?.whatItIs || "" },
+    { label: "Setup", value: model?.setupNotes || "" },
+    { label: "Do it", value: model?.howToDoIt || "" },
+    { label: "Rep guide", value: model?.repCountsAs || "" },
+    { label: "Watch for", value: model?.cautionNotes || "" },
+  ].filter((row) => row.value);
+  const hasGuideContent = Boolean(guideRows.length || model?.commonSubstitutions?.length);
+  if (!hasGuideContent) return null;
 
   return (
     <details
@@ -37,55 +41,32 @@ export function ExerciseHowDisclosure({
           listStyle: "none",
         }}
       >
-        How to do it
+        Movement guide
       </summary>
-      <div style={{ display: "grid", gap: "0.16rem", marginTop: "0.36rem" }}>
-        {!!model?.whatItIs && (
-          <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-soft)", lineHeight: 1.45 }}>
-            {model.whatItIs}
+      <div style={{ display: "grid", gap: "0.28rem", marginTop: "0.36rem" }}>
+        {model?.found && model?.canonicalLabel && model.canonicalLabel !== resolvedLabel && (
+          <div style={{ fontSize: "0.45rem", color: "var(--consumer-text-muted)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            {model.canonicalLabel}
           </div>
         )}
-        {!!model?.howToDoIt && (
-          <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-muted)", lineHeight: 1.45 }}>
-            Do it: {model.howToDoIt}
+        {guideRows.map((row) => (
+          <div key={row.label} style={{ display: "grid", gap: "0.08rem" }}>
+            <div style={{ fontSize: "0.42rem", color: "var(--consumer-text-muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+              {row.label}
+            </div>
+            <div style={{ fontSize: row.label === "What it trains" ? "0.49rem" : "0.48rem", color: row.label === "What it trains" ? "var(--consumer-text-soft)" : "var(--consumer-text-muted)", lineHeight: 1.45 }}>
+              {row.value}
+            </div>
           </div>
-        )}
-        {!!model?.repCountsAs && (
-          <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-muted)", lineHeight: 1.45 }}>
-            Rep guide: {model.repCountsAs}
-          </div>
-        )}
-        {!!model?.setupNotes && (
-          <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-muted)", lineHeight: 1.45 }}>
-            Setup: {model.setupNotes}
-          </div>
-        )}
-        {!!model?.cautionNotes && (
-          <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-muted)", lineHeight: 1.45 }}>
-            Watch for: {model.cautionNotes}
-          </div>
-        )}
+        ))}
         {!!model?.commonSubstitutions?.length && (
-          <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-muted)", lineHeight: 1.45 }}>
-            Swap if needed: {model.commonSubstitutions.join(", ")}
-          </div>
-        )}
-        {!!model?.demoSearchUrl && (
-          <div>
-            <a
-              data-testid={dataTestId ? `${dataTestId}-link` : undefined}
-              href={model.demoSearchUrl}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                fontSize: "0.48rem",
-                color: "var(--accent-cyan, #67e8f9)",
-                textDecoration: "none",
-                fontWeight: 600,
-              }}
-            >
-              Watch demo
-            </a>
+          <div style={{ display: "grid", gap: "0.08rem" }}>
+            <div style={{ fontSize: "0.42rem", color: "var(--consumer-text-muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+              Swap if needed
+            </div>
+            <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-muted)", lineHeight: 1.45 }}>
+              {model.commonSubstitutions.join(", ")}
+            </div>
           </div>
         )}
       </div>

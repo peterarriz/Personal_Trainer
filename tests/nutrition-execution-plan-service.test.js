@@ -32,6 +32,14 @@ test("nutrition execution plan exposes a large rotating catalog and structured c
   assert.ok(plan.sections.every((section) => Array.isArray(section.recipeSteps) && section.recipeSteps.length >= 2));
   assert.ok(plan.sections.every((section) => Array.isArray(section.improvementTips) && section.improvementTips.length >= 2));
   assert.ok(plan.sections.every((section) => Array.isArray(section.groceryItems) && section.groceryItems.length >= 2));
+  assert.ok(plan.sections.every((section) => section.recipeCard && typeof section.recipeCard.summary === "string" && section.recipeCard.summary.length > 0));
+  assert.ok(plan.sections.every((section) => Array.isArray(section.recipeCard.metaItems) && section.recipeCard.metaItems.length >= 2));
+  assert.ok(plan.sections.every((section) => Array.isArray(section.recipeCard.steps) && section.recipeCard.steps.length >= 2));
+  assert.ok(plan.sections.every((section) => Array.isArray(section.recipeCard.ingredientItems) && section.recipeCard.ingredientItems.length >= 2));
+  const recipeReadySections = plan.sections.filter((section) => section.slotKey !== "snack");
+  assert.ok(recipeReadySections.every((section) => /^https:\/\/www\.google\.com\/search\?q=/i.test(section.recipeSearchUrl || "")));
+  assert.match(new URL(recipeReadySections[0].recipeSearchUrl).searchParams.get("q") || "", /recipe/i);
+  assert.equal(plan.sections.find((section) => section.slotKey === "snack")?.recipeSearchUrl || "", "");
   assert.ok(NUTRITION_EXECUTION_CATALOG_STATS.uniqueIngredientCount >= 250);
   assert.ok(NUTRITION_EXECUTION_CATALOG_STATS.estimatedMealVariants >= 5000000);
   assert.ok(NUTRITION_EXECUTION_CATALOG_STATS.recipeCountBySlot.breakfast >= 500);
@@ -127,6 +135,8 @@ test("meal feedback can push meals down and slot overrides can rotate anchored m
 
   assert.notEqual(dislikedPlan.sections[1].preferenceKey, "shawarma_plate");
   assert.equal(anchoredPlan.sections[0].sourceType, "anchor");
+  assert.match(anchoredPlan.sections[0].recipeSearchUrl || "", /^https:\/\/www\.google\.com\/search\?q=/i);
+  assert.equal(anchoredPlan.sections[0].recipeCard.title, anchoredPlan.sections[0].title);
   assert.equal(rotatedPlan.sections[0].sourceType, "pattern");
   assert.equal(rotatedPlan.sections[0].overrideApplied, true);
   assert.ok(rotatedPlan.sections[0].seedOffset >= 1);

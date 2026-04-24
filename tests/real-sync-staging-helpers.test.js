@@ -3,8 +3,12 @@ const assert = require("node:assert/strict");
 
 const {
   REAL_SYNC_REQUIRED_ENV_VARS,
+  REAL_SYNC_LOCAL_BASE_URL,
   REAL_SYNC_TEST_DATA,
   resolveRealSyncEnv,
+  getSupabaseServiceRoleKey,
+  createRealSyncProofIdentity,
+  buildRealSyncProofPlan,
   buildRealSyncSeedPayload,
   buildParitySnapshotFromPayload,
   hasMachineReadableRetryReason,
@@ -25,6 +29,38 @@ test("resolveRealSyncEnv reports missing staging requirements explicitly", () =>
     ["SUPABASE_URL", "SUPABASE_TEST_EMAIL"],
   );
   assert.equal(REAL_SYNC_REQUIRED_ENV_VARS.length, 5);
+});
+
+test("buildRealSyncProofPlan falls back to a local real-backend proof when the staging URL is absent", () => {
+  const plan = buildRealSyncProofPlan({
+    SUPABASE_URL: "https://forma.example.supabase.co/",
+    SUPABASE_ANON_KEY: "anon-key",
+    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+  });
+
+  assert.equal(plan.proofMode, "local_real_backend");
+  assert.equal(plan.baseUrl, REAL_SYNC_LOCAL_BASE_URL);
+  assert.equal(plan.canProvisionUser, true);
+  assert.equal(plan.usesProvisionedUser, true);
+  assert.equal(plan.canRun, true);
+  assert.deepEqual(plan.blockingMissing, []);
+});
+
+test("getSupabaseServiceRoleKey accepts legacy env aliases", () => {
+  assert.equal(
+    getSupabaseServiceRoleKey({
+      SUPABASE_SERVICE_KEY: "legacy-service-role-key",
+    }),
+    "legacy-service-role-key",
+  );
+});
+
+test("createRealSyncProofIdentity returns a deterministic disposable proof user", () => {
+  const identity = createRealSyncProofIdentity({ stamp: "2026-04-23T15:45:12.000Z" });
+
+  assert.match(identity.email, /^sync-proof-2026-04-23t15-45-12-000z@example\.com$/);
+  assert.match(identity.password, /^FormaSync![A-Z0-9]{10}9$/);
+  assert.equal(identity.label, "2026-04-23t15-45-12-000z");
 });
 
 test("buildRealSyncSeedPayload creates a deterministic signed-in baseline", () => {

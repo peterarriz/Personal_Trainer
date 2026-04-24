@@ -67,6 +67,8 @@ const collectGoalSignals = (goals = []) => {
     hasTriathlon: /\b(triathlon|multisport|sprint tri|olympic tri|70\.3|ironman)\b/.test(text),
     hasPower: activeGoals.some((goal) => goal?.resolvedGoal?.goalFamily === "athletic_power") || /\b(vertical|jump|dunk|explosive|power)\b/.test(text),
     hasDurability: activeGoals.some((goal) => goal?.category === "injury_prevention" || goal?.resolvedGoal?.goalFamily === "re_entry") || /\b(rehab|durability|prehab|return to training|rebuild|postpartum|recover)\b/.test(text),
+    hasTactical: activeGoals.some((goal) => goal?.resolvedGoal?.structuredIntentId === "tactical_fitness")
+      || /\b(tactical|firefighter|military|occupational fitness|academy)\b/.test(text),
     hasHybrid: /\b(hybrid|multi-domain|split focus)\b/.test(text),
   };
 };
@@ -209,7 +211,9 @@ export const resolveSupportTier = ({
   const fallbackMode = sanitizeText(goalCapabilityStack?.primary?.fallbackPlanningMode || "", 80).toLowerCase();
   let resolvedTier = SUPPORT_TIER_LEVELS.tier3;
 
-  if (
+  if (signals.hasTactical) {
+    resolvedTier = SUPPORT_TIER_LEVELS.tier2;
+  } else if (
     adapterId === DOMAIN_ADAPTER_IDS.foundation
     && signals.activeGoals.length > 0
     && fallbackMode
@@ -306,7 +310,9 @@ export const buildSupportTierModel = ({
       })
     : { ceilingTier: null, reason: "" };
 
-  const honestyLine = adapterId === DOMAIN_ADAPTER_IDS.hybrid
+  const honestyLine = signals.hasTactical
+    ? "FORMA can support tactical readiness credibly, but it stays a little more conservative because mixed job demands and recovery debt do not reduce to one clean metric."
+    : adapterId === DOMAIN_ADAPTER_IDS.hybrid
     ? "FORMA can guide hybrid training credibly, but it will not pretend every lane can peak at once. One lane leads and the other stays supportive."
     : adapterId === DOMAIN_ADAPTER_IDS.triathlon
     ? "FORMA can support a conservative multisport build here, but it gets more precise once your swim, bike, and run anchors are real."
@@ -323,6 +329,8 @@ export const buildSupportTierModel = ({
     : "The plan will stay useful by starting simple and getting sharper as you add more detail.";
   const basisLine = signals.activeGoals.length === 0
     ? "You do not need a formal goal to start. FORMA can still build a strong first week from your routine."
+    : signals.hasTactical
+    ? "Tactical support stays believable by balancing strength, work capacity, and durability instead of pretending one clean metric covers the whole job."
     : adapterId === DOMAIN_ADAPTER_IDS.hybrid
     ? "Hybrid plans stay believable by making the tradeoff visible. The lead lane gets the cleaner recovery while the other lane stays alive."
     : adapterId === DOMAIN_ADAPTER_IDS.triathlon

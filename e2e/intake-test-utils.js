@@ -384,6 +384,14 @@ async function domClick(locator) {
   await locator.evaluate((node) => node.click());
 }
 
+async function domDblClick(locator) {
+  await expect(locator).toBeVisible();
+  await locator.evaluate((node) => {
+    node.click();
+    node.click();
+  });
+}
+
 async function domFill(locator, value) {
   await expect(locator).toBeVisible();
   await locator.evaluate((node, nextValue) => {
@@ -500,7 +508,7 @@ async function completeIntroQuestionnaire(page, {
       await domClick(page.getByTestId("intake-goals-toggle-custom"));
       await expect(page.getByTestId("intake-goals-primary-input")).toBeVisible();
     }
-    await page.getByTestId("intake-goals-primary-input").fill(String(goal));
+    await domFill(page.getByTestId("intake-goals-primary-input"), String(goal));
     const addGoalButton = page.getByTestId("intake-goals-add");
     await expect(addGoalButton).toBeEnabled();
     await domClick(addGoalButton);
@@ -1330,7 +1338,7 @@ async function waitForPostOnboarding(page) {
   const todayCard = page.getByTestId("today-session-card");
   if (await todayCard.isVisible().catch(() => false)) return;
   await expect(page.getByTestId("app-tab-today")).toBeVisible();
-  await page.getByTestId("app-tab-today").click();
+  await domClick(page.getByTestId("app-tab-today"));
   await expect(page.getByTestId("today-session-card")).toBeVisible();
 }
 
@@ -1347,7 +1355,7 @@ async function confirmIntakeBuild(page, { rapidRepeat = false } = {}) {
   const confirmButton = page.getByTestId("intake-confirm-build");
   await expect(confirmButton).toBeEnabled();
   if (rapidRepeat) {
-    await confirmButton.dblclick();
+    await domDblClick(confirmButton);
     return;
   }
   await domClick(confirmButton);
@@ -1394,6 +1402,9 @@ module.exports = {
   completeIntroQuestionnaire,
   completeStructuredIntakeOnOneScreen,
   dismissAppleHealthPromptIfVisible,
+  domClick,
+  domDblClick,
+  domFill,
   enterLocalIntakeIfNeeded,
   fillPlanningRealityInputs,
   fillStarterMetricInputs,

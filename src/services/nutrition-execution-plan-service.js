@@ -572,6 +572,108 @@ const buildRecipeSteps = (slotKey = "", buildItems = [], ctx = {}) => {
   ];
 };
 
+const buildRecipeSearchUrl = ({
+  slotKey = "",
+  title = "",
+  buildItems = [],
+} = {}) => {
+  if (slotKey === "snack") return "";
+  const safeTitle = sanitizeText(title).slice(0, 120);
+  const visibleItems = dedupeList(buildItems)
+    .map((item) => sanitizeText(item).replace(/^optional:\s*/i, "").slice(0, 80))
+    .filter(Boolean);
+  const recipeSubject = safeTitle || visibleItems.slice(0, 3).join(" ");
+  const fallbackSubject = slotKey === "breakfast"
+    ? "high protein breakfast"
+    : slotKey === "lunch"
+    ? "high protein lunch"
+    : slotKey === "dinner"
+    ? "high protein dinner"
+    : "high protein meal";
+  const query = sanitizeText(`${recipeSubject || fallbackSubject} recipe`).slice(0, 180);
+  if (!query) return "";
+  return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+};
+
+const buildRecipeSummary = (slotKey = "", ctx = {}) => {
+  if (slotKey === "breakfast") {
+    return ctx.hardSession || ctx.hybridSession
+      ? "Protein-forward breakfast with visible carbs so the session starts fueled instead of reactive."
+      : "Repeatable high-protein breakfast that gets the day organized early.";
+  }
+  if (slotKey === "lunch") {
+    return ctx.hardSession || ctx.hybridSession
+      ? "Balanced lunch with enough carbs to support the main session instead of chasing energy later."
+      : "Anchor lunch that keeps protein obvious and prevents convenience drift.";
+  }
+  if (slotKey === "dinner") {
+    return ctx.hardSession || ctx.hybridSession
+      ? "Recovery-focused dinner with protein and a visible carb side."
+      : "Satisfying dinner that closes the day without turning into snack cleanup.";
+  }
+  return "Fast protein backfill that closes the gap without pretending to be a full meal.";
+};
+
+const buildRecipeTimeLabel = (slotKey = "", ctx = {}) => {
+  if (slotKey === "breakfast") return ctx.travelMode ? "5-10 min" : "10-15 min";
+  if (slotKey === "lunch") return ctx.travelMode ? "10-15 min" : "15-20 min";
+  if (slotKey === "dinner") return ctx.travelMode ? "15-20 min" : "20-30 min";
+  return "2-5 min";
+};
+
+const buildRecipeServesLabel = (slotKey = "", buildItems = [], ctx = {}) => {
+  if (slotKey === "snack") return "1 serving";
+  if (ctx.travelMode) return "1 serving";
+  if (slotKey === "dinner" && buildItems.length >= 4) return "2 servings";
+  if (slotKey === "lunch" && buildItems.length >= 4) return "1-2 servings";
+  return "1 serving";
+};
+
+const buildRecipeBestForLabel = (slotKey = "", ctx = {}) => {
+  if (slotKey === "breakfast") {
+    return ctx.hardSession || ctx.hybridSession ? "Pre-session fuel" : "Easy first meal";
+  }
+  if (slotKey === "lunch") {
+    return ctx.hardSession || ctx.hybridSession ? "Midday fuel" : "Steady anchor";
+  }
+  if (slotKey === "dinner") {
+    return ctx.hardSession || ctx.hybridSession ? "Recovery meal" : "Evening anchor";
+  }
+  return "Protein catch-up";
+};
+
+const buildRecipeCardModel = ({
+  slotKey = "",
+  title = "",
+  buildItems = [],
+  groceryItems = [],
+  recipeSteps = [],
+  improvementTips = [],
+  targetLine = "",
+  coachLine = "",
+  prepLine = "",
+  backupLine = "",
+  detailLine = "",
+  why = "",
+  ctx = {},
+} = {}) => ({
+  title: sanitizeText(title) || (slotKey === "snack" ? "Protein backfill" : `${titleCase(slotKey)} recipe`),
+  summary: buildRecipeSummary(slotKey, ctx),
+  metaItems: [
+    { label: "Time", value: buildRecipeTimeLabel(slotKey, ctx) },
+    { label: "Serves", value: buildRecipeServesLabel(slotKey, buildItems, ctx) },
+    { label: "Best for", value: buildRecipeBestForLabel(slotKey, ctx) },
+  ].filter((item) => item.value),
+  ingredientItems: dedupeList(buildItems).slice(0, 8),
+  groceryItems: dedupeList(groceryItems).slice(0, 8),
+  steps: dedupeList(recipeSteps).slice(0, 5),
+  coachCue: sanitizeText(coachLine),
+  prepLine: sanitizeText(prepLine),
+  fallbackLine: sanitizeText(backupLine),
+  finishLine: sanitizeText(detailLine || why || targetLine),
+  upgradeIdeas: dedupeList(improvementTips).slice(0, 4),
+});
+
 const buildImprovementTips = (slotKey = "", ctx = {}) => {
   if (slotKey === "breakfast") {
     return [
@@ -1848,27 +1950,53 @@ const buildSavedAnchorSection = (slotKey = "", anchorText = "", ctx = {}) => {
   const label = slotKey === "snack" ? "Snacks" : titleCase(slotKey);
   const buildItems = splitAnchorIntoItems(anchorText);
   const support = buildSectionSupport(slotKey, ctx, buildItems.length ? buildItems : [anchorText]);
+  const title = sanitizeText(anchorText) || `${label} anchor`;
+  const targetLine = buildSectionTargetLine(slotKey, ctx);
+  const detailLine = slotKey === "breakfast"
+    ? "Use the meal you already repeat well. The win is consistency, not novelty."
+    : "This is already one of your repeatable defaults. Keep the portions honest and move on.";
+  const why = ctx.bodyCompBias
+    ? "Reliable meals beat perfectly optimized meals you never actually eat."
+    : "A repeatable anchor is valuable because it removes one more decision from the day.";
+  const recipeSteps = buildRecipeSteps(slotKey, buildItems.length ? buildItems : [anchorText], ctx);
+  const improvementTips = buildImprovementTips(slotKey, ctx);
   return {
     key: slotKey,
     slotKey,
     label,
-    title: sanitizeText(anchorText) || `${label} anchor`,
+    title,
     buildHeading: "Build",
     buildItems: buildItems.length ? buildItems : [sanitizeText(anchorText)],
-    targetLine: buildSectionTargetLine(slotKey, ctx),
+    targetLine,
     detailLabel: "Saved anchor",
-    detailLine: slotKey === "breakfast"
-      ? "Use the meal you already repeat well. The win is consistency, not novelty."
-      : "This is already one of your repeatable defaults. Keep the portions honest and move on.",
-    why: ctx.bodyCompBias
-      ? "Reliable meals beat perfectly optimized meals you never actually eat."
-      : "A repeatable anchor is valuable because it removes one more decision from the day.",
+    detailLine,
+    why,
     preferenceKey: `anchor_${slotKey}`,
     sourceType: "anchor",
     overrideApplied: false,
     seedOffset: 0,
-    recipeSteps: buildRecipeSteps(slotKey, buildItems.length ? buildItems : [anchorText], ctx),
-    improvementTips: buildImprovementTips(slotKey, ctx),
+    recipeSearchUrl: buildRecipeSearchUrl({
+      slotKey,
+      title,
+      buildItems: buildItems.length ? buildItems : [anchorText],
+    }),
+    recipeSteps,
+    improvementTips,
+    recipeCard: buildRecipeCardModel({
+      slotKey,
+      title,
+      buildItems: buildItems.length ? buildItems : [anchorText],
+      groceryItems: support.groceryItems,
+      recipeSteps,
+      improvementTips,
+      targetLine,
+      coachLine: support.coachLine,
+      prepLine: support.prepLine,
+      backupLine: support.backupLine,
+      detailLine,
+      why,
+      ctx,
+    }),
     ...support,
   };
 };
@@ -1880,24 +2008,46 @@ const buildPatternSection = (slotKey = "", ctx = {}, state = {}, slotOverride = 
   const picks = pattern.pickParts ? pattern.pickParts(ctx, state, slotSeed) : {};
   const buildItems = dedupeList(typeof pattern.build === "function" ? pattern.build(ctx, picks) : []);
   const support = buildSectionSupport(slotKey, ctx, buildItems);
+  const title = typeof pattern.title === "function" ? sanitizeText(pattern.title(picks, ctx)) : sanitizeText(pattern.title);
+  const targetLine = buildSectionTargetLine(slotKey, ctx);
+  const detailLine = sanitizeText(typeof pattern.detailLine === "function" ? pattern.detailLine(ctx, picks) : pattern.detailLine);
+  const why = sanitizeText(typeof pattern.why === "function" ? pattern.why(ctx, picks) : pattern.why);
+  const recipeSteps = buildRecipeSteps(slotKey, buildItems, ctx);
+  const improvementTips = buildImprovementTips(slotKey, ctx);
   return {
     key: slotKey,
     slotKey,
     label: slotKey === "snack" ? "Snacks" : titleCase(slotKey),
     patternId: sanitizeText(pattern?.id || "", 80).toLowerCase(),
-    title: typeof pattern.title === "function" ? sanitizeText(pattern.title(picks, ctx)) : sanitizeText(pattern.title),
+    title,
     buildHeading: "Build",
     buildItems,
-    targetLine: buildSectionTargetLine(slotKey, ctx),
+    targetLine,
     detailLabel: pattern.detailLabel || "Execution note",
-    detailLine: sanitizeText(typeof pattern.detailLine === "function" ? pattern.detailLine(ctx, picks) : pattern.detailLine),
-    why: sanitizeText(typeof pattern.why === "function" ? pattern.why(ctx, picks) : pattern.why),
+    detailLine,
+    why,
     preferenceKey: sanitizeText(pattern.id || "", 80).toLowerCase(),
     sourceType: "pattern",
     overrideApplied: shouldUsePatternOverride(slotOverride),
     seedOffset: Math.max(0, Math.round(Number(slotOverride?.seedOffset || 0))),
-    recipeSteps: buildRecipeSteps(slotKey, buildItems, ctx),
-    improvementTips: buildImprovementTips(slotKey, ctx),
+    recipeSearchUrl: buildRecipeSearchUrl({ slotKey, title, buildItems }),
+    recipeSteps,
+    improvementTips,
+    recipeCard: buildRecipeCardModel({
+      slotKey,
+      title,
+      buildItems,
+      groceryItems: support.groceryItems,
+      recipeSteps,
+      improvementTips,
+      targetLine,
+      coachLine: support.coachLine,
+      prepLine: support.prepLine,
+      backupLine: support.backupLine,
+      detailLine,
+      why,
+      ctx,
+    }),
     ...support,
   };
 };
@@ -1937,6 +2087,13 @@ const buildSnackSection = (ctx = {}, slotOverride = null) => {
   const options = chooseSnackOptions(ctx, slotOverride);
   const buildItems = options.map((option) => option.label);
   const support = buildSectionSupport("snack", ctx, buildItems);
+  const targetLine = buildSectionTargetLine("snack", ctx);
+  const detailLine = ctx.bodyCompBias
+    ? "Use the shake before bed instead of grazing."
+    : "A shake before bed beats trying to cram another full meal into the night.";
+  const why = `This is the easiest way to guarantee protein without letting the last meal sprawl.`;
+  const recipeSteps = buildRecipeSteps("snack", buildItems, ctx);
+  const improvementTips = buildImprovementTips("snack", ctx);
   return {
     key: "snack",
     slotKey: "snack",
@@ -1944,18 +2101,32 @@ const buildSnackSection = (ctx = {}, slotOverride = null) => {
     title: "Protein Backfill",
     buildHeading: "Pick 2",
     buildItems,
-    targetLine: buildSectionTargetLine("snack", ctx),
+    targetLine,
     detailLabel: "If protein is light at night",
-    detailLine: ctx.bodyCompBias
-      ? "Use the shake before bed instead of grazing."
-      : "A shake before bed beats trying to cram another full meal into the night.",
-    why: `This is the easiest way to guarantee protein without letting the last meal sprawl.`,
+    detailLine,
+    why,
     preferenceKey: "protein_backfill",
     sourceType: "pattern",
     overrideApplied: shouldUsePatternOverride(slotOverride),
     seedOffset: Math.max(0, Math.round(Number(slotOverride?.seedOffset || 0))),
-    recipeSteps: buildRecipeSteps("snack", buildItems, ctx),
-    improvementTips: buildImprovementTips("snack", ctx),
+    recipeSearchUrl: "",
+    recipeSteps,
+    improvementTips,
+    recipeCard: buildRecipeCardModel({
+      slotKey: "snack",
+      title: "Protein Backfill",
+      buildItems,
+      groceryItems: support.groceryItems,
+      recipeSteps,
+      improvementTips,
+      targetLine,
+      coachLine: support.coachLine,
+      prepLine: support.prepLine,
+      backupLine: support.backupLine,
+      detailLine,
+      why,
+      ctx,
+    }),
     ...support,
   };
 };

@@ -1,6 +1,12 @@
 const { test, expect } = require("@playwright/test");
 
-const { commitPendingGoalSelection, gotoIntakeInLocalMode, waitForPostOnboarding } = require("./intake-test-utils.js");
+const {
+  commitPendingGoalSelection,
+  domClick,
+  domFill,
+  gotoIntakeInLocalMode,
+  waitForPostOnboarding,
+} = require("./intake-test-utils.js");
 const {
   SUPABASE_KEY,
   SUPABASE_URL,
@@ -10,43 +16,43 @@ const {
 } = require("./auth-runtime-test-helpers.js");
 
 async function completeSetupReality(page) {
-  await page.getByTestId("intake-goals-option-experience-level-intermediate").click();
-  await page.getByTestId("intake-goals-option-training-days-4").click();
-  await page.getByTestId("intake-goals-option-session-length-45").click();
-  await page.getByTestId("intake-goals-option-training-location-gym").click();
+  await domClick(page.getByTestId("intake-goals-option-experience-level-intermediate"));
+  await domClick(page.getByTestId("intake-goals-option-training-days-4"));
+  await domClick(page.getByTestId("intake-goals-option-session-length-45"));
+  await domClick(page.getByTestId("intake-goals-option-training-location-gym"));
 }
 
 async function fillBigLiftSaveFields(page) {
-  await page.getByTestId("intake-goal-metric-lift_focus-bench").click();
-  await page.getByTestId("intake-goal-metric-lift-target-weight").fill("245");
-  await page.getByTestId("intake-goal-metric-target-timeline").fill("12 weeks");
-  await page.getByTestId("intake-goal-metric-current-strength-baseline-weight").fill("205");
-  await page.getByTestId("intake-goal-metric-current-strength-baseline-reps").fill("5");
+  await domClick(page.getByTestId("intake-goal-metric-lift_focus-bench"));
+  await domFill(page.getByTestId("intake-goal-metric-lift-target-weight"), "245");
+  await domFill(page.getByTestId("intake-goal-metric-target-timeline"), "12 weeks");
+  await domFill(page.getByTestId("intake-goal-metric-current-strength-baseline-weight"), "205");
+  await domFill(page.getByTestId("intake-goal-metric-current-strength-baseline-reps"), "5");
 }
 
 async function fillLeanerDetails(page) {
-  await page.getByTestId("intake-goal-metric-body_comp_tempo-steady").click();
-  await page.getByTestId("intake-goal-metric-muscle_retention_priority-high").click();
-  await page.getByTestId("intake-goal-metric-cardio_preference-walks").click();
+  await domClick(page.getByTestId("intake-goal-metric-body_comp_tempo-steady"));
+  await domClick(page.getByTestId("intake-goal-metric-muscle_retention_priority-high"));
+  await domClick(page.getByTestId("intake-goal-metric-cardio_preference-walks"));
 }
 
 async function fillGeneralStrengthDetails(page) {
-  await page.getByTestId("intake-goal-metric-equipment_profile-full-gym").click();
-  await page.getByTestId("intake-goal-metric-training_age-intermediate").click();
-  await page.getByTestId("intake-goal-metric-progression_posture-standard").click();
+  await domClick(page.getByTestId("intake-goal-metric-equipment_profile-full-gym"));
+  await domClick(page.getByTestId("intake-goal-metric-training_age-intermediate"));
+  await domClick(page.getByTestId("intake-goal-metric-progression_posture-standard"));
 }
 
 async function openGoalFamilyAndSelectStack(page) {
   await expect(page.getByTestId("intake-goals-step")).toBeVisible();
 
-  await page.getByTestId("intake-goal-type-strength").click();
-  await page.getByTestId("intake-featured-goal-improve_big_lifts").click();
+  await domClick(page.getByTestId("intake-goal-type-strength"));
+  await domClick(page.getByTestId("intake-featured-goal-improve_big_lifts"));
   await fillBigLiftSaveFields(page);
   await commitPendingGoalSelection(page);
   await expect(page.getByTestId("intake-selected-goals")).toContainText(/improve a big lift/i);
 
-  await page.getByTestId("intake-goal-type-physique").click();
-  await page.getByTestId("intake-featured-goal-get_leaner").click();
+  await domClick(page.getByTestId("intake-goal-type-physique"));
+  await domClick(page.getByTestId("intake-featured-goal-get_leaner"));
   await fillLeanerDetails(page);
   await commitPendingGoalSelection(page);
   await expect(page.getByTestId("intake-selected-goals")).toContainText(/get leaner/i);
@@ -165,7 +171,7 @@ test.describe("intake reliability", () => {
 
     const continueButton = page.getByTestId("intake-footer-continue");
     await expect(continueButton).toBeEnabled();
-    await continueButton.click();
+    await domClick(continueButton);
 
     await expect.poll(async () => page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
   });
@@ -173,16 +179,16 @@ test.describe("intake reliability", () => {
   test("mobile intake lets the user remove a mistaken first goal, switch cleanly, and keep sensible defaults", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
 
-    await page.getByTestId("intake-goal-type-strength").click();
-    await page.getByTestId("intake-featured-goal-get_stronger").click();
+    await domClick(page.getByTestId("intake-goal-type-strength"));
+    await domClick(page.getByTestId("intake-featured-goal-get_stronger"));
     await fillGeneralStrengthDetails(page);
     await commitPendingGoalSelection(page);
     await expect(page.getByTestId("intake-selected-goals")).toContainText(/get stronger/i);
 
-    await page.getByTestId("intake-selected-goal-remove-get-stronger").click();
+    await domClick(page.getByTestId("intake-selected-goal-remove-get-stronger"));
     await expect(page.getByTestId("intake-selected-goals")).not.toContainText(/get stronger/i);
 
-    await page.getByTestId("intake-featured-goal-improve_big_lifts").click();
+    await domClick(page.getByTestId("intake-featured-goal-improve_big_lifts"));
     await fillBigLiftSaveFields(page);
     await commitPendingGoalSelection(page);
     await expect(page.getByTestId("intake-selected-goals")).toContainText(/improve a big lift/i);
@@ -193,11 +199,11 @@ test.describe("intake reliability", () => {
     await expect(page.getByTestId("intake-goals-option-session-length-30")).toHaveClass(/btn-primary/);
     await expect(page.getByTestId("intake-goals-option-coaching-style-balanced-coaching")).toHaveClass(/btn-primary/);
 
-    await page.getByTestId("intake-goals-option-training-location-gym").click();
+    await domClick(page.getByTestId("intake-goals-option-training-location-gym"));
 
     const continueButton = page.getByTestId("intake-footer-continue");
     await expect(continueButton).toBeEnabled();
-    await continueButton.click();
+    await domClick(continueButton);
 
     await expect.poll(async () => page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
     const phase = await page.getByTestId("intake-root").getAttribute("data-intake-phase");
@@ -220,7 +226,7 @@ test.describe("intake reliability", () => {
 
     const continueButton = page.getByTestId("intake-footer-continue");
     await expect(continueButton).toBeEnabled();
-    await continueButton.click();
+    await domClick(continueButton);
 
     await expect.poll(async () => page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
     expect(runtime.trainerDataGets).toBeGreaterThan(0);

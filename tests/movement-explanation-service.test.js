@@ -64,6 +64,22 @@ test("common gym lifts resolve with real setup cues and a demo search link", () 
   assert.match(carry.repCountsAs, /distance or time/i);
 });
 
+test("common accessory lift labels now resolve to internal movement guides", () => {
+  const hammerCurl = getMovementExplanation("Hammer Curl");
+  const facePull = getMovementExplanation("Face Pull");
+  const tricepsExtension = getMovementExplanation("Cable pressdown or DB triceps extension");
+
+  assert.equal(hammerCurl.found, true);
+  assert.equal(facePull.found, true);
+  assert.equal(tricepsExtension.found, true);
+  assert.match(hammerCurl.whatItIs, /accessory lift/i);
+  assert.match(facePull.howToDoIt, /move through the fullest range|keep momentum out/i);
+  assert.match(tricepsExtension.cautionNotes, /too heavy|momentum/i);
+  assert.match(new URL(hammerCurl.demoSearchUrl).searchParams.get("search_query") || "", /hammer curl exercise tutorial/i);
+  assert.match(new URL(facePull.demoSearchUrl).searchParams.get("search_query") || "", /face pull exercise tutorial/i);
+  assert.match(new URL(tricepsExtension.demoSearchUrl).searchParams.get("search_query") || "", /triceps extension exercise tutorial|pressdown exercise tutorial/i);
+});
+
 test("unknown labels return a safe empty explanation object", () => {
   const explanation = getMovementExplanation("Sunday Reset");
 

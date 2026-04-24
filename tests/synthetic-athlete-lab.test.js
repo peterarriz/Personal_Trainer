@@ -257,6 +257,61 @@ test("synthetic athlete lab only flags support-tier dishonesty when the product 
   assert.ok(!persona.failures.some((failure) => failure.clusterId === "support_tier_dishonesty"));
 });
 
+test("synthetic athlete lab uses conservative run-anchor fallback and keeps tactical support in tier 2", () => {
+  const report = runSyntheticAthleteLab({
+    personas: [
+      {
+        id: "run_walk_anchor_probe",
+        name: "Run walk anchor probe",
+        ageRange: "28-28",
+        trainingAgeYears: 0,
+        goalIntents: [
+          "Run a first 5K without blowing up",
+          "Stay pain-free",
+          "Build confidence with structured sessions",
+        ],
+        supportTierExpectation: "tier_1",
+        bodyCompContext: "Weight loss is a side effect, not the main ask",
+        strengthContext: "Little structured lifting",
+        enduranceContext: "Run-walk base only",
+        scheduleReality: "Three runs and one optional strength touch each week",
+        baselineMetrics: {
+          startingCapacity: "run_walk_20",
+        },
+      },
+      {
+        id: "tactical_support_probe",
+        name: "Tactical support probe",
+        ageRange: "42-42",
+        trainingAgeYears: 4,
+        goalIntents: [
+          "Be ready fr firefighter physical demands over the next six months",
+          "Stay strong and durable",
+          "Fit shift-life recovery limits",
+        ],
+        supportTierExpectation: "tier_2",
+        bodyCompContext: "Performance and work readiness",
+        strengthContext: "Functional strength base",
+        enduranceContext: "Mixed durability and work-capacity needs",
+        injuryContext: "Back and shoulder load matter",
+        scheduleReality: "Rotating schedule with compressed recovery windows",
+        equipmentReality: "Station equipment, bodyweight, full gym when available",
+      },
+    ],
+    weeks: 8,
+    includeArchetypeMatrix: false,
+  });
+
+  const runningPersona = report.personaResults.find((entry) => entry.personaId === "run_walk_anchor_probe");
+  const tacticalPersona = report.personaResults.find((entry) => entry.personaId === "tactical_support_probe");
+
+  assert.ok(runningPersona);
+  assert.ok(tacticalPersona);
+  assert.ok(!runningPersona.failures.some((failure) => failure.clusterId === "baseline_timing_problems"));
+  assert.ok(!tacticalPersona.failures.some((failure) => failure.clusterId === "support_tier_dishonesty"));
+  assert.equal(tacticalPersona.supportTierActual, "tier_2");
+});
+
 test("synthetic athlete lab seeds running and swimming anchors from persona baselines before the first clarify loop", () => {
   const report = runSyntheticAthleteLab({
     personas: [

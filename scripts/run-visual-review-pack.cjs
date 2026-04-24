@@ -21,6 +21,13 @@ const getArgValue = (flag, fallback = "") => {
 
 const requestedUrl = getArgValue("--url", "");
 const outputRoot = getArgValue("--output", path.join("artifacts", "visual-review-pack"));
+const reviewer = getArgValue("--reviewer", "");
+const reviewNote = getArgValue("--note", "");
+const reviewStatus = args.includes("--approve")
+  ? "PASS"
+  : args.includes("--reject")
+  ? "FAIL"
+  : "PENDING";
 const now = new Date();
 const stamp = [
   now.getFullYear(),
@@ -76,7 +83,7 @@ const waitForServer = async (url, timeoutMs = 60_000) => {
 };
 
 const startStaticServer = async () => {
-  execFileSync("npm.cmd", ["run", "build"], {
+  execFileSync("cmd", ["/c", "npm run build"], {
     cwd: repoRoot,
     env: buildEnv,
     stdio: "inherit",
@@ -234,6 +241,10 @@ const writeSummary = ({ baseUrl = "", results = [] } = {}) => {
   const summary = {
     generatedAt: new Date().toISOString(),
     baseUrl,
+    reviewer: reviewer || "",
+    reviewStatus,
+    reviewNotes: reviewNote ? [reviewNote] : [],
+    reviewedAt: reviewer || reviewStatus !== "PENDING" ? new Date().toISOString() : "",
     captures: results.map((result) => ({
       id: result.id,
       summary: result.summary,
@@ -246,6 +257,15 @@ const writeSummary = ({ baseUrl = "", results = [] } = {}) => {
     "",
     `- Generated: ${summary.generatedAt}`,
     `- Base URL: ${baseUrl}`,
+    "",
+    "## Review",
+    "",
+    `- Status: ${summary.reviewStatus}`,
+    `- Reviewer: ${summary.reviewer || "[pending]"}`,
+    `- Reviewed at: ${summary.reviewedAt || "[pending]"}`,
+    ...(summary.reviewNotes.length
+      ? ["", ...summary.reviewNotes.map((note) => `- ${note}`)]
+      : []),
     "",
     "## Captures",
     "",

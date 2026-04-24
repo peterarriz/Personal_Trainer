@@ -479,6 +479,24 @@ const describeStartingCapacitySeed = (value = "") => {
   if (value === "30_plus_minutes") return "30+ minutes feels repeatable";
   return sanitizeText(value.replaceAll("_", " "), 80);
 };
+const inferLongestRunMinutesSeed = (persona = {}, baselineMetrics = {}) => {
+  const normalizedStartingCapacity = sanitizeText(baselineMetrics?.startingCapacity || "", 40).toLowerCase();
+  if (normalizedStartingCapacity === "walk_only" || normalizedStartingCapacity === "10_easy_minutes") return 10;
+  if (normalizedStartingCapacity === "20_to_30_minutes") return 20;
+  if (normalizedStartingCapacity === "30_plus_minutes") return 30;
+
+  const lowered = [
+    persona.primaryGoal,
+    ...(toArray(persona.goalIntents || [])),
+    persona.enduranceContext,
+    persona.scheduleReality,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  if (/walking only|walk only|sedentary|deconditioned/.test(lowered)) return 10;
+  if (/minimal|no cardio|little conditioning/.test(lowered)) return 15;
+  if (/run[- ]?walk|easy runs?|treadmill|daily walking|walking|aerobic|conditioning|work capacity|endurance/.test(lowered)) return 20;
+  return null;
+};
 const inferSwimAccessRealitySeed = (persona = {}) => {
   const lowered = `${persona.enduranceContext || ""} ${persona.equipmentReality || ""} ${persona.scheduleReality || ""}`.toLowerCase();
   const hasPool = /\bpool\b/.test(lowered);
@@ -1057,6 +1075,7 @@ const buildAnchorAnswerForPersona = ({
 } = {}) => {
   const fieldId = sanitizeText(anchor?.field_id || "", 80);
   const baselineMetrics = normalizePersonaBaselineMetrics(persona);
+  const allowConservativeRunFallback = Boolean(anchor?.question || anchor?.label || anchor?.input_type);
   if (!fieldId) return null;
   if (fieldId === "starting_capacity_anchor") {
     const lowCapacity = /deconditioned|walking only|sedentary|obese beginner/i.test(`${persona.bodyCompContext} ${persona.strengthContext} ${persona.enduranceContext}`);
@@ -1135,7 +1154,11 @@ const buildAnchorAnswerForPersona = ({
     };
   }
   if (fieldId === "running_endurance_anchor_kind") {
-    const usesLongest = Boolean(baselineMetrics?.run?.distanceMiles || baselineMetrics?.run?.durationMinutes);
+    const usesLongest = Boolean(
+      baselineMetrics?.run?.distanceMiles
+      || baselineMetrics?.run?.durationMinutes
+      || !baselineMetrics?.run?.paceText
+    );
     const value = usesLongest ? "longest_recent_run" : "recent_pace_baseline";
     return {
       rawText: value === "longest_recent_run" ? "longest recent run" : "recent pace baseline",
@@ -1150,6 +1173,20 @@ const buildAnchorAnswerForPersona = ({
       rawText: raw,
       answerValue: { value: baselineMetrics.run.distanceMiles || baselineMetrics.run.durationMinutes, raw },
     };
+  }
+  if (fieldId === "longest_recent_run" && allowConservativeRunFallback) {
+    const fallbackMinutes = inferLongestRunMinutesSeed(persona, baselineMetrics);
+    if (Number.isFinite(fallbackMinutes) && fallbackMinutes > 0) {
+      const raw = `${fallbackMinutes} minutes`;
+      return {
+        rawText: raw,
+        answerValue: {
+          value: fallbackMinutes,
+          raw,
+          unit: "minutes",
+        },
+      };
+    }
   }
   if (fieldId === "recent_pace_baseline" && baselineMetrics?.run?.paceText) {
     return {

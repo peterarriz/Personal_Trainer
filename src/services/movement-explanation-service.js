@@ -4,7 +4,7 @@ const sanitizeText = (value = "", maxLength = 240) => sanitizeDisplayCopy(String
 
 const normalizeLookupLabel = (value = "") => sanitizeText(value, 160).toLowerCase();
 
-const DEMO_WORTHY_LABEL = /\b(bench|press|row|squat|deadlift|hinge|rdl|lunge|split squat|step-up|step up|push-up|pushup|pull-up|pull up|chin-up|chin up|pulldown|raise|carry|plank|dead bug|hollow body|bridge|thrust|tempo|interval|run|swim|circuit|prehab|durability)\b/i;
+const DEMO_WORTHY_LABEL = /\b(bench|press|dip|row|squat|deadlift|hinge|rdl|lunge|split squat|step-up|step up|leg press|leg curl|hamstring curl|push-up|pushup|push up|pull-up|pull up|chin-up|chin up|pulldown|pull-down|pull down|raise|lateral|fly|curl|extension|tricep|bicep|pressdown|pushdown|skull crusher|face pull|pull-apart|external rotation|wall slide|carry|plank|dead bug|bird dog|hollow body|hollow hold|bridge|thrust|calf|heel drop|leg raise|crunch|ab wheel|pallof|swing|clean|snatch|get-up|get up|march|hop|jump|sled|farmer|suitcase|tempo|interval|run|swim|bike|rower|ski|circuit|prehab|durability)\b/i;
 
 const buildMovementDemoUrl = (label = "", { force = false } = {}) => {
   const safeLabel = sanitizeText(label, 120);
@@ -374,6 +374,147 @@ const FALLBACK_EXPLANATIONS = [
   },
 ];
 
+const buildGenericMovementExplanation = (label = "") => {
+  const safeLabel = sanitizeText(label, 120);
+  const normalizedLabel = normalizeLookupLabel(safeLabel);
+  if (!safeLabel || !DEMO_WORTHY_LABEL.test(safeLabel)) return null;
+
+  if (/\btempo|interval|run|bike|rower|ski|swim\b/i.test(normalizedLabel)) {
+    return createExplanation({
+      canonicalLabel: safeLabel,
+      matchedLabel: safeLabel,
+      whatItIs: "A conditioning block that should feel purposeful, repeatable, and tied to the session goal instead of random suffering.",
+      howToDoIt: "Warm up first, hit the written effort honestly, and let the recoveries do their job so the last rep still looks organized.",
+      repCountsAs: "Each written repeat or the full continuous block counts as the work, depending on the session.",
+      commonSubstitutions: ["Bike or rower version", "Time-based version", "Lower-impact conditioning tool"],
+      cautionNotes: "If mechanics fall apart early, back off slightly before the whole session turns into survival mode.",
+      setupNotes: "Know the target effort, work duration, and recovery before you start.",
+    });
+  }
+
+  if (/\bplank|dead bug|bird dog|hollow|leg raise|crunch|ab wheel|pallof|march\b/i.test(normalizedLabel)) {
+    return createExplanation({
+      canonicalLabel: safeLabel,
+      matchedLabel: safeLabel,
+      whatItIs: "A trunk-control drill that teaches bracing, position, and cleaner force transfer through the whole body.",
+      howToDoIt: "Move slowly or hold the position while keeping the ribs down, pelvis controlled, and breathing steady.",
+      repCountsAs: "Timed drills count by seconds; dynamic drills count one full controlled rep or one rep per side.",
+      commonSubstitutions: ["Plank variation", "Dead bug variation", "Side plank or Pallof press"],
+      cautionNotes: "Stop before you have to arch the lower back or hold your breath to fake the position.",
+      setupNotes: "Short, honest sets teach the position better than long sloppy ones.",
+    });
+  }
+
+  if (/\bcarry|sled|farmer|suitcase\b/i.test(normalizedLabel)) {
+    return createExplanation({
+      canonicalLabel: safeLabel,
+      matchedLabel: safeLabel,
+      whatItIs: "A loaded locomotion drill that builds posture, trunk stiffness, grip, and useful conditioning support.",
+      howToDoIt: "Stand tall, brace first, and keep each step controlled instead of letting the load drag you out of position.",
+      repCountsAs: "The full written distance or time counts as one set.",
+      commonSubstitutions: ["Farmer carry", "Suitcase carry", "Sled push or drag"],
+      cautionNotes: "Do not turn it into a race if the posture or breathing falls apart.",
+      setupNotes: "Pick a load that challenges you without collapsing the line from ribs to pelvis.",
+    });
+  }
+
+  if (/\bclean|snatch|swing|get-up|get up|hop|jump\b/i.test(normalizedLabel)) {
+    return createExplanation({
+      canonicalLabel: safeLabel,
+      matchedLabel: safeLabel,
+      whatItIs: "An explosive movement that should train speed, coordination, and crisp positions more than grinding effort.",
+      howToDoIt: "Own the start position, move fast through the intent of the rep, and reset before the next one if the quality slips.",
+      repCountsAs: "One full explosive effort with a clean catch, landing, or finish counts as one rep.",
+      commonSubstitutions: ["Medicine-ball throw", "Kettlebell swing", "Lower-impact jump or power drill"],
+      cautionNotes: "Stop the set when the movement loses snap or the landing gets noisy.",
+      setupNotes: "Explosive work is usually better with lower reps and cleaner rest than with fatigue chasing.",
+    });
+  }
+
+  if (/\bcurl|extension|tricep|bicep|pressdown|pushdown|skull crusher|lateral|fly|face pull|pull-apart|external rotation|wall slide|raise\b/i.test(normalizedLabel)) {
+    const substitutions = /\bcurl|bicep\b/i.test(normalizedLabel)
+      ? ["Cable curl", "DB curl", "Hammer curl"]
+      : /\bpressdown|pushdown|extension|tricep|skull crusher\b/i.test(normalizedLabel)
+      ? ["Cable pressdown", "DB triceps extension", "Close-grip push-up"]
+      : /\bface pull|pull-apart|external rotation|wall slide\b/i.test(normalizedLabel)
+      ? ["Face pull", "Band pull-apart", "External rotation"]
+      : ["Cable variation", "Dumbbell variation", "Machine variation"];
+    return createExplanation({
+      canonicalLabel: safeLabel,
+      matchedLabel: safeLabel,
+      whatItIs: "A focused accessory lift that builds the target muscle without asking for much total-system fatigue.",
+      howToDoIt: "Set the working joint first, move through the fullest range you can control, and keep momentum out of the rep.",
+      repCountsAs: "One full controlled curl, raise, fly, pressdown, or extension is one rep.",
+      commonSubstitutions: substitutions,
+      cautionNotes: "If the torso starts swinging or the shoulder loses position, the load is too heavy for the point of the movement.",
+      setupNotes: "Use a load that lets you feel the target area working instead of chasing numbers with sloppy form.",
+    });
+  }
+
+  if (/\bbench|press|push-up|push up|dip\b/i.test(normalizedLabel)) {
+    return createExplanation({
+      canonicalLabel: safeLabel,
+      matchedLabel: safeLabel,
+      whatItIs: "A pressing pattern that trains chest, shoulders, triceps, and stable upper-body force production.",
+      howToDoIt: "Set the shoulders first, keep the ribs organized, and press through a full controlled range without bouncing or shrugging.",
+      repCountsAs: "One controlled lower plus one clean press or push back to the finish counts as one rep.",
+      commonSubstitutions: ["Dumbbell press", "Machine press", "Push-up variation"],
+      cautionNotes: "Stop the set before the shoulders roll forward or the rep turns into a bounce.",
+      setupNotes: "Feet, trunk, and shoulder position should stay organized before you worry about load.",
+    });
+  }
+
+  if (/\brow|pull|chin|pulldown|pull-down|pull down\b/i.test(normalizedLabel)) {
+    return createExplanation({
+      canonicalLabel: safeLabel,
+      matchedLabel: safeLabel,
+      whatItIs: "A pulling pattern that trains upper back, lats, biceps, and shoulder control.",
+      howToDoIt: "Set the torso, pull with the elbows instead of jerking with the hands, and lower under control to full range.",
+      repCountsAs: "Each full pull plus the controlled return counts as one rep.",
+      commonSubstitutions: ["Chest-supported row", "Lat pulldown", "Band row"],
+      cautionNotes: "Do not yank the rep with momentum or turn it into a shrug.",
+      setupNotes: "Choose the grip and support that lets you feel the upper back moving cleanly.",
+    });
+  }
+
+  if (/\bsquat|leg press|split squat|lunge|step-up|step up|calf\b/i.test(normalizedLabel)) {
+    return createExplanation({
+      canonicalLabel: safeLabel,
+      matchedLabel: safeLabel,
+      whatItIs: "A lower-body pattern that builds leg strength, balance, and cleaner force through the hips, knees, and feet.",
+      howToDoIt: "Brace first, keep the foot pressure honest, and move through the deepest clean range you can control today.",
+      repCountsAs: "One full controlled lower and one clean stand or drive back up counts as one rep.",
+      commonSubstitutions: ["Goblet squat", "Leg press", "Step-up or split squat"],
+      cautionNotes: "Do not chase extra depth or load if the trunk and foot pressure stop cooperating.",
+      setupNotes: "Pick the stance and range that let the knee and hip track cleanly instead of forcing a shape.",
+    });
+  }
+
+  if (/\bdeadlift|hinge|rdl|bridge|thrust\b/i.test(normalizedLabel)) {
+    return createExplanation({
+      canonicalLabel: safeLabel,
+      matchedLabel: safeLabel,
+      whatItIs: "A hinge-dominant pattern that builds glutes, hamstrings, and trunk stiffness.",
+      howToDoIt: "Set ribs over hips, push the hips back, keep the load close, and finish tall without overextending.",
+      repCountsAs: "One clean hinge or pull plus the controlled return counts as one rep.",
+      commonSubstitutions: ["Trap-bar deadlift", "DB RDL", "Hip thrust or bridge"],
+      cautionNotes: "Do not round the lower back or chase the lockout by leaning back.",
+      setupNotes: "If the floor start or bottom position gets ugly, shorten the range and keep the hinge pattern clean.",
+    });
+  }
+
+  return createExplanation({
+    canonicalLabel: safeLabel,
+    matchedLabel: safeLabel,
+    whatItIs: "A planned movement that should look controlled, repeatable, and specific to the goal of the session.",
+    howToDoIt: "Set the start position first, move through a clean range, and stop before the rep turns into improvisation.",
+    repCountsAs: "One full controlled repetition or one written work interval counts as the work.",
+    commonSubstitutions: ["Nearest similar pattern", "Easier variation", "Supported variation"],
+    cautionNotes: "Keep the quality of the movement higher than the urge to add load or speed.",
+    setupNotes: "If the label is broad, pick the cleanest stable version you can execute today.",
+  });
+};
+
 const resolveLabelFromInput = (input = "") => {
   if (typeof input === "string") return sanitizeText(input, 160);
   if (input && typeof input === "object") {
@@ -412,7 +553,8 @@ export const getMovementExplanation = (input = "") => {
 
   const directMatch = MOVEMENT_EXPLANATIONS.find((entry) => entry.patterns.some((pattern) => pattern.test(label)));
   const explanation = directMatch?.build({ label })
-    || FALLBACK_EXPLANATIONS.find((entry) => entry.pattern.test(label))?.build({ label });
+    || FALLBACK_EXPLANATIONS.find((entry) => entry.pattern.test(label))?.build({ label })
+    || buildGenericMovementExplanation(label);
 
   if (!explanation) {
     return {

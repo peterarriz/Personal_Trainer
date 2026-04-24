@@ -7,6 +7,7 @@ const REAL_SYNC_REQUIRED_ENV_VARS = Object.freeze([
   "SUPABASE_TEST_EMAIL",
   "SUPABASE_TEST_PASSWORD",
 ]);
+const REAL_SYNC_LOCAL_BASE_URL = "http://127.0.0.1:4173";
 
 const REAL_SYNC_TEST_DATA = Object.freeze({
   fixedNowIso: "2026-04-17T12:00:00.000Z",
@@ -25,6 +26,12 @@ const REAL_SYNC_TEST_DATA = Object.freeze({
 });
 
 const sanitizeEnvValue = (value = "") => String(value || "").trim();
+const sanitizeProofSuffix = (value = "") => String(value || "")
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "-")
+  .replace(/^-+|-+$/g, "")
+  .slice(0, 40);
 
 const resolveRealSyncEnv = (env = process.env) => {
   const values = REAL_SYNC_REQUIRED_ENV_VARS.reduce((acc, key) => {
@@ -40,6 +47,56 @@ const resolveRealSyncEnv = (env = process.env) => {
     password: values.SUPABASE_TEST_PASSWORD,
     missing,
     values,
+  };
+};
+
+const getSupabaseServiceRoleKey = (env = process.env) => {
+  const candidates = [
+    env?.SUPABASE_SERVICE_ROLE_KEY,
+    env?.SUPABASE_SERVICE_ROLE,
+    env?.SUPABASE_SERVICE_KEY,
+  ];
+  return candidates.find((value) => sanitizeEnvValue(value)) || "";
+};
+
+const createRealSyncProofIdentity = ({ stamp = "" } = {}) => {
+  const suffix = sanitizeProofSuffix(stamp || new Date().toISOString()) || "proof";
+  const passwordSeed = suffix.replace(/-/g, "").toUpperCase().slice(-10).padStart(10, "A");
+  return {
+    email: `sync-proof-${suffix}@example.com`,
+    password: `FormaSync!${passwordSeed}9`,
+    label: suffix,
+  };
+};
+
+const buildRealSyncProofPlan = (env = process.env) => {
+  const resolved = resolveRealSyncEnv(env);
+  const serviceRoleKey = getSupabaseServiceRoleKey(env);
+  const hasBaseUrl = Boolean(resolved.baseUrl);
+  const hasSupabaseUrl = Boolean(resolved.supabaseUrl);
+  const hasAnonKey = Boolean(resolved.supabaseAnonKey);
+  const hasUserCredentials = Boolean(resolved.email && resolved.password);
+  const canProvisionUser = !hasUserCredentials && Boolean(serviceRoleKey && hasSupabaseUrl && hasAnonKey);
+  const blockingMissing = [];
+
+  if (!hasSupabaseUrl) blockingMissing.push("SUPABASE_URL");
+  if (!hasAnonKey) blockingMissing.push("SUPABASE_ANON_KEY");
+  if (!hasUserCredentials && !canProvisionUser) {
+    if (!resolved.email) blockingMissing.push("SUPABASE_TEST_EMAIL");
+    if (!resolved.password) blockingMissing.push("SUPABASE_TEST_PASSWORD");
+  }
+
+  return {
+    ...resolved,
+    serviceRoleKey,
+    proofMode: hasBaseUrl ? "remote_staging" : "local_real_backend",
+    baseUrl: hasBaseUrl ? resolved.baseUrl : REAL_SYNC_LOCAL_BASE_URL,
+    hasBaseUrl,
+    hasUserCredentials,
+    canProvisionUser,
+    usesProvisionedUser: !hasUserCredentials && canProvisionUser,
+    blockingMissing: Array.from(new Set(blockingMissing)),
+    canRun: blockingMissing.length === 0,
   };
 };
 
@@ -138,8 +195,12 @@ const hasMachineReadableRetryReason = (syncSnapshot = {}) => {
 
 module.exports = {
   REAL_SYNC_REQUIRED_ENV_VARS,
+  REAL_SYNC_LOCAL_BASE_URL,
   REAL_SYNC_TEST_DATA,
   resolveRealSyncEnv,
+  getSupabaseServiceRoleKey,
+  createRealSyncProofIdentity,
+  buildRealSyncProofPlan,
   buildRealSyncSeedPayload,
   buildParitySnapshotFromPayload,
   hasMachineReadableRetryReason,

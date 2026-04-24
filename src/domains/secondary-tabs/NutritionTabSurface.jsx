@@ -1078,77 +1078,111 @@ return (
  {!!section.buildItems?.length && (
  <div style={{ display:"grid", gap:"0.14rem", marginTop:"0.08rem" }}>
  <div style={{ fontSize:"0.45rem", color:"#8fa5c8", letterSpacing:"0.08em", textTransform:"uppercase" }}>{sanitizeDisplayText(section.buildHeading || "Build")}</div>
- {section.buildItems.slice(0, 6).map((item, itemIndex) => (
+ {section.buildItems.slice(0, 4).map((item, itemIndex) => (
  <div key={`${section.key || sectionIndex}_build_${itemIndex}`} style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>
  {itemIndex + 1}. {sanitizeDisplayText(item)}
  </div>
  ))}
  </div>
  )}
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:"0.32rem" }}>
- {!!section.coachLine && (
- <div style={{ border:"1px solid #1e293b", borderRadius:12, background:"#0b1321", padding:"0.46rem 0.52rem", display:"grid", gap:"0.12rem" }}>
- <div style={{ fontSize:"0.43rem", color:"#64748b", letterSpacing:"0.08em", textTransform:"uppercase" }}>Coach note</div>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{sanitizeDisplayText(section.coachLine)}</div>
+ {!!section.detailLine && (
+ <div style={{ display:"grid", gap:"0.08rem", marginTop:"0.08rem" }}>
+ <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{sanitizeDisplayText(section.detailLine)}</div>
  </div>
  )}
- {!!section.prepLine && (
- <div style={{ border:"1px solid #1e293b", borderRadius:12, background:"#0b1321", padding:"0.46rem 0.52rem", display:"grid", gap:"0.12rem" }}>
- <div style={{ fontSize:"0.43rem", color:"#64748b", letterSpacing:"0.08em", textTransform:"uppercase" }}>Prep</div>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{sanitizeDisplayText(section.prepLine)}</div>
+ {!!section.recipeCard && (
+ <details data-testid={`nutrition-meal-recipe-${section.key || sectionIndex}`} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0b1321", padding:"0.5rem 0.56rem" }}>
+ <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#dbe7f6" }}>Recipe + prep</summary>
+ <div style={{ display:"grid", gap:"0.32rem", marginTop:"0.38rem" }}>
+ {!!section.recipeCard.summary && (
+ <div style={{ fontSize:"0.5rem", color:"#cfe0f4", lineHeight:1.5 }}>
+ {sanitizeDisplayText(section.recipeCard.summary)}
  </div>
  )}
- {!!section.backupLine && (
- <div style={{ border:"1px solid #1e293b", borderRadius:12, background:"#0b1321", padding:"0.46rem 0.52rem", display:"grid", gap:"0.12rem" }}>
- <div style={{ fontSize:"0.43rem", color:"#64748b", letterSpacing:"0.08em", textTransform:"uppercase" }}>If life gets busy</div>
- <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{sanitizeDisplayText(section.backupLine)}</div>
- </div>
- )}
- </div>
- {!!section.groceryItems?.length && (
- <div style={{ display:"grid", gap:"0.12rem" }}>
- <div style={{ fontSize:"0.45rem", color:"#8fa5c8", letterSpacing:"0.08em", textTransform:"uppercase" }}>Pull for the week</div>
+ {!!section.recipeCard.metaItems?.length && (
  <div style={{ display:"flex", gap:"0.26rem", flexWrap:"wrap" }}>
- {section.groceryItems.slice(0, 8).map((item) => (
- <span key={`${section.key || sectionIndex}_${item}`} className="ui-pill" style={{ color:"#dbe7f6", background:"rgba(30, 41, 59, 0.72)", borderColor:"#22324a" }}>
+ {section.recipeCard.metaItems.map((item, itemIndex) => (
+ <span
+ key={`${section.key || sectionIndex}_recipe_meta_${itemIndex}`}
+ className="ui-pill"
+ style={{ color:"#dbe7f6", background:"rgba(15, 23, 42, 0.76)", borderColor:"#22324a" }}
+ >
+ {sanitizeDisplayText(`${item.label}: ${item.value}`)}
+ </span>
+ ))}
+ </div>
+ )}
+ {!!section.recipeCard.ingredientItems?.length && (
+ <div style={{ display:"grid", gap:"0.14rem" }}>
+ <div style={{ fontSize:"0.43rem", color:"#8fa5c8", letterSpacing:"0.08em", textTransform:"uppercase" }}>Ingredients</div>
+ {section.recipeCard.ingredientItems.map((item, itemIndex) => (
+ <div key={`${section.key || sectionIndex}_recipe_ingredient_${itemIndex}`} style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
+ {itemIndex + 1}. {sanitizeDisplayText(item)}
+ </div>
+ ))}
+ </div>
+ )}
+ {!!section.recipeCard.groceryItems?.length && (
+ <div style={{ display:"grid", gap:"0.14rem" }}>
+ <div style={{ fontSize:"0.43rem", color:"#8fa5c8", letterSpacing:"0.08em", textTransform:"uppercase" }}>Pull for the week</div>
+ <div style={{ display:"flex", gap:"0.24rem", flexWrap:"wrap" }}>
+ {section.recipeCard.groceryItems.map((item, itemIndex) => (
+ <span
+ key={`${section.key || sectionIndex}_recipe_grocery_${itemIndex}`}
+ className="ui-pill"
+ style={{ color:"#dbe7f6", background:"rgba(15, 23, 42, 0.76)", borderColor:"#22324a" }}
+ >
  {sanitizeDisplayText(item)}
  </span>
  ))}
  </div>
  </div>
  )}
- {!!section.detailLine && (
- <div style={{ display:"grid", gap:"0.08rem", marginTop:"0.08rem" }}>
- <div style={{ fontSize:"0.45rem", color:"#8fa5c8", letterSpacing:"0.08em", textTransform:"uppercase" }}>{sanitizeDisplayText(section.detailLabel || "Execution note")}</div>
- <div style={{ fontSize:"0.5rem", color:"#e2e8f0", lineHeight:1.45 }}>{sanitizeDisplayText(section.detailLine)}</div>
- </div>
- )}
- {!!section.why && (
- <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45, marginTop:"0.08rem" }}>
- {sanitizeDisplayText(section.why)}
- </div>
- )}
- {!!section.recipeSteps?.length && (
- <details data-testid={`nutrition-meal-recipe-${section.key || sectionIndex}`} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0b1321", padding:"0.5rem 0.56rem" }}>
- <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#dbe7f6" }}>How to make it</summary>
- <div style={{ display:"grid", gap:"0.14rem", marginTop:"0.38rem" }}>
- {section.recipeSteps.map((step, stepIndex) => (
+ {!!section.recipeCard.steps?.length && (
+ <div style={{ display:"grid", gap:"0.14rem" }}>
+ <div style={{ fontSize:"0.43rem", color:"#8fa5c8", letterSpacing:"0.08em", textTransform:"uppercase" }}>Method</div>
+ {section.recipeCard.steps.map((step, stepIndex) => (
  <div key={`${section.key || sectionIndex}_recipe_${stepIndex}`} style={{ fontSize:"0.5rem", color:"#cfe0f4", lineHeight:1.5 }}>
  {stepIndex + 1}. {sanitizeDisplayText(step)}
  </div>
  ))}
  </div>
- </details>
  )}
- {!!section.improvementTips?.length && (
- <details data-testid={`nutrition-meal-upgrade-${section.key || sectionIndex}`} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0b1321", padding:"0.5rem 0.56rem" }}>
- <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#dbe7f6" }}>Make it better</summary>
- <div style={{ display:"grid", gap:"0.14rem", marginTop:"0.38rem" }}>
- {section.improvementTips.map((tip, tipIndex) => (
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.28rem" }}>
+ {!!section.recipeCard.coachCue && (
+ <div style={{ border:"1px solid #1e293b", borderRadius:12, background:"#0f172a", padding:"0.46rem 0.52rem", display:"grid", gap:"0.12rem" }}>
+ <div style={{ fontSize:"0.42rem", color:"#64748b", letterSpacing:"0.08em", textTransform:"uppercase" }}>Coach cue</div>
+ <div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.45 }}>{sanitizeDisplayText(section.recipeCard.coachCue)}</div>
+ </div>
+ )}
+ {!!section.recipeCard.prepLine && (
+ <div style={{ border:"1px solid #1e293b", borderRadius:12, background:"#0f172a", padding:"0.46rem 0.52rem", display:"grid", gap:"0.12rem" }}>
+ <div style={{ fontSize:"0.42rem", color:"#64748b", letterSpacing:"0.08em", textTransform:"uppercase" }}>Make-ahead</div>
+ <div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.45 }}>{sanitizeDisplayText(section.recipeCard.prepLine)}</div>
+ </div>
+ )}
+ {!!section.recipeCard.fallbackLine && (
+ <div style={{ border:"1px solid #1e293b", borderRadius:12, background:"#0f172a", padding:"0.46rem 0.52rem", display:"grid", gap:"0.12rem" }}>
+ <div style={{ fontSize:"0.42rem", color:"#64748b", letterSpacing:"0.08em", textTransform:"uppercase" }}>Backup</div>
+ <div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.45 }}>{sanitizeDisplayText(section.recipeCard.fallbackLine)}</div>
+ </div>
+ )}
+ </div>
+ {!!section.recipeCard.finishLine && (
+ <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+ {sanitizeDisplayText(section.recipeCard.finishLine)}
+ </div>
+ )}
+ {!!section.recipeCard.upgradeIdeas?.length && (
+ <div style={{ display:"grid", gap:"0.14rem" }}>
+ <div style={{ fontSize:"0.43rem", color:"#8fa5c8", letterSpacing:"0.08em", textTransform:"uppercase" }}>Upgrade ideas</div>
+ {section.recipeCard.upgradeIdeas.map((tip, tipIndex) => (
  <div key={`${section.key || sectionIndex}_tip_${tipIndex}`} style={{ fontSize:"0.5rem", color:"#cfe0f4", lineHeight:1.5 }}>
  {tipIndex + 1}. {sanitizeDisplayText(tip)}
  </div>
  ))}
+ </div>
+ )}
  </div>
  </details>
  )}
