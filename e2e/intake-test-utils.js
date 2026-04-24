@@ -1416,6 +1416,7 @@ module.exports = {
   getCurrentStage,
   getStorageOps,
   gotoIntakeInLocalMode,
+  installIntakeAiMocks,
   readIntakeSession,
   readLocalCache,
   toTestIdFragment,

@@ -10,6 +10,9 @@ const {
   makeSignedInPayload,
   mockSupabaseRuntime,
 } = require("./auth-runtime-test-helpers.js");
+const {
+  installIntakeAiMocks,
+} = require("./intake-test-utils.js");
 
 const makeAuthGatePayload = () => ({
   logs: {},
@@ -134,6 +137,88 @@ const trustedMouseClick = async (page, locator) => {
   await page.mouse.up();
 };
 
+const installIntakeSessionWriteProbe = async (page) => {
+  await page.addInitScript(() => {
+    window.__INTAKE_SESSION_WRITES = [];
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function patchedSetItem(key, value) {
+      if (String(key) === "intake_session_v1") {
+        try {
+          window.__INTAKE_SESSION_WRITES.push({
+            ts: Date.now(),
+            length: String(value || "").length,
+          });
+        } catch {}
+      }
+      return originalSetItem.apply(this, arguments);
+    };
+  });
+};
+
+const readIntakeSessionWriteCount = async (page) => (
+  page.evaluate(() => Array.isArray(window.__INTAKE_SESSION_WRITES) ? window.__INTAKE_SESSION_WRITES.length : 0)
+);
+
+const expectPageResponsive = async (page) => {
+  await expect.poll(() => page.evaluate(() => new Promise((resolve) => {
+    window.setTimeout(() => resolve("responsive"), 0);
+  })), { timeout: 5_000 }).toBe("responsive");
+};
+
+const expectLocatorCenterHitTarget = async (locator) => {
+  await expect(locator.evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return hit === node || Boolean(node.contains(hit));
+  })).resolves.toBe(true);
+};
+
+const expectReadableSelectedChip = async (locator, expectedLabel) => {
+  await expect(locator).toBeVisible();
+  await expect(locator).toContainText(expectedLabel);
+  await expect(locator.evaluate((node) => {
+    const parseRgb = (value) => {
+      const match = String(value || "").match(/rgba?\(([^)]+)\)/i);
+      if (!match) return null;
+      const [red, green, blue] = match[1].split(",").map((part) => Number.parseFloat(part.trim()));
+      return [red, green, blue].every(Number.isFinite) ? [red, green, blue] : null;
+    };
+    const luminance = ([red, green, blue]) => {
+      const channels = [red, green, blue].map((channel) => {
+        const normalized = channel / 255;
+        return normalized <= 0.03928
+          ? normalized / 12.92
+          : ((normalized + 0.055) / 1.055) ** 2.4;
+      });
+      return (0.2126 * channels[0]) + (0.7152 * channels[1]) + (0.0722 * channels[2]);
+    };
+    const style = window.getComputedStyle(node);
+    const textColor = parseRgb(style.color);
+    const backgroundColor = parseRgb(style.backgroundColor);
+    if (!textColor || !backgroundColor) return false;
+    const light = Math.max(luminance(textColor), luminance(backgroundColor));
+    const dark = Math.min(luminance(textColor), luminance(backgroundColor));
+    return ((light + 0.05) / (dark + 0.05)) >= 4.5;
+  })).resolves.toBe(true);
+};
+
+const bootPostLoginIntake = async (page) => {
+  const session = makeSession({ email: "intake-freeze@example.com" });
+  const payload = makeAuthGatePayload();
+  await installIntakeSessionWriteProbe(page);
+  await installIntakeAiMocks(page);
+  await mockSupabaseRuntime(page, { session, payload, signInStatus: 200 });
+  await bootAuthGate(page);
+
+  await page.getByTestId("auth-email").fill("intake-freeze@example.com");
+  await page.getByTestId("auth-password").fill("correct-horse-battery-staple");
+  await expect(page.getByTestId("auth-submit")).toBeEnabled();
+  await trustedMouseClick(page, page.getByTestId("auth-submit"));
+  await expect(page.getByTestId("intake-root")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("intake-goals-step")).toBeVisible();
+  await expectPageResponsive(page);
+};
+
 test.describe("interaction freeze regression", () => {
   test("auth mode switch accepts trusted mouse input without freezing the page", async ({ page }) => {
     await bootAuthGate(page);
@@ -194,6 +279,70 @@ test.describe("interaction freeze regression", () => {
     for (const [tabTestId, surfaceTestId] of surfaces) {
       await page.getByTestId(tabTestId).click();
       await expect(page.getByTestId(surfaceTestId)).toBeVisible();
+      await expectPageResponsive(page);
     }
+
+    const settingsSurfaces = [
+      ["settings-surface-profile", "settings-profile-section"],
+      ["settings-surface-goals", "settings-goals-section"],
+      ["settings-surface-baselines", "settings-baselines-section"],
+      ["settings-surface-programs", "settings-programs-section"],
+      ["settings-surface-preferences", "settings-preferences-section"],
+      ["settings-surface-account", "settings-account-section"],
+      ["settings-surface-advanced", "settings-advanced-section"],
+    ];
+
+    await page.getByTestId("app-tab-settings").click();
+    await expect(page.getByTestId("settings-tab")).toBeVisible();
+    for (const [surfaceNavTestId, surfaceTestId] of settingsSurfaces) {
+      const nav = page.getByTestId(surfaceNavTestId);
+      if (await nav.count()) {
+        await nav.click();
+        await expect(page.getByTestId(surfaceTestId)).toBeVisible();
+        await expectPageResponsive(page);
+      }
+    }
+  });
+
+  test("post-login intake accepts trusted interactions without storage-write storms", async ({ page }) => {
+    await bootPostLoginIntake(page);
+
+    await page.waitForTimeout(1_400);
+    await expect(readIntakeSessionWriteCount(page)).resolves.toBeLessThanOrEqual(4);
+    await expectReadableSelectedChip(page.getByTestId("intake-goals-option-experience-level-beginner"), "Beginner");
+
+    await page.getByTestId("intake-goals-toggle-custom").click();
+    await expect(page.getByTestId("intake-goals-primary-input")).toBeVisible();
+    await expectPageResponsive(page);
+    await expectLocatorCenterHitTarget(page.getByTestId("intake-goals-primary-input"));
+    await page.getByTestId("intake-goals-primary-input").fill("Build strength without getting stuck in intake", { force: true });
+    await expect(page.getByTestId("intake-goals-primary-input")).toHaveValue("Build strength without getting stuck in intake");
+    await expectPageResponsive(page);
+
+    await page.getByTestId("intake-goals-add").click();
+    await expect(page.getByTestId("intake-goal-selection-draft")).toBeVisible();
+    await page.getByTestId("intake-goal-selection-commit").click();
+    await expect(page.getByTestId("intake-selected-goals")).toContainText(/build strength without getting stuck/i);
+    await expectPageResponsive(page);
+
+    const requiredChips = [
+      "intake-goals-option-experience-level-intermediate",
+      "intake-goals-option-training-days-4",
+      "intake-goals-option-session-length-45-min",
+      "intake-goals-option-training-location-gym",
+      "intake-goals-option-coaching-style-balanced-coaching",
+    ];
+    for (const testId of requiredChips) {
+      const chip = page.getByTestId(testId);
+      if (await chip.count()) {
+        await chip.click();
+        await expectPageResponsive(page);
+      }
+    }
+
+    await expect(page.getByTestId("intake-footer-continue")).toBeEnabled();
+    await page.getByTestId("intake-footer-continue").click();
+    await expect.poll(() => page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toMatch(/clarify|confirm|building|goals/);
+    await expectPageResponsive(page);
   });
 });

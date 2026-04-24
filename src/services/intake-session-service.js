@@ -1,6 +1,8 @@
 import { createIntakeMachineState, INTAKE_MACHINE_STATES } from "./intake-machine-service.js";
 
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+const MAX_PERSISTED_MESSAGES = 60;
+const MAX_PERSISTED_MESSAGE_TEXT_LENGTH = 1600;
 const clonePlainValue = (value = null) => {
   if (value === null || value === undefined) return value;
   try {
@@ -15,7 +17,7 @@ export const INTAKE_SESSION_STORAGE_KEY = "intake_session_v1";
 
 const normalizePersistedMessage = (message = null, fallbackId = 1) => {
   const id = Number(message?.id);
-  const text = String(message?.text || "");
+  const text = sanitizeText(message?.text || "", MAX_PERSISTED_MESSAGE_TEXT_LENGTH);
   if (!text.trim()) return null;
   return {
     id: Number.isFinite(id) && id > 0 ? id : fallbackId,
@@ -129,6 +131,7 @@ export const buildPersistableIntakeSession = ({
   startingFresh = false,
 } = {}) => {
   const normalizedMessages = toArray(messages)
+    .slice(-MAX_PERSISTED_MESSAGES)
     .map((message, index) => normalizePersistedMessage(message, index + 1))
     .filter(Boolean);
   const nextMessageCounter = Math.max(

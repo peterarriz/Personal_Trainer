@@ -10756,7 +10756,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  -webkit-text-size-adjust:100%;
  text-size-adjust:100%;
  scroll-padding-top:calc(var(--safe-area-top) + 1.4rem);
- scroll-padding-bottom:calc(var(--safe-area-bottom) + 7.2rem);
+ scroll-padding-bottom:calc(var(--safe-area-bottom) + 10rem);
  }
  body{background:var(--bg);color:var(--text)}
  * { box-sizing:border-box; margin:0; padding:0; }
@@ -10799,6 +10799,10 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  }
  .btn-primary:hover{filter:none;background:linear-gradient(135deg, color-mix(in srgb, var(--instrument-cyan) 92%, var(--cta-bg-hover)) 0%, color-mix(in srgb, var(--cta-bg-hover) 78%, #3988ff) 52%, color-mix(in srgb, var(--instrument-green) 42%, var(--cta-bg-hover)) 100%)!important;border-color:var(--border-strong)!important;box-shadow:0 20px 42px rgba(0,0,0,0.24), 0 0 28px color-mix(in srgb, var(--instrument-cyan) 22%, transparent), inset 0 1px 0 rgba(255,255,255,0.28)}
  .btn-primary:disabled{background:var(--cta-bg)!important;color:var(--cta-text, var(--accent-contrast))!important;opacity:0.52}
+ [data-testid="intake-root"] .btn:hover,
+ [data-testid="intake-root"] .card:hover{
+ transform:none!important;
+ }
  .btn-selected{background:var(--accent-soft)!important;border-color:var(--border-strong)!important;color:var(--text-strong)!important;box-shadow:var(--shadow-1)}
  .btn-selected:hover{background:var(--accent-soft)!important}
  input,textarea,select{
@@ -10815,7 +10819,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  line-height:1.35;
  transition:border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, color 0.18s ease;
  scroll-margin-top:calc(var(--safe-area-top) + 1.25rem);
- scroll-margin-bottom:calc(var(--safe-area-bottom) + 7rem);
+ scroll-margin-bottom:calc(var(--safe-area-bottom) + 10rem);
  }
  input:focus,textarea:focus,select:focus{border-color:var(--border-strong);box-shadow:0 0 0 3px var(--focus-ring);background:var(--input-bg-focus)}
  input::placeholder,textarea::placeholder{color:var(--text-muted)}
@@ -11468,7 +11472,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  touch-action:manipulation;
  -webkit-tap-highlight-color:transparent;
  scroll-margin-top:calc(var(--safe-area-top) + 1.25rem);
- scroll-margin-bottom:calc(var(--safe-area-bottom) + 7rem);
+ scroll-margin-bottom:calc(var(--safe-area-bottom) + 10rem);
  }
  details > summary::-webkit-details-marker{display:none}
  details[open]{animation:fi 0.18s ease}
@@ -11754,6 +11758,70 @@ function RuntimeInspector({ snapshot }) {
  );
 }
 
+function IntakeCustomGoalComposer({
+ inputRef = null,
+ initialDraft = "",
+ onDraftChange = () => {},
+ onAddGoal = () => {},
+ disabled = false,
+}) {
+ const [localDraft, setLocalDraft] = useState(() => String(initialDraft || ""));
+ const lastPublishedDraftRef = useRef(String(initialDraft || ""));
+
+ useEffect(() => {
+ const nextDraft = String(initialDraft || "");
+ if (nextDraft !== lastPublishedDraftRef.current) {
+ lastPublishedDraftRef.current = nextDraft;
+ setLocalDraft(nextDraft);
+ }
+ }, [initialDraft]);
+
+ useEffect(() => {
+ if (typeof window === "undefined") return undefined;
+ const nextDraft = String(localDraft || "");
+ const timer = window.setTimeout(() => {
+ lastPublishedDraftRef.current = nextDraft;
+ onDraftChange(nextDraft);
+ }, 600);
+ return () => window.clearTimeout(timer);
+ }, [localDraft, onDraftChange]);
+
+ const publishDraft = () => {
+ const nextDraft = String(localDraft || "");
+ lastPublishedDraftRef.current = nextDraft;
+ onDraftChange(nextDraft);
+ return nextDraft;
+ };
+
+ const cleanDraft = normalizeIntakeGoalEntry(localDraft);
+
+ return (
+ <div style={{ display:"grid", gap:"0.45rem" }}>
+ <textarea
+ data-testid="intake-goals-primary-input"
+ ref={inputRef}
+ value={localDraft}
+ onChange={(event) => setLocalDraft(event.target.value)}
+ onBlur={publishDraft}
+ placeholder="Return to soccer without calf pain. Train for a ruck test. Rebuild after a long layoff."
+ rows={3}
+ style={{ minHeight:92, resize:"vertical", fontSize:"0.86rem", lineHeight:1.5 }}
+ />
+ <button
+ data-testid="intake-goals-add"
+ className="btn btn-primary"
+ onClick={() => onAddGoal(publishDraft())}
+ disabled={disabled || !cleanDraft}
+ >
+ Use custom goal
+ </button>
+ <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+ We only fall back to parsing after you save the custom goal.
+ </div>
+ </div>
+ );
+}
+
 function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [], personalization = {}, onTrackFrictionEvent = () => {} }) {
  const initialPrompt = startingFresh
  ? "Starting fresh. I still remember everything from before - I'm just building a new plan from today. What do you want from this next plan? Exact or vague is fine."
@@ -11785,6 +11853,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
  const secondaryGoalAddedMessageKeysRef = useRef(new Set(restoredIntakeSession?.secondaryGoalAddedMessageKeys || []));
  const anchorCollectionGapRecoveryKeyRef = useRef("");
  const sessionPersistenceDisabledRef = useRef(false);
+ const intakeSessionPersistTimerRef = useRef(null);
+ const latestIntakeSessionSnapshotRef = useRef(null);
  const startedRef = useRef(Boolean(restoredIntakeSession?.messages?.length));
  const seededInitialAnswers = useMemo(() => buildSeededIntakeAnswers({
  baseAnswers: restoredIntakeSession?.answers || {},
@@ -11852,6 +11922,66 @@ const [showCustomGoalComposer, setShowCustomGoalComposer] = useState(false);
  continueClicks: 0,
  initialized: false,
  });
+
+ const clearPendingIntakeSessionPersistence = useCallback(() => {
+ if (typeof window === "undefined" || !intakeSessionPersistTimerRef.current) return;
+ window.clearTimeout(intakeSessionPersistTimerRef.current);
+ intakeSessionPersistTimerRef.current = null;
+ }, []);
+
+ const persistLatestIntakeSessionSnapshot = useCallback(() => {
+ if (typeof window === "undefined") return;
+ const latest = latestIntakeSessionSnapshotRef.current;
+ if (sessionPersistenceDisabledRef.current || !latest?.hasMeaningfulIntakeState) {
+ safeStorageRemove(sessionStorage, INTAKE_SESSION_STORAGE_KEY);
+ return;
+ }
+ const snapshot = buildPersistableIntakeSession({
+ messages: latest.messages,
+ answers: latest.answers,
+ stepIndex: latest.stepIndex,
+ draft: latest.draft,
+ phase: latest.phase,
+ assessmentText: latest.assessmentText,
+ assessmentBoundary: latest.assessmentBoundary,
+ assessmentPreview: latest.assessmentPreview,
+ goalStackConfirmation: latest.goalStackConfirmation,
+ askedClarifyingQuestions: latest.askedClarifyingQuestions,
+ pendingClarifyingQuestion: latest.pendingClarifyingQuestion,
+ pendingSecondaryGoalPrompt: latest.pendingSecondaryGoalPrompt,
+ secondaryGoalEntries: latest.secondaryGoalEntries,
+ showSecondaryGoalCustomInput: latest.showSecondaryGoalCustomInput,
+ intakeMachine: latest.intakeMachine,
+ adjustmentTargetGoal: latest.adjustmentTargetGoal,
+ nextMessageId: nextMessageIdRef.current,
+ nextIntakeEventId: nextIntakeEventIdRef.current,
+ secondaryGoalAddedMessageKeys: [...secondaryGoalAddedMessageKeysRef.current],
+ startingFresh,
+ });
+ safeStorageSet(sessionStorage, INTAKE_SESSION_STORAGE_KEY, JSON.stringify(snapshot));
+ }, [startingFresh]);
+
+ const scheduleIntakeAction = useCallback((action) => {
+ const runAction = () => {
+ try {
+ const result = action?.();
+ if (result && typeof result.catch === "function") {
+ result.catch((error) => {
+ console.error("Intake action failed", error);
+ setConfirmBuildError("That action could not finish. Try again.");
+ });
+ }
+ } catch (error) {
+ console.error("Intake action failed", error);
+ setConfirmBuildError("That action could not finish. Try again.");
+ }
+ };
+ if (typeof window !== "undefined" && typeof window.setTimeout === "function") {
+ window.setTimeout(runAction, 0);
+ return;
+ }
+ runAction();
+ }, []);
 
  const recordIntakeStageView = ({ nextPhase = "", nextStage = "" } = {}) => {
  onTrackFrictionEvent({
@@ -11998,18 +12128,15 @@ const [showCustomGoalComposer, setShowCustomGoalComposer] = useState(false);
  if (typeof window === "undefined" || typeof window.addEventListener !== "function") return undefined;
  const handlePageHide = () => {
  if (sessionPersistenceDisabledRef.current) return;
+ persistLatestIntakeSessionSnapshot();
  recordIntakeStageExit({ outcome: "abandoned", reason: "pagehide" });
  };
  window.addEventListener("pagehide", handlePageHide);
  return () => window.removeEventListener("pagehide", handlePageHide);
- }, []);
+ }, [persistLatestIntakeSessionSnapshot]);
 
  useEffect(() => {
- if (typeof window === "undefined") return;
- if (sessionPersistenceDisabledRef.current) {
- safeStorageRemove(sessionStorage, INTAKE_SESSION_STORAGE_KEY);
- return;
- }
+ if (typeof window === "undefined") return undefined;
  const hasMeaningfulIntakeState = Boolean(
  messages.length
  || Object.keys(answers || {}).length
@@ -12019,11 +12146,8 @@ const [showCustomGoalComposer, setShowCustomGoalComposer] = useState(false);
  || stepIndex > 0
  || intakeMachine?.stage !== INTAKE_MACHINE_STATES.FREEFORM_GOALS
  );
- if (!hasMeaningfulIntakeState) {
- safeStorageRemove(sessionStorage, INTAKE_SESSION_STORAGE_KEY);
- return;
- }
- const snapshot = buildPersistableIntakeSession({
+ latestIntakeSessionSnapshotRef.current = {
+ hasMeaningfulIntakeState,
  messages,
  answers,
  stepIndex,
@@ -12040,12 +12164,19 @@ const [showCustomGoalComposer, setShowCustomGoalComposer] = useState(false);
  showSecondaryGoalCustomInput,
  intakeMachine,
  adjustmentTargetGoal,
- nextMessageId: nextMessageIdRef.current,
- nextIntakeEventId: nextIntakeEventIdRef.current,
- secondaryGoalAddedMessageKeys: [...secondaryGoalAddedMessageKeysRef.current],
- startingFresh,
- });
- safeStorageSet(sessionStorage, INTAKE_SESSION_STORAGE_KEY, JSON.stringify(snapshot));
+ };
+ if (sessionPersistenceDisabledRef.current || !hasMeaningfulIntakeState) {
+ clearPendingIntakeSessionPersistence();
+ persistLatestIntakeSessionSnapshot();
+ return undefined;
+ }
+ clearPendingIntakeSessionPersistence();
+ const delay = streamTargetId ? 720 : phase === INTAKE_UI_PHASES.building ? 80 : 360;
+ intakeSessionPersistTimerRef.current = window.setTimeout(() => {
+ intakeSessionPersistTimerRef.current = null;
+ persistLatestIntakeSessionSnapshot();
+ }, delay);
+ return clearPendingIntakeSessionPersistence;
  }, [
  adjustmentTargetGoal,
  answers,
@@ -12065,6 +12196,9 @@ const [showCustomGoalComposer, setShowCustomGoalComposer] = useState(false);
  startingFresh,
  stepIndex,
  assessmentText,
+ streamTargetId,
+ clearPendingIntakeSessionPersistence,
+ persistLatestIntakeSessionSnapshot,
  ]);
 
  useEffect(() => {
@@ -12394,7 +12528,15 @@ const [showCustomGoalComposer, setShowCustomGoalComposer] = useState(false);
  goalStackConfirmation,
  goalFeasibility: activeGoalFeasibility,
  }), [activeReviewGoals, goalStackConfirmation, activeGoalFeasibility]);
- const goalStackConfirmationNeedsSync = JSON.stringify(goalStackConfirmation || null) !== JSON.stringify(derivedGoalStackConfirmation || null);
+ const goalStackConfirmationSignature = useMemo(
+ () => JSON.stringify(goalStackConfirmation || null),
+ [goalStackConfirmation]
+ );
+ const derivedGoalStackConfirmationSignature = useMemo(
+ () => JSON.stringify(derivedGoalStackConfirmation || null),
+ [derivedGoalStackConfirmation]
+ );
+ const goalStackConfirmationNeedsSync = goalStackConfirmationSignature !== derivedGoalStackConfirmationSignature;
  const anchorCollectionGap = intakeMachine?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION && !activeMachineAnchor?.field_id;
  const reviewStatePending = reviewRefreshPending || goalStackConfirmationNeedsSync || anchorCollectionGap;
 
@@ -12779,8 +12921,8 @@ prev?.goal_lock_confirmed
  });
  setGoalMetricFormError("");
  };
- const addGoalToStack = () => {
- const cleanGoalText = normalizeIntakeGoalEntry(extraGoalDraft);
+ const addGoalToStack = (draftOverride = null) => {
+ const cleanGoalText = normalizeIntakeGoalEntry(draftOverride === null ? extraGoalDraft : draftOverride);
  if (!cleanGoalText) return null;
  if (pendingGoalSelection?.goalText) {
  setGoalMetricFormError("Save or clear the goal in progress before you add another one.");
@@ -14458,8 +14600,8 @@ const readPriorityOrderedGoalIds = () => {
  <button
  key={`${testIdPrefix}-${value}`}
  data-testid={`${testIdPrefix}-${toTestIdFragment(value || label)}`}
- className={selected ? "btn btn-primary" : "btn"}
- onClick={() => onSelect(value)}
+ className="btn"
+ onClick={() => scheduleIntakeAction(() => onSelect(value))}
  style={{
  minHeight:44,
  fontSize:"0.68rem",
@@ -14659,7 +14801,7 @@ contextLabel: "Finish this goal",
 type="button"
 className={pendingGoalAlreadyAdded ? "btn" : "btn btn-primary"}
 data-testid="intake-goal-selection-commit"
-onClick={commitPendingGoalSelection}
+onClick={() => scheduleIntakeAction(commitPendingGoalSelection)}
 disabled={pendingGoalAlreadyAdded}
 style={pendingGoalAlreadyAdded ? { color:"#9fb4d3", borderColor:"#324961" } : {}}
 >
@@ -14669,7 +14811,7 @@ style={pendingGoalAlreadyAdded ? { color:"#9fb4d3", borderColor:"#324961" } : {}
 type="button"
 className="btn"
 data-testid="intake-goal-selection-clear"
-onClick={() => setPendingGoalSelection(null)}
+onClick={() => scheduleIntakeAction(() => setPendingGoalSelection(null))}
 style={{ color:"#dbe7f6", borderColor:"#324961" }}
 >
 Clear
@@ -14710,7 +14852,7 @@ const renderGoalCard = (goal = null, { mode = "proposal" } = {}) => {
  <button
  data-testid={`intake-goal-edit-${toTestIdFragment(goal.id || goal.summary)}`}
  className="btn"
- onClick={() => requestAdjustment({ goalSummary: goal.summary, goalId: goal.id })}
+ onClick={() => scheduleIntakeAction(() => requestAdjustment({ goalSummary: goal.summary, goalId: goal.id }))}
  style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#324961" }}
  >
  Edit
@@ -14746,7 +14888,7 @@ const renderGoalCard = (goal = null, { mode = "proposal" } = {}) => {
  <button
  data-testid={`intake-goal-remove-${toTestIdFragment(goal.id || goal.summary)}`}
  className="btn"
- onClick={() => removeHeardGoal(goal.id)}
+ onClick={() => scheduleIntakeAction(() => removeHeardGoal(goal.id))}
  style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
  >
  Remove
@@ -14759,7 +14901,7 @@ const renderGoalCard = (goal = null, { mode = "proposal" } = {}) => {
  <button
  data-testid={`intake-confirm-priority-up-${toTestIdFragment(goal.id || goal.summary)}`}
  className="btn"
- onClick={() => moveGoalInPriorityStack(goal.id, -1)}
+ onClick={() => scheduleIntakeAction(() => moveGoalInPriorityStack(goal.id, -1))}
  style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}40` }}
  >
  Move earlier
@@ -14769,7 +14911,7 @@ const renderGoalCard = (goal = null, { mode = "proposal" } = {}) => {
  <button
  data-testid={`intake-confirm-priority-down-${toTestIdFragment(goal.id || goal.summary)}`}
  className="btn"
- onClick={() => moveGoalInPriorityStack(goal.id, 1)}
+ onClick={() => scheduleIntakeAction(() => moveGoalInPriorityStack(goal.id, 1))}
  style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
  >
  Move later
@@ -14779,7 +14921,7 @@ const renderGoalCard = (goal = null, { mode = "proposal" } = {}) => {
  <button
  data-testid={`intake-confirm-priority-remove-${toTestIdFragment(goal.id || goal.summary)}`}
  className="btn"
- onClick={() => removeHeardGoal(goal.id)}
+ onClick={() => scheduleIntakeAction(() => removeHeardGoal(goal.id))}
  style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
  >
  Remove
@@ -14826,7 +14968,7 @@ const renderGoalSelectionSurface = () => (
  type="button"
  className="btn"
  data-testid={`intake-goal-type-${goalType.id}`}
- onClick={() => selectStarterGoalType(goalType.id)}
+ onClick={() => scheduleIntakeAction(() => selectStarterGoalType(goalType.id))}
  style={{
  display:"grid",
  gap:"0.18rem",
@@ -14864,7 +15006,7 @@ const renderGoalSelectionSurface = () => (
  type="button"
  className="btn"
  data-testid={`intake-featured-goal-${template.id}`}
- onClick={() => queueGoalSelection(buildGoalTemplateSelection({ templateId: template.id }))}
+ onClick={() => scheduleIntakeAction(() => queueGoalSelection(buildGoalTemplateSelection({ templateId: template.id })))}
  disabled={added}
  style={{
  textAlign:"left",
@@ -14907,43 +15049,25 @@ const renderGoalSelectionSurface = () => (
  type="button"
  className="btn"
  data-testid="intake-goals-toggle-custom"
- onClick={() => {
+ onClick={() => scheduleIntakeAction(() => {
  setShowCustomGoalComposer((current) => {
  const nextValue = !current;
  if (nextValue) setSelectedStarterGoalTypeId("custom");
  return nextValue;
  });
- }}
+ })}
  style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324961" }}
  >
  {showCustomGoalComposer || selectedStarterGoalTypeId === "custom" ? "Hide custom" : "Add custom goal"}
  </button>
  </div>
  {showCustomGoalComposer || selectedStarterGoalTypeId === "custom" ? (
- <div style={{ display:"grid", gap:"0.45rem" }}>
- <textarea
- data-testid="intake-goals-primary-input"
- ref={composerRef}
- value={extraGoalDraft}
- onChange={(e) => setExtraGoalDraft(e.target.value)}
- placeholder="Return to soccer without calf pain. Train for a ruck test. Rebuild after a long layoff."
- rows={3}
- style={{ minHeight:92, resize:"vertical", fontSize:"0.86rem", lineHeight:1.5 }}
+ <IntakeCustomGoalComposer
+ inputRef={composerRef}
+ initialDraft={extraGoalDraft}
+ onDraftChange={setExtraGoalDraft}
+ onAddGoal={(goalDraft) => scheduleIntakeAction(() => addGoalToStack(goalDraft))}
  />
- <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap", alignItems:"center" }}>
- <button
- data-testid="intake-goals-add"
- className="btn btn-primary"
- onClick={addGoalToStack}
- disabled={!normalizeIntakeGoalEntry(extraGoalDraft)}
- >
- Use custom goal
- </button>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
- We only fall back to parsing after you save the custom goal.
- </div>
- </div>
- </div>
  ) : null}
  </div>
 
@@ -14973,7 +15097,7 @@ const renderGoalSelectionSurface = () => (
  type="button"
  className="btn"
  data-testid={`intake-selected-goal-up-${toTestIdFragment(selection.goalText || selection.summary)}`}
- onClick={() => moveSelectedGoalInStack(selection.goalText || selection.summary, -1)}
+ onClick={() => scheduleIntakeAction(() => moveSelectedGoalInStack(selection.goalText || selection.summary, -1))}
  disabled={index === 0}
  style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#324961" }}
  >
@@ -14983,7 +15107,7 @@ const renderGoalSelectionSurface = () => (
  type="button"
  className="btn"
  data-testid={`intake-selected-goal-down-${toTestIdFragment(selection.goalText || selection.summary)}`}
- onClick={() => moveSelectedGoalInStack(selection.goalText || selection.summary, 1)}
+ onClick={() => scheduleIntakeAction(() => moveSelectedGoalInStack(selection.goalText || selection.summary, 1))}
  disabled={index === intakeGoalSelections.length - 1}
  style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#324961" }}
  >
@@ -14993,7 +15117,7 @@ const renderGoalSelectionSurface = () => (
  type="button"
  className="btn"
  data-testid={`intake-selected-goal-remove-${toTestIdFragment(selection.goalText || selection.summary)}`}
- onClick={() => removeGoalFromStack(selection.goalText || selection.summary)}
+ onClick={() => scheduleIntakeAction(() => removeGoalFromStack(selection.goalText || selection.summary))}
  style={{ fontSize:"0.47rem", color:"#9fb4d3", borderColor:"#324961" }}
  >
  Remove
@@ -15206,7 +15330,7 @@ const renderInterpretationStage = () => (
  key={modeOption.value}
  data-testid={`intake-anchor-mode-${fieldFragment}-${toTestIdFragment(modeOption.value)}`}
  className={String(clarificationValues?.[`${fieldId}__mode`] || "month") === modeOption.value ? "btn btn-primary" : "btn"}
- onClick={() => updateClarificationValue(`${fieldId}__mode`, modeOption.value)}
+ onClick={() => scheduleIntakeAction(() => updateClarificationValue(`${fieldId}__mode`, modeOption.value))}
  style={{ fontSize:"0.5rem", color:String(clarificationValues?.[`${fieldId}__mode`] || "month") === modeOption.value ? "#08111d" : "#dbe7f6", borderColor:String(clarificationValues?.[`${fieldId}__mode`] || "month") === modeOption.value ? "#dbe7f6" : "#324961", background:String(clarificationValues?.[`${fieldId}__mode`] || "month") === modeOption.value ? "#dbe7f6" : "transparent" }}
  >
  {modeOption.label}
@@ -15259,7 +15383,7 @@ const renderInterpretationStage = () => (
  key={modeOption.value}
  data-testid={`intake-anchor-mode-${fieldFragment}-${toTestIdFragment(modeOption.label)}`}
  className={String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === modeOption.value ? "btn btn-primary" : "btn"}
- onClick={() => updateClarificationValue(`${fieldId}__mode`, modeOption.value)}
+ onClick={() => scheduleIntakeAction(() => updateClarificationValue(`${fieldId}__mode`, modeOption.value))}
  style={{ fontSize:"0.5rem", color:String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === modeOption.value ? "#08111d" : "#dbe7f6", borderColor:String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === modeOption.value ? "#dbe7f6" : "#324961", background:String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === modeOption.value ? "#dbe7f6" : "transparent" }}
  >
  {modeOption.label}
@@ -15340,7 +15464,7 @@ const renderInterpretationStage = () => (
  <button
  data-testid="intake-anchor-toggle-structured"
  className={anchorEntryMode === "structured" ? "btn btn-primary" : "btn"}
- onClick={() => setAnchorEntryMode("structured")}
+ onClick={() => scheduleIntakeAction(() => setAnchorEntryMode("structured"))}
  style={{ fontSize:"0.5rem", color:anchorEntryMode === "structured" ? "#08111d" : "#dbe7f6", borderColor:anchorEntryMode === "structured" ? "#dbe7f6" : "#324961", background:anchorEntryMode === "structured" ? "#dbe7f6" : "transparent" }}
  >
  {INTAKE_COPY_DECK.clarify.structuredToggle}
@@ -15348,7 +15472,7 @@ const renderInterpretationStage = () => (
  <button
  data-testid="intake-anchor-toggle-natural"
  className={anchorEntryMode === "natural" ? "btn btn-primary" : "btn"}
- onClick={() => setAnchorEntryMode("natural")}
+ onClick={() => scheduleIntakeAction(() => setAnchorEntryMode("natural"))}
  style={{ fontSize:"0.5rem", color:anchorEntryMode === "natural" ? "#08111d" : "#dbe7f6", borderColor:anchorEntryMode === "natural" ? "#dbe7f6" : "#324961", background:anchorEntryMode === "natural" ? "#dbe7f6" : "transparent" }}
  >
  {INTAKE_COPY_DECK.clarify.naturalToggle}
@@ -15449,7 +15573,7 @@ const renderInterpretationStage = () => (
  <button
  data-testid="intake-confirm-toggle-recovery"
  className="btn"
- onClick={toggleBackgroundPriority}
+ onClick={() => scheduleIntakeAction(toggleBackgroundPriority)}
  style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
  >
  {goalStackReview.backgroundPriority.enabled ? "Let recovery flex" : "Keep recovery protected"}
@@ -15504,7 +15628,7 @@ const renderInterpretationStage = () => (
  type="button"
  data-testid={`intake-target-path-${String(choice?.key || "").trim()}`}
  className="btn"
- onClick={() => selectMilestonePath(milestoneDecisionModel.goalId, choice?.key || "")}
+ onClick={() => scheduleIntakeAction(() => selectMilestonePath(milestoneDecisionModel.goalId, choice?.key || ""))}
  style={{
  display:"grid",
  gap:"0.16rem",
@@ -15537,7 +15661,7 @@ const renderInterpretationStage = () => (
  <button
  data-testid="intake-go-next-detail"
  className="btn"
- onClick={jumpToNextRequiredDetail}
+ onClick={() => scheduleIntakeAction(jumpToNextRequiredDetail)}
  style={{ color:"#dbe7f6", borderColor:"#324961" }}
  >
  Go to the next detail
@@ -15780,8 +15904,7 @@ const intakeHeroSupport = phase === INTAKE_UI_PHASES.goals
  data-current-anchor-id={String(activeMachineAnchor?.anchor_id || "")}
  data-confirmation-status={String(activeConfirmationState?.status || "")}
  data-review-refresh-pending={reviewStatePending ? "true" : "false"}
- style={{ minHeight:"100vh", display:"flex", justifyContent:"center", background:"radial-gradient(120% 120% at 10% 0%, rgba(0,194,255,0.14), transparent 38%), radial-gradient(110% 110% at 100% 0%, rgba(255,138,0,0.12), transparent 36%), linear-gradient(180deg,#05080f 0%, #0a1322 55%, #0d182b 100%)", padding:"clamp(0.9rem, 2.6vw, 1.5rem)" }}
- style={{ minHeight:"100vh", display:"flex", justifyContent:"center", background:"radial-gradient(120% 120% at 10% 0%, color-mix(in srgb, var(--brand-accent-soft) 78%, transparent), transparent 40%), radial-gradient(110% 110% at 100% 0%, rgba(255,190,118,0.08), transparent 34%), var(--bg)", padding:"clamp(0.9rem, 2.6vw, 1.5rem)" }}
+ style={{ minHeight:"100vh", display:"flex", justifyContent:"center", background:"radial-gradient(120% 120% at 10% 0%, color-mix(in srgb, var(--brand-accent-soft) 78%, transparent), transparent 40%), radial-gradient(110% 110% at 100% 0%, rgba(255,190,118,0.08), transparent 34%), var(--bg)", padding:"clamp(0.9rem, 2.6vw, 1.5rem)", scrollPaddingBottom:"calc(var(--safe-area-bottom) + 10rem)" }}
  >
  <div style={{ width:"100%", maxWidth:1180, display:"grid", gap:"1rem", minHeight:"calc(100vh - 2rem)" }}>
  <SurfaceHero
@@ -15820,7 +15943,7 @@ const intakeHeroSupport = phase === INTAKE_UI_PHASES.goals
  </div>
  </SurfaceHero>
 
- <div style={{ display:"grid", gap:"1rem", alignItems:"start", gridTemplateColumns: intakeWideLayout ? "minmax(0, 1.18fr) minmax(320px, 0.82fr)" : "1fr" }}>
+ <div style={{ display:"grid", gap:"1rem", alignItems:"start", gridTemplateColumns: intakeWideLayout ? "minmax(0, 1.18fr) minmax(320px, 0.82fr)" : "1fr", paddingBottom:"calc(var(--safe-area-bottom) + 8rem)" }}>
  <section style={{ minWidth:0, display:"grid", gap:"1rem" }}>
  <SurfaceCard variant="elevated" style={{ border:"1px solid color-mix(in srgb, var(--border-strong) 84%, rgba(255,255,255,0.05))", borderRadius:30, background:"linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 96%, transparent) 0%, color-mix(in srgb, var(--panel) 98%, transparent) 100%)", boxShadow:"var(--shadow-2)", padding:"clamp(1rem, 2.8vw, 1.35rem)", backdropFilter:"blur(16px)" }}>
  {renderActiveStage()}
@@ -15836,7 +15959,7 @@ const intakeHeroSupport = phase === INTAKE_UI_PHASES.goals
  </aside>
  </div>
 
- <div style={{ position:"sticky", bottom:0, paddingBottom:"max(0.2rem, env(safe-area-inset-bottom))" }}>
+ <div style={{ position:"relative", zIndex:1, paddingBottom:"max(0.2rem, env(safe-area-inset-bottom))" }}>
  <div style={{ border:"1px solid color-mix(in srgb, var(--border) 90%, rgba(255,255,255,0.05))", borderRadius:26, background:"linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 90%, transparent) 0%, color-mix(in srgb, var(--panel) 96%, transparent) 100%)", boxShadow:"var(--shadow-2)", backdropFilter:"blur(16px)", padding:"0.9rem 1rem", display:"flex", justifyContent:"space-between", gap:"0.75rem", alignItems:"center", flexWrap:"wrap" }}>
 <div style={{ fontSize:"0.54rem", color:"var(--text-soft)", lineHeight:1.55, flex:"1 1 240px" }}>
 {phase === INTAKE_UI_PHASES.goals
@@ -15856,7 +15979,7 @@ const intakeHeroSupport = phase === INTAKE_UI_PHASES.goals
  <button
  data-testid="intake-footer-back"
  className="btn"
- onClick={handleFooterBack}
+ onClick={() => scheduleIntakeAction(handleFooterBack)}
  disabled={confirmBuildSubmitting || naturalAnchorSubmitting}
  style={{ color:"#dbe7f6", borderColor:"#324961" }}
  >
@@ -15867,7 +15990,7 @@ const intakeHeroSupport = phase === INTAKE_UI_PHASES.goals
  <button
  data-testid="intake-footer-foundation"
  className="btn"
- onClick={startFoundationPlanFlow}
+ onClick={() => scheduleIntakeAction(startFoundationPlanFlow)}
  disabled={assessing || confirmBuildSubmitting}
  style={{ color:"#dbe7f6", borderColor:"#324961" }}
  >
@@ -15878,7 +16001,7 @@ Quick start plan
  <button
  data-testid={phase === INTAKE_UI_PHASES.confirm || clarifyReadyToBuild ? "intake-confirm-build" : "intake-footer-continue"}
  className="btn btn-primary"
- onClick={handleFooterPrimaryAction}
+ onClick={() => scheduleIntakeAction(handleFooterPrimaryAction)}
  disabled={footerPrimaryDisabled}
  >
  {phase === INTAKE_UI_PHASES.confirm || clarifyReadyToBuild
@@ -16297,7 +16420,7 @@ function MetricsBaselinesSection({
  <button
  key={`${testIdPrefix}-${value}`}
  data-testid={`${testIdPrefix}-${toTestIdFragment(value || label)}`}
- className={selected ? "btn btn-primary" : "btn"}
+ className="btn"
  onClick={() => onSelect(value)}
  style={{
  minHeight:44,
