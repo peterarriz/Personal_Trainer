@@ -2874,6 +2874,14 @@ const EXPERIENCE_LEVEL_LABELS = { beginner: "Beginner", intermediate: "Intermedi
 const SESSION_LENGTH_OPTIONS = ["20", "30", "45", "60+"];
 const SESSION_LENGTH_LABELS = { "20": "20 min", "30": "30 min", "45": "45 min", "60+": "60+ min" };
 const TRAINING_WEEKDAY_CHIP_ITEMS = TRAINING_WEEKDAY_OPTIONS.map((option) => ({ value: option.value, label: option.label }));
+const INTAKE_REALITY_DEFAULTS = Object.freeze({
+ experience_level: "beginner",
+ training_days: "3",
+ session_length: "30",
+ training_location: "Gym",
+ coaching_style: "Balanced coaching",
+ home_equipment: ["Bodyweight only"],
+});
 
 const parseTrainingDaysForIntakePacket = (value = "") => {
  const text = String(value || "").trim();
@@ -3661,6 +3669,25 @@ const buildSeededIntakeAnswers = ({
  const existingBodyweight = nextAnswers?.intake_completeness?.fields?.current_bodyweight?.value;
  if (!(Number(existingBodyweight) > 0) && Number(profile?.weight) > 0) {
  nextAnswers = upsertSeededCurrentBodyweight(nextAnswers, profile.weight);
+ }
+ return nextAnswers;
+};
+
+const applyIntakeRealityDefaultsToAnswers = (answers = {}) => {
+ const nextAnswers = {
+ ...answers,
+ experience_level: answers?.experience_level || INTAKE_REALITY_DEFAULTS.experience_level,
+ training_days: String(answers?.training_days || "").trim() || INTAKE_REALITY_DEFAULTS.training_days,
+ session_length: String(answers?.session_length || "").trim() || INTAKE_REALITY_DEFAULTS.session_length,
+ training_location: String(answers?.training_location || "").trim() || INTAKE_REALITY_DEFAULTS.training_location,
+ coaching_style: String(answers?.coaching_style || "").trim() || INTAKE_REALITY_DEFAULTS.coaching_style,
+ };
+ if (
+ (nextAnswers.training_location === "Home" || nextAnswers.training_location === "Both")
+ && (!Array.isArray(nextAnswers.home_equipment) || nextAnswers.home_equipment.length === 0)
+ && !String(nextAnswers.home_equipment_other || "").trim()
+ ) {
+ nextAnswers.home_equipment = [...INTAKE_REALITY_DEFAULTS.home_equipment];
  }
  return nextAnswers;
 };
@@ -11786,10 +11813,15 @@ function IntakeCustomGoalComposer({
  return () => window.clearTimeout(timer);
  }, [localDraft, onDraftChange]);
 
- const publishDraft = () => {
+ const publishDraft = ({ defer = true } = {}) => {
  const nextDraft = String(localDraft || "");
  lastPublishedDraftRef.current = nextDraft;
- onDraftChange(nextDraft);
+ const publish = () => onDraftChange(nextDraft);
+ if (defer && typeof window !== "undefined" && typeof window.setTimeout === "function") {
+ window.setTimeout(publish, 0);
+ } else {
+ publish();
+ }
  return nextDraft;
  };
 
@@ -11810,7 +11842,7 @@ function IntakeCustomGoalComposer({
  <button
  data-testid="intake-goals-add"
  className="btn btn-primary"
- onClick={() => onAddGoal(publishDraft())}
+ onClick={() => onAddGoal(String(localDraft || ""))}
  disabled={disabled || !cleanDraft}
  >
  Use custom goal
@@ -11877,6 +11909,7 @@ const [showCustomGoalComposer, setShowCustomGoalComposer] = useState(false);
  const [goalMetricValues, setGoalMetricValues] = useState({});
  const [goalMetricFieldErrors, setGoalMetricFieldErrors] = useState({});
  const [goalMetricFormError, setGoalMetricFormError] = useState("");
+ const [recentlySavedGoalText, setRecentlySavedGoalText] = useState("");
  const [equipmentSelection, setEquipmentSelection] = useState([]);
  const [equipmentOther, setEquipmentOther] = useState("");
  const [phase, setPhase] = useState(() => (
@@ -12074,6 +12107,12 @@ const [showCustomGoalComposer, setShowCustomGoalComposer] = useState(false);
  useEffect(() => {
  goalIntentDraftRef.current = String(answers?.goal_intent || "");
  }, [answers?.goal_intent]);
+
+ useEffect(() => {
+ if (!recentlySavedGoalText) return undefined;
+ const timer = window.setTimeout(() => setRecentlySavedGoalText(""), 4200);
+ return () => window.clearTimeout(timer);
+ }, [recentlySavedGoalText]);
 
  useEffect(() => {
  if (startedRef.current) return;
@@ -12882,6 +12921,7 @@ setGoalMetricFormError("");
 const nextAnswers = addGoalSelectionToStack(pendingGoalSelection, {
 baseAnswers: metricOutcome.answers,
 });
+setRecentlySavedGoalText(pendingGoalSelection.summary || pendingGoalSelection.goalText);
 setPendingGoalSelection(null);
 return nextAnswers;
 };
@@ -13042,8 +13082,12 @@ const removeGoalFromStack = (goalText = "") => {
  setGoalMetricFormError("Save or clear the selected goal before continuing.");
  return;
  }
+ const baseGoalStageAnswers = goalsStageCanUseSmartDefaults
+ ? applyIntakeRealityDefaultsToAnswers(answers)
+ : answers;
  const stagedAnswers = syncGoalStackDraftToAnswers({
- primaryGoalText: answers?.goal_intent || "",
+ baseAnswers: baseGoalStageAnswers,
+ primaryGoalText: baseGoalStageAnswers?.goal_intent || "",
  additionalGoals: secondaryGoalEntries,
  });
  let nextMetricAnswers = {
@@ -13215,6 +13259,29 @@ await finalizePlan();
  "July", "August", "September", "October", "November", "December",
  ][monthIndex] || month;
  return `${monthLabel} ${year}`;
+ };
+ const normalizeDateOrMonthInputValue = (mode = "month", value = "") => {
+ const clean = String(value || "").trim();
+ if (!clean) return "";
+ if (mode === "date") return /^\d{4}-\d{2}-\d{2}$/.test(clean) ? clean : "";
+ const dateMatch = clean.match(/^(\d{4}-\d{2})-\d{2}$/);
+ if (dateMatch?.[1]) return dateMatch[1];
+ return /^\d{4}-\d{2}$/.test(clean) ? clean : "";
+ };
+ const updateDateOrMonthClarificationMode = (fieldId = "", mode = "month") => {
+ const cleanFieldId = String(fieldId || "").trim();
+ if (!cleanFieldId) return;
+ const cleanMode = String(mode || "month").trim().toLowerCase() || "month";
+ updateClarificationValue(`${cleanFieldId}__mode`, cleanMode);
+ setClarificationValues((prev) => {
+ const currentValue = String(prev?.[cleanFieldId] || "").trim();
+ const nextValue = normalizeDateOrMonthInputValue(cleanMode, currentValue);
+ if (nextValue === currentValue) return prev;
+ return {
+ ...prev,
+ [cleanFieldId]: nextValue,
+ };
+ });
  };
  const buildAnchorSubmissionPayload = (anchor = null) => {
  if (!anchor?.field_id) return null;
@@ -14223,6 +14290,11 @@ return intakeGoalSelections.flatMap((selection, priorityIndex) => (
 ));
 }, [intakeGoalSelectionSignature, selectedStarterGoalTypeId]);
 const pendingGoalCommitLabel = pendingGoalCaptureModel?.commitLabel || "Save goal";
+const pendingGoalMissingRequiredLabels = pendingGoalMetricQuestions
+.flatMap((question) => Array.isArray(question?.inputFields) ? question.inputFields : [])
+.filter((field) => Boolean(field?.required) && !String(goalMetricValues?.[field?.key] ?? "").trim())
+.map((field) => field?.label || String(field?.key || "").replace(/_/g, " "))
+.filter(Boolean);
 const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 320);
  const intakePreviewTodayKey = new Date().toISOString().split("T")[0];
  const intakePreviewDayOfWeek = getDayOfWeek();
@@ -14313,23 +14385,36 @@ const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 
  const trainingLocationValue = String(answers?.training_location || "").trim();
  const homeEquipmentSelection = Array.isArray(answers?.home_equipment) ? answers.home_equipment : [];
  const needsHomeEquipment = trainingLocationValue === "Home" || trainingLocationValue === "Both";
-const goalsStageNeeds = [
-pendingGoalSelection?.goalText ? "Save or clear the goal in progress before continuing." : "",
-!normalizedGoalText && secondaryGoalEntries.length === 0 && String(answers?.primary_goal || "").trim() !== "general_fitness"
-? "Add at least one goal."
-: "",
-!answers?.experience_level ? "Pick your training background." : "",
-!answers?.training_days ? "Pick your training days." : "",
- !answers?.session_length ? "Pick your session length." : "",
- !trainingLocationValue ? "Pick where you train." : "",
+ const hasGoalReadyForBuild = Boolean(
+ normalizedGoalText
+ || secondaryGoalEntries.length > 0
+ || String(answers?.primary_goal || "").trim() === "general_fitness"
+ );
+ const defaultableRealityNeeds = [
+ !answers?.experience_level ? "training background" : "",
+ !answers?.training_days ? "training days" : "",
+ !answers?.session_length ? "session length" : "",
+ !trainingLocationValue ? "training location" : "",
  needsHomeEquipment && homeEquipmentSelection.length === 0 && !String(answers?.home_equipment_other || "").trim()
- ? "Choose your home setup."
+ ? "home setup"
  : "",
+ ].filter(Boolean);
+ const blockingGoalsStageNeeds = [
+ pendingGoalSelection?.goalText ? "Save the goal in progress." : "",
+ !hasGoalReadyForBuild ? "Add at least one goal." : "",
  intakeInjuryContext.hasCurrentIssue && !answers?.injury_impact && !(Array.isArray(answers?.injury_limitations) && answers.injury_limitations.length > 0)
  ? "Mark what training is limited right now."
  : "",
  ].filter(Boolean);
+const goalsStageNeeds = [
+...blockingGoalsStageNeeds,
+...defaultableRealityNeeds.map((item) => `Set ${item}.`),
+].filter(Boolean);
  const goalsStageCanContinue = goalsStageNeeds.length === 0;
+ const goalsStageCanUseSmartDefaults = hasGoalReadyForBuild
+ && !pendingGoalSelection?.goalText
+ && blockingGoalsStageNeeds.length === 0
+ && defaultableRealityNeeds.length > 0;
  useEffect(() => {
  const syncedSelections = buildGoalTemplateSelectionsFromAnswers({ answers });
  const currentSerialized = JSON.stringify(intakeGoalSelections);
@@ -14409,6 +14494,12 @@ const stageProgressIndex = phase === INTAKE_UI_PHASES.building
  home_equipment_other: "",
  }),
  }));
+ };
+ const applyRealityDefaultsToDraft = () => {
+ const nextAnswers = applyIntakeRealityDefaultsToAnswers(answers);
+ setAnswers(nextAnswers);
+ setGoalMetricFormError("");
+ return nextAnswers;
  };
  const toggleAvailableTrainingDay = (option) => {
  setAnswers((prev) => {
@@ -14599,7 +14690,10 @@ const readPriorityOrderedGoalIds = () => {
  return (
  <button
  key={`${testIdPrefix}-${value}`}
+ type="button"
  data-testid={`${testIdPrefix}-${toTestIdFragment(value || label)}`}
+ data-selected={selected ? "true" : "false"}
+ aria-pressed={selected ? "true" : "false"}
  className="btn"
  onClick={() => scheduleIntakeAction(() => onSelect(value))}
  style={{
@@ -14761,6 +14855,11 @@ const renderGoalMetricQuestionCard = (question = null, { contextLabel = "" } = {
 };
 const renderPendingGoalSelectionCard = () => {
 if (!pendingGoalSelection?.goalText) return null;
+const pendingStatusText = pendingGoalAlreadyAdded
+? "Already saved"
+: pendingGoalMissingRequiredLabels.length > 0
+? `${pendingGoalMissingRequiredLabels.length} detail${pendingGoalMissingRequiredLabels.length === 1 ? "" : "s"} left`
+: "Ready to save";
 return (
 <div
 data-testid="intake-goal-selection-draft"
@@ -14773,8 +14872,9 @@ padding:"0.85rem",
 background:"rgba(6,17,31,0.82)",
 }}
 >
-<div style={{ display:"grid", gap:"0.14rem" }}>
-<div style={{ fontSize:"0.48rem", color:"#b9ecff", letterSpacing:"0.12em" }}>GOAL DETAILS</div>
+<div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"flex-start", flexWrap:"wrap" }}>
+<div style={{ display:"grid", gap:"0.14rem", flex:"1 1 220px" }}>
+<div style={{ fontSize:"0.48rem", color:"#b9ecff", letterSpacing:"0.12em" }}>UNSAVED GOAL</div>
 <div style={{ fontSize:"0.62rem", color:"#f8fbff", lineHeight:1.45, fontWeight:600 }}>
 {pendingGoalSelection.summary || pendingGoalSelection.goalText}
 </div>
@@ -14782,6 +14882,21 @@ background:"rgba(6,17,31,0.82)",
 {pendingGoalAlreadyAdded
 ? "This goal is already in your stack."
 : pendingGoalCaptureModel?.helper || "Save this goal when it looks right."}
+</div>
+</div>
+<div
+data-testid="intake-goal-selection-status"
+style={{
+fontSize:"0.48rem",
+color:pendingGoalMissingRequiredLabels.length > 0 ? "#ffd7a8" : "#9fe8c7",
+border:"1px solid rgba(111,148,198,0.18)",
+borderRadius:999,
+padding:"0.22rem 0.48rem",
+background:"rgba(4,10,18,0.58)",
+whiteSpace:"nowrap",
+}}
+>
+{pendingStatusText}
 </div>
 </div>
 {pendingGoalHasDetails ? (
@@ -14799,11 +14914,19 @@ contextLabel: "Finish this goal",
 <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap", alignItems:"center" }}>
 <button
 type="button"
-className={pendingGoalAlreadyAdded ? "btn" : "btn btn-primary"}
+className="btn"
 data-testid="intake-goal-selection-commit"
 onClick={() => scheduleIntakeAction(commitPendingGoalSelection)}
 disabled={pendingGoalAlreadyAdded}
-style={pendingGoalAlreadyAdded ? { color:"#9fb4d3", borderColor:"#324961" } : {}}
+style={{
+ minWidth:140,
+ justifyContent:"center",
+ whiteSpace:"nowrap",
+ color:pendingGoalAlreadyAdded ? "#9fb4d3" : "#08111d",
+ borderColor:pendingGoalAlreadyAdded ? "#324961" : "#dbe7f6",
+ background:pendingGoalAlreadyAdded ? "transparent" : "#dbe7f6",
+ boxShadow:pendingGoalAlreadyAdded ? "none" : "0 12px 28px rgba(219,231,246,0.14)",
+}}
 >
 {pendingGoalAlreadyAdded ? "Already added" : pendingGoalCommitLabel}
 </button>
@@ -14954,12 +15077,12 @@ const renderGoalCard = (goal = null, { mode = "proposal" } = {}) => {
  );
  };
 const renderGoalSelectionSurface = () => (
- <div data-testid="intake-goal-selection-surface" style={{ display:"grid", gap:"0.8rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:24, padding:"1rem", background:"rgba(8,14,25,0.82)" }}>
+ <div data-testid="intake-goal-selection-surface" style={{ display:"grid", gap:"0.68rem", minWidth:0, overflow:"hidden", border:"1px solid rgba(111,148,198,0.16)", borderRadius:22, padding:"0.9rem", background:"rgba(8,14,25,0.82)" }}>
  <div style={{ display:"grid", gap:"0.18rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL CATEGORY</div>
  <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.5 }}>{activeStarterGoalType?.helper || "Structured first. Custom stays secondary."}</div>
  </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:"0.45rem" }}>
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(128px,1fr))", gap:"0.4rem", minWidth:0 }}>
  {starterGoalTypes.map((goalType) => {
  const selected = selectedStarterGoalTypeId === goalType.id;
  return (
@@ -14973,12 +15096,13 @@ const renderGoalSelectionSurface = () => (
  display:"grid",
  gap:"0.18rem",
  textAlign:"left",
- minHeight:102,
- padding:"0.8rem",
- borderRadius:18,
+ minHeight:88,
+ padding:"0.68rem",
+ borderRadius:16,
  border:selected ? "1px solid rgba(0,194,255,0.34)" : "1px solid rgba(111,148,198,0.16)",
  background:selected ? "linear-gradient(180deg, rgba(0,194,255,0.14), rgba(7,12,21,0.94))" : "rgba(4,10,18,0.58)",
  boxShadow:selected ? "0 14px 30px rgba(0,194,255,0.1)" : "none",
+ minWidth:0,
  }}
  >
  <div style={{ fontSize:"0.45rem", color:selected ? "#b9ecff" : "#8fa5c8", letterSpacing:"0.12em" }}>{goalType.eyebrow.toUpperCase()}</div>
@@ -14989,13 +15113,13 @@ const renderGoalSelectionSurface = () => (
  })}
  </div>
 
- {selectedStarterGoalTypeId !== "custom" ? (
+ {selectedStarterGoalTypeId !== "custom" && !pendingGoalSelection?.goalText ? (
  <div style={{ display:"grid", gap:"0.55rem" }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>EXAMPLES THAT FIT</div>
  <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>Pick the closest fit fast. Exact metrics can stay blank for now.</div>
  </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:"0.4rem", minWidth:0 }}>
  {featuredStarterGoalTemplates.map((template) => {
  const selectedPrimary = String(primaryIntakeGoalSelection?.templateId || "").trim() === template.id;
  const added = selectedGoalTextSet.has(String(template.goalText || "").toLowerCase());
@@ -15013,10 +15137,11 @@ const renderGoalSelectionSurface = () => (
  borderColor:selectedPrimary || selectedForDraft ? "rgba(0,194,255,0.38)" : added ? "rgba(147,197,253,0.55)" : "#22324a",
  background:selectedPrimary || selectedForDraft ? "linear-gradient(180deg, rgba(0,194,255,0.12), rgba(9,16,29,0.92))" : added ? "rgba(147,197,253,0.12)" : "rgba(11,18,32,0.8)",
  padding:"0.82rem",
- borderRadius:18,
+ borderRadius:16,
  display:"grid",
  gap:"0.24rem",
  opacity: added ? 0.82 : 1,
+ minWidth:0,
  }}
  >
  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start" }}>
@@ -15031,14 +15156,15 @@ const renderGoalSelectionSurface = () => (
  })}
  </div>
  </div>
- ) : (
+ ) : selectedStarterGoalTypeId === "custom" && !pendingGoalSelection?.goalText ? (
  <div style={{ border:"1px dashed rgba(111,148,198,0.16)", borderRadius:18, padding:"0.9rem", background:"rgba(4,10,18,0.4)", fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.5 }}>
  Custom goals skip the template grid. Use the fallback card below.
  </div>
- )}
+ ) : null}
 
  {pendingGoalSelection ? renderPendingGoalSelectionCard() : null}
 
+ {!pendingGoalSelection?.goalText ? (
  <div data-testid="intake-custom-goal-card" style={{ display:"grid", gap:"0.45rem", border:"1px dashed rgba(111,148,198,0.18)", borderRadius:18, padding:"0.9rem", background:"rgba(4,10,18,0.35)" }}>
  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>
@@ -15070,12 +15196,22 @@ const renderGoalSelectionSurface = () => (
  />
  ) : null}
  </div>
+ ) : null}
 
  <div data-testid="intake-selected-goals" style={{ display:"grid", gap:"0.42rem", border:"1px solid rgba(111,148,198,0.12)", borderRadius:16, padding:"0.8rem", background:"rgba(4,10,18,0.55)" }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>PRIORITY ORDER</div>
- <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Save each goal cleanly, then move the stack until the order feels right.</div>
+ <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>SAVED GOALS</div>
+ <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>
+ {intakeGoalSelections.length > 0
+ ? "Anything here is locked into the week-one draft."
+ : "Pick one goal, save it, then build or add another."}
  </div>
+ </div>
+ {recentlySavedGoalText ? (
+ <div data-testid="intake-goal-saved-status" style={{ border:"1px solid rgba(39,245,154,0.24)", borderRadius:14, padding:"0.62rem 0.7rem", background:"rgba(39,245,154,0.08)", color:"#9fe8c7", fontSize:"0.54rem", lineHeight:1.45 }}>
+ Saved: {recentlySavedGoalText}
+ </div>
+ ) : null}
  {intakeGoalSelections.length > 0 ? (
  <div style={{ display:"grid", gap:"0.42rem" }}>
  {intakeGoalSelections.map((selection, index) => (
@@ -15089,6 +15225,7 @@ const renderGoalSelectionSurface = () => (
  <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>
  {index === 0 ? "PRIORITY 1" : index < 3 ? `PRIORITY ${index + 1}` : "ADDITIONAL GOAL"}
  </div>
+ <div style={{ fontSize:"0.43rem", color:"#9fe8c7", letterSpacing:"0.08em" }}>SAVED</div>
  <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.42, fontWeight:600 }}>{selection.summary || selection.goalText}</div>
  <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{selection.helper || "Custom goal"}</div>
  </div>
@@ -15151,9 +15288,9 @@ const renderGoalSelectionSurface = () => (
  </div>
 );
 const renderPlanningRealitySurface = () => (
- <div data-testid="intake-reality-surface" style={{ display:"grid", gap:"0.75rem", alignSelf:"start", border:"1px solid rgba(111,148,198,0.16)", borderRadius:24, padding:"1rem", background:"rgba(8,14,25,0.82)" }}>
+ <div data-testid="intake-reality-surface" style={{ display:"grid", gap:"0.75rem", minWidth:0, alignSelf:"start", border:"1px solid rgba(111,148,198,0.16)", borderRadius:22, padding:"0.9rem", background:"rgba(8,14,25,0.82)" }}>
  {renderSectionLabel("Reality", "Weekly reality", "Availability, equipment, and constraints that materially change week one.")}
- <div style={{ display:"grid", gap:"0.7rem", alignItems:"start", gridTemplateColumns:intakeWideLayout ? "repeat(2, minmax(0, 1fr))" : "1fr" }}>
+ <div style={{ display:"grid", gap:"0.7rem", alignItems:"start", gridTemplateColumns:intakeWideLayout ? "repeat(auto-fit, minmax(min(100%, 220px), 1fr))" : "1fr", minWidth:0 }}>
  <div style={{ display:"grid", gap:"0.35rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>EXPERIENCE</div>
  {renderChoiceChips({
@@ -15172,6 +15309,16 @@ const renderPlanningRealitySurface = () => (
  testIdPrefix: "intake-goals-option-training-days",
  })}
  </div>
+ <details
+ data-testid="intake-optional-reality-details"
+ open={(intakeInjuryContext.hasCurrentIssue || String(answers?.injury_text || "").trim() || (Array.isArray(answers?.available_training_days) && answers.available_training_days.length > 0)) ? true : undefined}
+ style={{ display:"grid", gap:"0.6rem", border:"1px solid rgba(111,148,198,0.12)", borderRadius:16, padding:"0.72rem", background:"rgba(4,10,18,0.42)", ...(intakeWideLayout ? { gridColumn:"1 / -1" } : {}) }}
+ >
+ <summary data-testid="intake-optional-reality-summary" style={{ cursor:"pointer", color:"#dbe7f6", fontSize:"0.56rem", fontWeight:650, lineHeight:1.4 }}>
+ Optional schedule tuning
+ <span style={{ color:"#8fa5c8", fontSize:"0.5rem", fontWeight:500 }}> Pick exact days only if you want</span>
+ </summary>
+ <div style={{ display:"grid", gap:"0.7rem", marginTop:"0.65rem" }}>
  <div style={{ display:"grid", gap:"0.35rem", ...(intakeWideLayout ? { gridColumn:"1 / -1" } : {}) }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>DAYS YOU CAN TRAIN</div>
@@ -15185,6 +15332,8 @@ const renderPlanningRealitySurface = () => (
  multi: true,
  })}
  </div>
+ </div>
+ </details>
  <div style={{ display:"grid", gap:"0.35rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>SESSION LENGTH</div>
  {renderChoiceChips({
@@ -15253,7 +15402,25 @@ const renderPlanningRealitySurface = () => (
  testIdPrefix: "intake-goals-option-coaching-style",
  })}
  </div>
- {goalsStageNeeds.length > 0 ? (
+ {goalsStageCanUseSmartDefaults ? (
+ <div data-testid="intake-goals-needs" style={{ display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"center", flexWrap:"wrap", border:"1px solid rgba(39,245,154,0.18)", borderRadius:16, padding:"0.68rem 0.75rem", background:"rgba(39,245,154,0.07)", ...(intakeWideLayout ? { gridColumn:"1 / -1" } : {}) }}>
+ <div style={{ display:"grid", gap:"0.12rem", minWidth:0, flex:"1 1 220px" }}>
+ <div style={{ fontSize:"0.54rem", color:"#9fe8c7", lineHeight:1.45 }}>Ready with smart defaults.</div>
+ <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+ Missing: {defaultableRealityNeeds.join(", ")}. Defaults are beginner, 3 days, 30 min, gym.
+ </div>
+ </div>
+ <button
+ type="button"
+ className="btn"
+ data-testid="intake-apply-smart-defaults"
+ onClick={() => scheduleIntakeAction(applyRealityDefaultsToDraft)}
+ style={{ color:"#08111d", borderColor:"#9fe8c7", background:"#9fe8c7", whiteSpace:"nowrap" }}
+ >
+ Use defaults
+ </button>
+ </div>
+ ) : goalsStageNeeds.length > 0 ? (
  <div data-testid="intake-goals-needs" style={{ display:"grid", gap:"0.28rem", ...(intakeWideLayout ? { gridColumn:"1 / -1" } : {}) }}>
  {goalsStageNeeds.map((item) => (
  <div key={item} style={{ fontSize:"0.54rem", color:"#9fb4d3", lineHeight:1.5 }}>{item}</div>
@@ -15270,7 +15437,7 @@ const renderPlanningRealitySurface = () => (
 const renderGoalsStage = () => (
  <div data-testid="intake-goals-step" style={{ display:"grid", gap:"0.95rem" }}>
 {renderSectionLabel("Setup", "Capture goals fast", "Structured first, custom second, and only the details that change week one.")}
- <div style={{ display:"grid", gridTemplateColumns:intakeWideLayout ? "minmax(0, 1.08fr) minmax(320px, 0.92fr)" : "1fr", gap:"0.95rem", alignItems:"start" }}>
+ <div style={{ display:"grid", gridTemplateColumns:"minmax(0, 1fr)", gap:"0.85rem", alignItems:"start", minWidth:0 }}>
  {renderGoalSelectionSurface()}
  {renderPlanningRealitySurface()}
  </div>
@@ -15318,6 +15485,7 @@ const renderInterpretationStage = () => (
  });
  }
  if (anchor?.input_type === "date_or_month") {
+ const dateOrMonthMode = String(clarificationValues?.[`${fieldId}__mode`] || "month").trim().toLowerCase() || "month";
  return (
  <div style={{ display:"grid", gap:"0.5rem" }}>
  <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
@@ -15329,23 +15497,23 @@ const renderInterpretationStage = () => (
  <button
  key={modeOption.value}
  data-testid={`intake-anchor-mode-${fieldFragment}-${toTestIdFragment(modeOption.value)}`}
- className={String(clarificationValues?.[`${fieldId}__mode`] || "month") === modeOption.value ? "btn btn-primary" : "btn"}
- onClick={() => scheduleIntakeAction(() => updateClarificationValue(`${fieldId}__mode`, modeOption.value))}
- style={{ fontSize:"0.5rem", color:String(clarificationValues?.[`${fieldId}__mode`] || "month") === modeOption.value ? "#08111d" : "#dbe7f6", borderColor:String(clarificationValues?.[`${fieldId}__mode`] || "month") === modeOption.value ? "#dbe7f6" : "#324961", background:String(clarificationValues?.[`${fieldId}__mode`] || "month") === modeOption.value ? "#dbe7f6" : "transparent" }}
+ className={dateOrMonthMode === modeOption.value ? "btn btn-primary" : "btn"}
+ onClick={() => scheduleIntakeAction(() => updateDateOrMonthClarificationMode(fieldId, modeOption.value))}
+ style={{ fontSize:"0.5rem", color:dateOrMonthMode === modeOption.value ? "#08111d" : "#dbe7f6", borderColor:dateOrMonthMode === modeOption.value ? "#dbe7f6" : "#324961", background:dateOrMonthMode === modeOption.value ? "#dbe7f6" : "transparent" }}
  >
  {modeOption.label}
  </button>
  ))}
  </div>
- {String(clarificationValues?.[`${fieldId}__mode`] || "month") === OPEN_ENDED_TIMING_VALUE ? (
+ {dateOrMonthMode === OPEN_ENDED_TIMING_VALUE ? (
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
  No fixed deadline. We will treat this as an ongoing goal and show the next phase in the visible plan.
  </div>
  ) : (
  <input
  data-testid={`intake-anchor-input-${fieldFragment}`}
- type={String(clarificationValues?.[`${fieldId}__mode`] || "month") === "date" ? "date" : "month"}
- value={clarificationValues?.[fieldId] || ""}
+ type={dateOrMonthMode === "date" ? "date" : "month"}
+ value={normalizeDateOrMonthInputValue(dateOrMonthMode, clarificationValues?.[fieldId] || "")}
  onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
  />
  )}
@@ -15813,6 +15981,10 @@ const handleFooterPrimaryAction = async () => {
  },
  });
  if (phase === INTAKE_UI_PHASES.goals) {
+ if (pendingGoalSelection?.goalText) {
+ commitPendingGoalSelection();
+ return;
+ }
  await submitGoalsStage();
  return;
  }
@@ -15838,6 +16010,8 @@ await submitAdjustment();
 };
 const intakeHeroProgressLabel = pendingGoalSelection?.goalText
 ? "Finish current goal"
+: goalsStageCanUseSmartDefaults
+? "Ready with defaults"
 : intakeGoalSelections.length > 0
 ? `${intakeGoalSelections.length} goal${intakeGoalSelections.length === 1 ? "" : "s"} saved`
 : "Add your first goal";
@@ -15852,12 +16026,18 @@ const footerPrimaryLabel = phase === INTAKE_UI_PHASES.confirm
 : phase === INTAKE_UI_PHASES.adjust
 ? "Update goal"
 : phase === INTAKE_UI_PHASES.goals
-? (assessing ? "Building week one..." : "Build week one")
+? (pendingGoalSelection?.goalText
+? "Save goal"
+: assessing
+? "Building week one..."
+: goalsStageCanUseSmartDefaults
+? "Build with defaults"
+: "Build week one")
 : "Continue";
  const footerPrimaryDisabled = phase === INTAKE_UI_PHASES.building
  ? true
  : phase === INTAKE_UI_PHASES.goals
- ? !goalsStageCanContinue || assessing
+ ? (pendingGoalSelection?.goalText ? assessing : (!goalsStageCanContinue && !goalsStageCanUseSmartDefaults) || assessing)
  : phase === INTAKE_UI_PHASES.interpretation
  ? assessing || !assessmentBoundary?.typedIntakePacket
  : phase === INTAKE_UI_PHASES.clarify
@@ -15963,7 +16143,11 @@ const intakeHeroSupport = phase === INTAKE_UI_PHASES.goals
  <div style={{ border:"1px solid color-mix(in srgb, var(--border) 90%, rgba(255,255,255,0.05))", borderRadius:26, background:"linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 90%, transparent) 0%, color-mix(in srgb, var(--panel) 96%, transparent) 100%)", boxShadow:"var(--shadow-2)", backdropFilter:"blur(16px)", padding:"0.9rem 1rem", display:"flex", justifyContent:"space-between", gap:"0.75rem", alignItems:"center", flexWrap:"wrap" }}>
 <div style={{ fontSize:"0.54rem", color:"var(--text-soft)", lineHeight:1.55, flex:"1 1 240px" }}>
 {phase === INTAKE_UI_PHASES.goals
-? "Add at least one goal, set the weekly reality, and the main action will try to build from here."
+? (pendingGoalSelection?.goalText
+? "Save the selected goal, then build from the saved stack."
+: goalsStageCanUseSmartDefaults
+? "You can build now; the missing reality fields will use smart defaults."
+: "Add at least one goal, set the weekly reality, and the main action will try to build from here.")
 : phase === INTAKE_UI_PHASES.interpretation
 ? INTAKE_COPY_DECK.footer.interpretation
 : phase === INTAKE_UI_PHASES.clarify
@@ -16419,7 +16603,10 @@ function MetricsBaselinesSection({
  return (
  <button
  key={`${testIdPrefix}-${value}`}
+ type="button"
  data-testid={`${testIdPrefix}-${toTestIdFragment(value || label)}`}
+ data-selected={selected ? "true" : "false"}
+ aria-pressed={selected ? "true" : "false"}
  className="btn"
  onClick={() => onSelect(value)}
  style={{

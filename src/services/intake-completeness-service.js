@@ -268,6 +268,44 @@ const RELATIVE_TIMELINE_PATTERN = /\b(?:in|within|over the next)\s+\d{1,3}\s+(?:
 const BOUNDED_TIMELINE_PATTERN = /\b(?:by|before)\s+(?:next year|this year|\d{4}-\d{2}(?:-\d{2})?|(?:early|mid|late)\s+(?:spring|summer|fall|autumn|winter)|spring|summer|fall|autumn|winter|january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|sept|october|oct|november|nov|december|dec)(?:\s+\d{4})?\b/i;
 const NEXT_YEAR_PATTERN = /\b(?:next|this)\s+year\b/i;
 
+const padDatePart = (value = "") => String(Number(value)).padStart(2, "0");
+
+export const normalizeTimelineDateValue = (value = "") => {
+  const clean = sanitizeText(value, 120);
+  if (!clean) return "";
+  const buildIsoDate = (yearValue = "", monthValue = "", dayValue = "") => {
+    const year = Number(yearValue);
+    const month = Number(monthValue);
+    const day = Number(dayValue);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return "";
+    if (year < 1900 || year > 2199 || month < 1 || month > 12 || day < 1 || day > 31) return "";
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() !== year
+      || date.getUTCMonth() !== month - 1
+      || date.getUTCDate() !== day
+    ) return "";
+    return `${year}-${padDatePart(month)}-${padDatePart(day)}`;
+  };
+
+  const isoDateMatch = clean.match(/\b(19\d{2}|20\d{2}|21\d{2})-(\d{1,2})-(\d{1,2})\b/);
+  if (isoDateMatch?.[1]) return buildIsoDate(isoDateMatch[1], isoDateMatch[2], isoDateMatch[3]);
+
+  const usDateMatch = clean.match(/\b(\d{1,2})[/-](\d{1,2})[/-]((?:19|20|21)\d{2})\b/);
+  if (usDateMatch?.[1]) return buildIsoDate(usDateMatch[3], usDateMatch[1], usDateMatch[2]);
+
+  const monthNameMatch = clean.match(/\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|sept|october|oct|november|nov|december|dec)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+((?:19|20|21)\d{2})\b/i);
+  if (monthNameMatch?.[1]) {
+    return buildIsoDate(
+      monthNameMatch[3],
+      MONTH_NAME_TO_NUMBER[String(monthNameMatch[1]).toLowerCase()],
+      monthNameMatch[2]
+    );
+  }
+
+  return "";
+};
+
 export const normalizeTimelineMonthValue = (value = "") => {
   const clean = sanitizeText(value, 120);
   if (!clean) return "";
@@ -288,16 +326,17 @@ export const normalizeTimelineMonthValue = (value = "") => {
 const parseExplicitDateText = (text = "") => {
   const normalized = sanitizeText(text, 120);
   if (!normalized) return "";
+  const normalizedDate = normalizeTimelineDateValue(normalized);
+  if (normalizedDate) return normalizedDate;
   const normalizedMonth = normalizeTimelineMonthValue(normalized);
   if (normalizedMonth) return normalizedMonth;
-  const isoMatch = normalized.match(/\b\d{4}-\d{2}-\d{2}\b/);
-  if (isoMatch?.[0]) return isoMatch[0];
   return normalized;
 };
 
 const hasTimingSignal = (text = "") => {
   const clean = sanitizeText(text, 120);
   if (!clean) return false;
+  if (normalizeTimelineDateValue(clean)) return true;
   if (/^\d{4}-\d{2}(?:-\d{2})?$/.test(clean)) return true;
   if (normalizeTimelineMonthValue(clean)) return true;
   if (RELATIVE_TIMELINE_PATTERN.test(clean)) return true;
@@ -317,8 +356,9 @@ export const resolveTimelineFieldRecord = ({
   const cleanCandidate = sanitizeText(candidateValue || rawText, 120);
   const acceptedRaw = preferredRaw || cleanCandidate;
   const validatedRaw = validateTimelineValue(acceptedRaw);
-  const normalizedMonth = normalizeTimelineMonthValue(cleanCandidate) || normalizeTimelineMonthValue(preferredRaw);
-  if (!validatedRaw && !normalizedMonth) return null;
+  const normalizedDate = normalizeTimelineDateValue(cleanCandidate) || normalizeTimelineDateValue(preferredRaw);
+  const normalizedMonth = normalizedDate ? "" : normalizeTimelineMonthValue(cleanCandidate) || normalizeTimelineMonthValue(preferredRaw);
+  if (!validatedRaw && !normalizedDate && !normalizedMonth) return null;
   if (validatedRaw === OPEN_ENDED_TIMING_VALUE) {
     return {
       raw: "Open-ended",
@@ -327,7 +367,7 @@ export const resolveTimelineFieldRecord = ({
   }
   return {
     raw: validatedRaw || preferredRaw || cleanCandidate,
-    value: normalizedMonth || validatedRaw || preferredRaw || cleanCandidate,
+    value: normalizedDate || normalizedMonth || validatedRaw || preferredRaw || cleanCandidate,
   };
 };
 
@@ -1304,6 +1344,7 @@ export function validateTimelineValue(value = "") {
   const clean = sanitizeText(value, 120);
   if (!clean) return "";
   if (isOpenEndedTimingValue(clean)) return OPEN_ENDED_TIMING_VALUE;
+  if (normalizeTimelineDateValue(clean)) return clean;
   if (/^\d{4}-\d{2}(?:-\d{2})?$/.test(clean) || hasTimingSignal(clean)) return clean;
   return "";
 }

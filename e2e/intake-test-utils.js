@@ -571,6 +571,7 @@ async function fillPlanningRealityInputs(page, {
   const experienceLevelValue = normalizeExperienceLevelValue(experienceLevel);
   const sessionLengthValue = normalizeSessionLengthValue(sessionLength);
   const normalizedHomeEquipment = Array.isArray(homeEquipment) ? homeEquipment : [homeEquipment].filter(Boolean);
+  const normalizedAvailableDays = Array.isArray(availableTrainingDays) ? availableTrainingDays : [availableTrainingDays].filter(Boolean);
   const resolvedHomeEquipment = (
     (trainingLocation === "Home" || trainingLocation === "Both") &&
     normalizedHomeEquipment.length === 0
@@ -582,6 +583,14 @@ async function fillPlanningRealityInputs(page, {
   await domClick(page.getByTestId(`intake-goals-option-session-length-${toTestIdFragment(sessionLengthValue)}`));
   await domClick(page.getByTestId(`intake-goals-option-training-location-${toTestIdFragment(trainingLocation)}`));
 
+  if (normalizedAvailableDays.length || String(injuryText || "").trim() || injuryImpact || coachingStyle) {
+    const optionalDetails = page.getByTestId("intake-optional-reality-details");
+    if (await optionalDetails.count()) {
+      const detailsOpen = await optionalDetails.evaluate((node) => Boolean(node.open)).catch(() => true);
+      if (!detailsOpen) await domClick(page.getByTestId("intake-optional-reality-summary"));
+    }
+  }
+
   if (trainingLocation === "Home" || trainingLocation === "Both") {
     for (const option of resolvedHomeEquipment) {
       await domClick(page.getByTestId(`intake-goals-option-home-equipment-${toTestIdFragment(option)}`));
@@ -591,7 +600,7 @@ async function fillPlanningRealityInputs(page, {
     }
   }
 
-  for (const day of Array.isArray(availableTrainingDays) ? availableTrainingDays : [availableTrainingDays].filter(Boolean)) {
+  for (const day of normalizedAvailableDays) {
     await domClick(page.getByTestId(`intake-goals-option-available-days-${toTestIdFragment(day)}`));
   }
 
@@ -639,7 +648,13 @@ async function commitPendingGoalSelection(page) {
   const commitButton = page.getByTestId("intake-goal-selection-commit");
   await expect(commitButton).toBeVisible();
   await expect(commitButton).toBeEnabled();
-  await domClick(commitButton);
+  await commitButton.click({ force: true });
+  await expect.poll(async () => {
+    const pendingDraftVisible = await page.getByTestId("intake-goal-selection-draft")
+      .isVisible()
+      .catch(() => false);
+    return pendingDraftVisible ? "pending" : "saved";
+  }, { timeout: 5_000 }).toBe("saved");
 }
 
 const GOAL_TYPE_ALIASES = Object.freeze({
@@ -987,6 +1002,7 @@ async function completeGoalLibraryIntakeStep(page, {
   await domClick(page.getByTestId(`intake-goal-type-${normalizedGoalType}`));
   if (normalizedTemplateId) {
     await domClick(page.getByTestId(`intake-featured-goal-${normalizedTemplateId}`));
+    await expect(page.getByTestId("intake-goal-selection-draft")).toBeVisible();
     await fillStarterMetricInputs(page, normalizedQuickMetrics);
     await commitPendingGoalSelection(page);
   }
@@ -1057,6 +1073,7 @@ async function completeStructuredIntakeOnOneScreen(page, {
   await domClick(page.getByTestId(`intake-goal-type-${normalizedGoalType}`));
   if (normalizedTemplateId) {
     await domClick(page.getByTestId(`intake-featured-goal-${normalizedTemplateId}`));
+    await expect(page.getByTestId("intake-goal-selection-draft")).toBeVisible();
     await fillStarterMetricInputs(page, normalizedQuickMetrics);
     await commitPendingGoalSelection(page);
   }

@@ -298,7 +298,7 @@ test.describe("intake onboarding e2e", () => {
     await domClick(page.getByTestId("intake-featured-goal-train_for_run_race"));
     await expect(page.getByTestId("intake-goal-selection-draft")).toContainText(/train for a running race|running race/i);
     await expect(page.getByTestId("intake-goal-specificity-options")).toHaveCount(0);
-    await expect(page.getByTestId("intake-goal-metric-event_distance-half-marathon")).not.toHaveClass(/btn-primary/);
+    await expect(page.getByTestId("intake-goal-metric-event_distance-half-marathon")).not.toHaveAttribute("data-selected", "true");
     await domClick(page.getByTestId("intake-goal-metric-event_distance-half-marathon"));
     await domFill(page.getByTestId("intake-goal-metric-target-timeline"), "October");
     await domFill(page.getByTestId("intake-goal-metric-current-run-frequency"), "4");
@@ -307,9 +307,9 @@ test.describe("intake onboarding e2e", () => {
     await commitPendingGoalSelection(page);
 
     await expect(page.getByTestId("intake-selected-goals")).toContainText(/train for a running race|running race/i);
-    await expect(page.getByTestId("intake-goal-metric-event_distance-half-marathon")).toHaveClass(/btn-primary/);
+    await expect(page.getByTestId("intake-goal-metric-event_distance-half-marathon")).toHaveAttribute("data-selected", "true");
     await domClick(page.getByTestId("intake-goal-metric-event_distance-10k"));
-    await expect(page.getByTestId("intake-goal-metric-event_distance-10k")).toHaveClass(/btn-primary/);
+    await expect(page.getByTestId("intake-goal-metric-event_distance-10k")).toHaveAttribute("data-selected", "true");
   });
 
   test("swim goals gather the swim anchor inline before build", async ({ page }) => {

@@ -149,7 +149,7 @@ test.describe("intake reliability", () => {
     await page.setViewportSize({ width: 390, height: 844 });
   });
 
-  test("desktop intake keeps the reality column compact instead of stretching it to goal-picker height", async ({ page }) => {
+  test("desktop intake stacks setup panels without horizontal overlap", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 960 });
     await gotoIntakeInLocalMode(page);
     await expect(page.getByTestId("intake-goals-step")).toBeVisible();
@@ -159,8 +159,67 @@ test.describe("intake reliability", () => {
 
     expect(goalBox).toBeTruthy();
     expect(realityBox).toBeTruthy();
-    expect(Math.abs((goalBox?.y || 0) - (realityBox?.y || 0))).toBeLessThan(2);
-    expect((goalBox?.height || 0) - (realityBox?.height || 0)).toBeGreaterThan(60);
+    expect((realityBox?.y || 0)).toBeGreaterThan((goalBox?.y || 0) + (goalBox?.height || 0) - 2);
+    expect(Math.abs((goalBox?.x || 0) - (realityBox?.x || 0))).toBeLessThan(2);
+    expect((goalBox?.x || 0) + (goalBox?.width || 0)).toBeLessThanOrEqual((realityBox?.x || 0) + (realityBox?.width || 0) + 2);
+  });
+
+  test("laptop intake accepts an exact race date and keeps save action readable", async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message || String(error)));
+    await gotoIntakeInLocalMode(page);
+    await expect(page.getByTestId("intake-goals-step")).toBeVisible();
+
+    await domClick(page.getByTestId("intake-goal-type-endurance"));
+    await domClick(page.getByTestId("intake-featured-goal-train_for_run_race"));
+    await expect(page.getByTestId("intake-goal-selection-draft")).toContainText(/running race/i);
+
+    await domClick(page.getByTestId("intake-goal-metric-event_distance-half-marathon"));
+    await domFill(page.getByTestId("intake-goal-metric-target-timeline"), "10/12/2026");
+    await domFill(page.getByTestId("intake-goal-metric-current-run-frequency"), "4");
+    await domFill(page.getByTestId("intake-goal-metric-longest-recent-run-value"), "8");
+    await domClick(page.getByTestId("intake-goal-metric-longest_recent_run_unit-miles"));
+
+    const commitButton = page.getByTestId("intake-goal-selection-commit");
+    await expect(commitButton).toBeVisible();
+    await expect(commitButton).toContainText(/save goal/i);
+    const commitBox = await commitButton.boundingBox();
+    expect(commitBox).toBeTruthy();
+    expect(commitBox.width).toBeGreaterThan(120);
+
+    await commitPendingGoalSelection(page);
+    await expect(page.getByTestId("intake-selected-goals")).toContainText(/running race/i);
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("saved goal state and smart defaults make the first build path obvious", async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await gotoIntakeInLocalMode(page);
+    await expect(page.getByTestId("intake-goals-step")).toBeVisible();
+
+    await domClick(page.getByTestId("intake-goal-type-strength"));
+    await domClick(page.getByTestId("intake-featured-goal-improve_big_lifts"));
+    await expect(page.getByTestId("intake-goal-selection-draft")).toBeVisible();
+    await fillBigLiftSaveFields(page);
+
+    const continueButton = page.getByTestId("intake-footer-continue");
+    await expect(continueButton).toContainText(/save goal/i);
+    await expect(continueButton).toBeEnabled();
+    await domClick(continueButton);
+
+    await expect(page.getByTestId("intake-selected-goals")).toContainText(/improve a big lift/i);
+    await expect(page.getByTestId("intake-goal-saved-status")).toContainText(/saved/i);
+    await expect(page.getByTestId("intake-goals-needs")).toContainText(/ready with smart defaults/i);
+    await expect(continueButton).toContainText(/build with defaults/i);
+    await expect(continueButton).toBeEnabled();
+
+    await domClick(continueButton);
+    await expect.poll(async () => {
+      const phase = await page.getByTestId("intake-root").getAttribute("data-intake-phase").catch(() => "");
+      const todayVisible = await page.getByTestId("today-session-card").isVisible().catch(() => false);
+      return todayVisible ? "completed" : phase || "pending";
+    }, { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
   });
 
   test("mobile intake keeps goal-family switching and continue usable after picking a first goal", async ({ page }) => {
@@ -194,10 +253,10 @@ test.describe("intake reliability", () => {
     await expect(page.getByTestId("intake-selected-goals")).toContainText(/improve a big lift/i);
     await expect(page.getByTestId("intake-selected-goals")).not.toContainText(/get stronger/i);
 
-    await expect(page.getByTestId("intake-goals-option-experience-level-beginner")).toHaveClass(/btn-primary/);
-    await expect(page.getByTestId("intake-goals-option-training-days-3")).toHaveClass(/btn-primary/);
-    await expect(page.getByTestId("intake-goals-option-session-length-30")).toHaveClass(/btn-primary/);
-    await expect(page.getByTestId("intake-goals-option-coaching-style-balanced-coaching")).toHaveClass(/btn-primary/);
+    await expect(page.getByTestId("intake-goals-option-experience-level-beginner")).toHaveAttribute("data-selected", "true");
+    await expect(page.getByTestId("intake-goals-option-training-days-3")).toHaveAttribute("data-selected", "true");
+    await expect(page.getByTestId("intake-goals-option-session-length-30")).toHaveAttribute("data-selected", "true");
+    await expect(page.getByTestId("intake-goals-option-coaching-style-balanced-coaching")).toHaveAttribute("data-selected", "true");
 
     await domClick(page.getByTestId("intake-goals-option-training-location-gym"));
 

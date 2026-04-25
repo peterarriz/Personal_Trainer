@@ -246,12 +246,12 @@ test.describe("one-screen structured intake", () => {
     await domClick(page.getByTestId("settings-surface-baselines"));
     await expect(page.getByTestId("metrics-baselines-section")).toBeVisible();
 
-    await expect(page.getByTestId("metrics-input-environment-available-days-mon")).toHaveClass(/btn-primary/);
-    await expect(page.getByTestId("metrics-input-environment-available-days-wed")).toHaveClass(/btn-primary/);
-    await expect(page.getByTestId("metrics-input-environment-available-days-fri")).toHaveClass(/btn-primary/);
-    await expect(page.getByTestId("metrics-input-environment-available-days-tue")).not.toHaveClass(/btn-primary/);
-    await expect(page.getByTestId("metrics-input-environment-available-days-thu")).not.toHaveClass(/btn-primary/);
-    await expect(page.getByTestId("metrics-input-environment-available-days-sun")).not.toHaveClass(/btn-primary/);
+    await expect(page.getByTestId("metrics-input-environment-available-days-mon")).toHaveAttribute("data-selected", "true");
+    await expect(page.getByTestId("metrics-input-environment-available-days-wed")).toHaveAttribute("data-selected", "true");
+    await expect(page.getByTestId("metrics-input-environment-available-days-fri")).toHaveAttribute("data-selected", "true");
+    await expect(page.getByTestId("metrics-input-environment-available-days-tue")).not.toHaveAttribute("data-selected", "true");
+    await expect(page.getByTestId("metrics-input-environment-available-days-thu")).not.toHaveAttribute("data-selected", "true");
+    await expect(page.getByTestId("metrics-input-environment-available-days-sun")).not.toHaveAttribute("data-selected", "true");
 
     cache = await readLocalCache(page);
     expect(cache?.personalization?.trainingContext?.weekdayAvailability?.value).toEqual(["mon", "wed", "fri"]);

@@ -173,6 +173,22 @@ const expectLocatorCenterHitTarget = async (locator) => {
   })).resolves.toBe(true);
 };
 
+const fillFormControlByDomInput = async (locator, value) => {
+  await expect(locator).toBeVisible();
+  await locator.evaluate((node, nextValue) => {
+    const control = node;
+    control.focus?.();
+    const prototype = control instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+    if (setter) setter.call(control, String(nextValue ?? ""));
+    else control.value = String(nextValue ?? "");
+    control.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: String(nextValue ?? "") }));
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+  }, value);
+};
+
 const expectReadableSelectedChip = async (locator, expectedLabel) => {
   await expect(locator).toBeVisible();
   await expect(locator).toContainText(expectedLabel);
@@ -315,7 +331,7 @@ test.describe("interaction freeze regression", () => {
     await expect(page.getByTestId("intake-goals-primary-input")).toBeVisible();
     await expectPageResponsive(page);
     await expectLocatorCenterHitTarget(page.getByTestId("intake-goals-primary-input"));
-    await page.getByTestId("intake-goals-primary-input").fill("Build strength without getting stuck in intake", { force: true });
+    await fillFormControlByDomInput(page.getByTestId("intake-goals-primary-input"), "Build strength without getting stuck in intake");
     await expect(page.getByTestId("intake-goals-primary-input")).toHaveValue("Build strength without getting stuck in intake");
     await expectPageResponsive(page);
 
