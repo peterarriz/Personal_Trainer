@@ -49,14 +49,14 @@ export function SettingsProgramsSection({
   return (
     <section data-testid="settings-programs-section" style={SETTINGS_SECTION_STYLE}>
       <div style={SETTINGS_SECTION_HEADER_STYLE}>
-        <div className="sect-title" style={{ color:colors.blue, marginBottom:0 }}>PLAN LAYERS</div>
+        <div className="sect-title" style={{ color:colors.blue, marginBottom:0 }}>PLAN STYLE</div>
         <div style={SETTINGS_SECTION_INTRO_STYLE}>
-          Plan now owns activation and style overlays. This section stays available while the migration settles.
+          Choose whether FORMA builds freely or follows a named plan more closely.
         </div>
       </div>
       <div style={{ ...SETTINGS_SUBPANEL_STYLE, display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"center", flexWrap:"wrap" }}>
         <div style={{ ...SETTINGS_BODY_STYLE, maxWidth:640 }}>
-          Use Plan for the main experience. Keep this as a fallback if you want the old controls.
+          Use Plan for context. Use this page when you want to set the plan style directly.
         </div>
         <button className="btn" onClick={onOpenPlan} style={{ fontSize:"0.48rem", color:colors.blue, borderColor:colors.blue + "35" }}>
           Open Plan

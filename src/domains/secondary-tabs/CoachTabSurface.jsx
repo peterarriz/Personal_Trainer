@@ -1267,8 +1267,8 @@ const startedAt = Date.now();
  <SurfaceHeroCopy>
  <SurfaceHeading
  eyebrow="Coach"
- title="Three jobs, one clear boundary."
- supporting="Adjust today, adjust this week, or ask coach."
+ title="Adjust the plan without losing the plot."
+ supporting="Make a quick change or ask for a straight recommendation."
  eyebrowColor={C.blue}
  titleSize="hero"
  />
@@ -1377,7 +1377,7 @@ const startedAt = Date.now();
  {coachSurfaceMode === COACH_SURFACE_MODES.todayWeek && (
  <div data-testid="coach-mode-panel-adjust_today" style={{ display: "grid", gap: "0.75rem" }}>
  <SurfaceCard variant="action" accentColor={C.green} style={{ display: "grid", gap: "0.45rem" }}>
- <SurfaceHeading eyebrow="Adjust today" title="Make the clearest call for right now" supporting="Pick the situation. Coach gives one move, why it matters, and what changes if you use it." eyebrowColor={C.green} />
+ <SurfaceHeading eyebrow="Adjust today" title="Choose what changed today" supporting="Pick the situation. Coach shows one move, why it helps, and what changes if you accept it." eyebrowColor={C.green} />
 
  <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
  Common situations
@@ -1488,7 +1488,7 @@ const startedAt = Date.now();
  {coachSurfaceMode === COACH_SURFACE_MODES.changePlan && (
  <div data-testid="coach-mode-panel-adjust_week" style={{ display: "grid", gap: "0.75rem" }}>
  <SurfaceCard variant="action" accentColor={C.amber} style={{ display: "grid", gap: "0.45rem" }}>
- <SurfaceHeading eyebrow="Adjust this week" title="Change one thing, keep the week coherent" supporting="Coach recommends one weekly move first. Nothing changes until you accept the preview." eyebrowColor={C.amber} />
+ <SurfaceHeading eyebrow="Adjust this week" title="Change the week without rebuilding everything" supporting="Coach recommends one weekly move first. Nothing changes until you accept it." eyebrowColor={C.amber} />
 
  {renderCoachRecommendationCard({
  testId: "coach-job-card-adjust-week",
@@ -1550,7 +1550,7 @@ const startedAt = Date.now();
  <SurfaceCard variant="subtle" accentColor={C.purple} style={{ display: "grid", gap: "0.45rem" }}>
  <SurfaceHeading
  eyebrow="Ask coach"
- title="Ask for a call, tradeoff, or next step"
+ title="Ask for a decision or next step"
  supporting={askAnythingState.headline}
  eyebrowColor={C.purple}
  />

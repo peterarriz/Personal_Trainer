@@ -660,13 +660,13 @@ export const buildAuthEntryViewModel = ({
   const showExceptionalContext = recoveryMode || hasSavedLocalContext || authProviderUnavailable;
 
   const localPathDescription = hasSavedLocalContext
-    ? "Resume the last usable training state on this device, then sign in again when you want cloud sync and account controls back on."
-    : "This local fallback is only for trusted troubleshooting and internal QA on this device.";
+    ? "Resume the plan saved on this device, then sign in again when you want account sync back on."
+    : "Use this device without account sync for now.";
 
   const subtitle = recoveryMode
     ? "Choose a new password to finish the reset and get back into your account."
     : authProviderUnavailable
-    ? "Account access is temporarily unavailable. Try again when sign-in is healthy again."
+    ? "Account access is temporarily unavailable. Try again in a few minutes."
     : hasSavedLocalContext
     ? "Sign in to reopen the plan already saved on this device."
     : "Use one account for your plan, progress, and recovery.";
@@ -706,10 +706,10 @@ export const buildAuthEntryViewModel = ({
           {
             id: "auth-status",
             kicker: "Sign-in status",
-            title: "Come back when account access returns",
-            description: "The account provider is temporarily unavailable, so FORMA cannot start a fresh session right now.",
+            title: "Try again in a few minutes",
+            description: "Account sign-in is temporarily unavailable, so FORMA cannot start a fresh session right now.",
             benefits: [
-              "Try again once sign-in is healthy.",
+              "Try again after the sign-in service recovers.",
               "No local-only starter session is created while sign-in is unavailable.",
             ],
             emphasis: "strong",
@@ -772,7 +772,7 @@ export const buildAuthEntryViewModel = ({
         : "Sign in to continue.",
     },
     localAction: recoveryMode ? null : hasLocalPath ? {
-      title: startupLocalResumeAvailable ? "Need the fallback instead?" : "Need a local fallback?",
+      title: startupLocalResumeAvailable ? "Use this device instead?" : "Use this device for now?",
       label: "Use local data instead",
       description: localPathDescription,
       badge: startupLocalResumeAvailable ? "This device" : "Fallback",

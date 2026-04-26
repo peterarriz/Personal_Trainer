@@ -6,8 +6,8 @@ const SETTINGS_SURFACES = Object.freeze([
   { key: "account", label: "Account", helper: "Sign-in and backup" },
   { key: "profile", label: "Profile", helper: "Basics and units" },
   { key: "goals", label: "Goals", helper: "Priorities and timing" },
-  { key: "baselines", label: "Plan inputs", helper: "Current inputs" },
-  { key: "programs", label: "Plan layers", helper: "Named plan + style" },
+  { key: "baselines", label: "Baselines", helper: "Current numbers" },
+  { key: "programs", label: "Plan style", helper: "Plan + feel" },
   { key: "preferences", label: "Preferences", helper: "Defaults and reminders" },
   { key: "advanced", label: "Devices", helper: "Connections" },
 ]);

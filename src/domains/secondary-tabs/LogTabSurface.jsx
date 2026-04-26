@@ -824,7 +824,7 @@ return (
  <SurfaceHeading
  eyebrow="Log today"
  title={canonicalLogLabel}
- supporting="The plan is loaded below. Record only what actually changed."
+ supporting="Your planned session is below. Update only what was different."
  eyebrowColor={C.green}
  titleTestId="log-canonical-session-label"
  titleSize="hero"
@@ -897,7 +897,7 @@ return (
 >
  <div style={{ display:"grid", gap:"0.16rem" }}>
  <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", letterSpacing:"0.06em", textTransform:"uppercase" }}>
- Prescribed
+ Planned
  </div>
  <div style={{ fontSize:"0.62rem", color:"var(--consumer-text)", fontWeight:700, lineHeight:1.35 }}>
  {canonicalLogLabel}
@@ -1003,7 +1003,7 @@ return (
  <div style={{ fontSize:"0.47rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
  {isSwappedSelection
   ? "Log the substitute modality you actually did."
-  : runPrefillBits || "The prescribed cardio session is loaded. Change only the actuals."}
+  : runPrefillBits || "The planned cardio session is loaded. Change only what happened."}
  </div>
  </div>
  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(112px,1fr))", gap:"0.45rem" }}>

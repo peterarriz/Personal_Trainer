@@ -163,7 +163,7 @@ export function PlanTab({
   if (!day) {
    return (
     <div style={{ fontSize:"0.52rem", color:"var(--consumer-text-muted)", lineHeight:1.5 }}>
-     {preview ? "Choose an upcoming day to see how the preview week is shaping up." : "Choose a day in this week to see where it fits."}
+     {preview ? "Pick an upcoming day to see the likely session." : "Pick a day to see the session and next step."}
     </div>
    );
   }
@@ -193,14 +193,14 @@ export function PlanTab({
     <CompactTrustRow model={day?.trustModel || null} dataTestId="program-day-trust-row" />
     <div style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)", lineHeight:1.5 }}>
      {preview
-      ? "Preview weeks show direction, not a locked prescription."
+      ? "Preview weeks are forecasts. They can still change."
       : day.status?.detail
       ? day.status.detail
       : day?.isToday
-      ? "Today owns the prescription. Log owns the execution."
+      ? "Do this session from Today, then record what happened in Log."
       : day?.dateKey && day.dateKey < todayKey
-      ? "Log holds the execution truth for finished days."
-      : "Plan keeps the week oriented without repeating Today."}
+      ? "Open Log to review or correct finished days."
+      : "Plan shows the week at a glance. Today has the exact session."}
     </div>
     {(showTodayAction || showLogAction) && (
      <SurfaceActions>
@@ -239,7 +239,7 @@ export function PlanTab({
         eyebrow="Plan"
         title={planModel?.weekLabel || "This week"}
         titleTestId="program-trajectory-title"
-        supporting={planModel?.intentLine || "This week is keeping the active goals moving in one coherent direction."}
+        supporting={planModel?.intentLine || "This week moves the active goals forward without adding noise."}
         eyebrowColor={C.blue}
         titleSize="hero"
        />
@@ -274,7 +274,7 @@ export function PlanTab({
        showContext
       />
       <div style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
-       {planModel?.commitmentLine || "This week is committed. Future weeks stay preview-only until they arrive."}
+       {planModel?.commitmentLine || "This week is set. Future weeks can still adjust."}
       </div>
      <CompactTrustRow model={planModel?.weekTrustModel || null} dataTestId="program-header-trust-row" />
      </SurfaceQuietPanel>
@@ -415,7 +415,7 @@ export function PlanTab({
        Open Log
       </button>
       <button type="button" className="btn" onClick={() => onManagePlan("plan")} style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)" }}>
-       Manage plan
+       Edit goals
       </button>
      </SurfaceActions>
     </SurfaceStack>
@@ -423,9 +423,9 @@ export function PlanTab({
 
    <SurfaceCard data-testid="program-roadmap" style={{ display:"grid", gap:"0.48rem" }}>
     <div style={{ display:"grid", gap:"0.16rem" }}>
-     <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>VISIBLE ARC</div>
+     <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>PLAN ARC</div>
      <div style={{ fontSize:"0.52rem", color:"var(--consumer-text-soft)", lineHeight:1.52 }}>
-      The current week is committed. The next few weeks show where the block is trying to go.
+      This week is set. The next few weeks show where the block is headed.
      </div>
     </div>
     <div data-testid="program-roadmap-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:"0.4rem" }}>
@@ -607,7 +607,7 @@ export function PlanTab({
    {!!planModel?.previewWeek && (
     <SurfaceCard data-testid="program-future-weeks" style={{ display:"grid", gap:"0.5rem" }}>
      <div style={{ display:"grid", gap:"0.16rem" }}>
-      <div className="sect-title" style={{ color:C.purple, marginBottom:0 }}>NEXT WEEK PREVIEW</div>
+      <div className="sect-title" style={{ color:C.purple, marginBottom:0 }}>NEXT WEEK</div>
       <div style={{ fontSize:"0.58rem", color:"var(--consumer-text)", lineHeight:1.45 }}>
        {planModel.previewWeek.focus}
       </div>
@@ -633,7 +633,7 @@ export function PlanTab({
          {planModel.previewWeek.label}
         </div>
         <div style={{ fontSize:"0.56rem", color:"var(--consumer-text)", fontWeight:700, lineHeight:1.35 }}>
-         Forecast only
+         Preview
         </div>
        </div>
        <SurfacePill style={buildStatusPillStyle(PLAN_STATUS_TONES.preview)}>Preview</SurfacePill>

@@ -362,7 +362,7 @@ export function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout
  const hydrationSupportLine = storedHydrationTargetOz
  ? recoveryPrescription?.hydrationSupport?.summary || `Stored hydration target: ${Math.round(storedHydrationTargetOz)} oz.`
  : "No explicit hydration target is stored for today. The tracker below uses a suggested baseline from bodyweight and session load.";
- const weeklyNutritionHeadline = weeklyNutritionReview?.coaching?.headline || "Your weekly meal strategy sharpens as real days get logged.";
+ const weeklyNutritionHeadline = weeklyNutritionReview?.coaching?.headline || "Your weekly food strategy gets sharper as you log real days.";
  const weeklyPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Keep the plan separate from what actually happened so next week's guidance stays realistic.";
  const weeklyAdherenceLine = weeklyNutritionReview?.adherence?.summary || "Still learning which days feel easiest to execute.";
  const weeklyHydrationLine = weeklyNutritionReview?.hydration?.summary || "Hydration pattern is still coming into focus.";
@@ -800,9 +800,9 @@ const mergeVisibleMealHistory = useCallback((nextFavorites = {}, calendarModel =
  { label: "Carbs", value: carbLevel, suffix: "" },
  { label: "Fat", value: `${Math.round(resolvedTargets.f || 0)}g`, suffix: "" },
  ];
- const executionPlanTitle = sanitizeDisplayText(executionPlan?.title || "Today's execution plan");
- const executionPlanFocusLine = sanitizeDisplayText(executionPlan?.focusLine || directiveSentence || "Balanced meals, stable energy, and low-friction execution.");
- const executionPlanWhyLine = sanitizeDisplayText(executionPlan?.whyLine || whyThisToday || "Meals are organized around the work instead of random decisions.");
+ const executionPlanTitle = sanitizeDisplayText(executionPlan?.title || "Today's food plan");
+ const executionPlanFocusLine = sanitizeDisplayText(executionPlan?.focusLine || directiveSentence || "Simple meals, steady energy, fewer decisions.");
+ const executionPlanWhyLine = sanitizeDisplayText(executionPlan?.whyLine || whyThisToday || "Meals are matched to today's training.");
  const compressNutritionCopy = (text = "", maxLen = 110) => {
  const normalized = String(text || "").replace(/\s+/g, " ").trim();
  if (!normalized) return "";
@@ -1199,7 +1199,7 @@ return (
 
  <div data-testid="nutrition-execution-rules" className="card card-subtle" style={{ borderColor:C.blue+"24" }}>
  <div style={{ display:"grid", gap:"0.18rem" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>EXECUTION RULES</div>
+ <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>HOW TO USE IT</div>
  {executionPlanRules.map((rule, index) => (
  <div key={`nutrition_rule_${index}`} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>
  {index + 1}. {sanitizeDisplayText(rule)}
@@ -1436,7 +1436,7 @@ return (
  <div data-testid="nutrition-weekly-grocery-list" className="card card-subtle" style={{ borderColor:C.green+"28" }}>
  <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.45rem" }}>
  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", flexWrap:"wrap", alignItems:"flex-start" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>WEEK PLAN + GROCERY</div>
+ <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>WEEK + GROCERIES</div>
  <span className="ui-pill" style={{ color:C.green, background:`${C.green}12`, borderColor:`${C.green}22` }}>
  {sanitizeDisplayText(weeklyNutritionGroceryModel.weekLabel || "This week")}
  </span>
@@ -1491,7 +1491,7 @@ return (
 
  <div data-testid="nutrition-quick-log" className="card card-action" style={{ borderColor:C.green+"30", background:"#0d1410" }}>
  <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.45rem" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>QUICK LOG</div>
+ <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>LOG FOOD</div>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
  {selectedLogIsToday
  ? "Save the day in a few taps."
@@ -1561,7 +1561,7 @@ return (
 
  <div className="card card-subtle" style={{ borderColor:C.green+"24" }}>
  <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.4rem" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>KEY ADJUSTMENTS</div>
+ <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>TODAY'S ADJUSTMENTS</div>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{compactFuelingDetailSummary}</div>
  </div>
  <div style={{ display:"grid", gap:"0.35rem" }}>
@@ -1818,7 +1818,7 @@ return (
  </div>
 
  <div className="card" style={{ marginBottom:"0.8rem" }}>
- <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>PRACTICAL MEAL STRUCTURE</div>
+ <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>MEAL STRUCTURE</div>
  <div style={{ display:"grid", gap:"0.38rem" }}>
  {mealMacroRows.map((meal) => (
  <div key={meal.key} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.46rem 0.52rem" }}>
@@ -1849,7 +1849,7 @@ return (
  </div>
 
  <div className="card" style={{ marginBottom:"0.8rem", borderColor:C.blue+"24" }}>
- <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>RECOVERY + SUPPLEMENT GUIDANCE</div>
+ <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>RECOVERY + SUPPLEMENTS</div>
  <div style={{ display:"grid", gap:"0.34rem" }}>
  <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
  <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>RECOVERY</div>

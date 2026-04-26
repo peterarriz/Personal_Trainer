@@ -640,7 +640,7 @@ const buildWorkoutBlocks = ({
 const buildAdjustmentSummary = ({ adjustments = {}, environmentSelection = null } = {}) => {
   const labels = [];
   if (adjustments?.time === "short") labels.push("Short on time");
-  if (adjustments?.time === "extended") labels.push("Push a little harder");
+  if (adjustments?.time === "extended") labels.push("Have extra time");
   if (adjustments?.recovery === "low_energy") labels.push("Low energy");
   if (adjustments?.soreness === "legs") labels.push("Legs sore");
   if (adjustments?.soreness === "upper") labels.push("Upper body sore");

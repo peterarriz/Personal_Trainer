@@ -406,7 +406,7 @@ function useFormaLazyChunkState(chunkName = "", active = false) {
   setState({
    ready:false,
    loading:false,
-   error:String(error?.message || "Could not load this surface."),
+   error:String(error?.message || "Could not load this page."),
   });
   throw error;
  });
@@ -455,14 +455,14 @@ function useFormaLazyModuleState({ chunkName = "", moduleId = "", exportName = "
   return moduleLoader({ chunkName, moduleId }).then((loadedModule) => {
    const nextComponent = loadedModule?.[exportName] || loadedModule?.default || null;
    if (!nextComponent) {
-    throw new Error(`Lazy surface export not found: ${exportName}`);
+    throw new Error(`Page module is unavailable: ${exportName}`);
    }
    setModuleState({ Component: nextComponent, error: "", loading: false });
    return nextComponent;
   }).catch((error) => {
    setModuleState({
     Component: null,
-    error: String(error?.message || "Could not load this surface."),
+    error: String(error?.message || "Could not load this page."),
     loading: false,
    });
    throw error;
@@ -495,7 +495,7 @@ function LazySurfaceSlot({
  runtime = {},
  surfaceProps = {},
  loadingTitle = "Loading",
- loadingDetail = "Bringing this surface in now.",
+ loadingDetail = "Loading this page now.",
  dataTestId = "",
  onRetry = () => {},
  onFallbackBack = () => {},
@@ -9422,7 +9422,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  Opening {PRODUCT_BRAND.name}
  </div>
  <div style={{ fontSize:"0.58rem", color:"var(--text-soft)", lineHeight:1.55 }}>
- Restoring your training space and account context.
+ Loading your plan and account.
  </div>
  </div>
  </div>
@@ -9431,7 +9431,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  <div style={{ width:"42%", height:"100%", borderRadius:999, background:"var(--cta-bg)", boxShadow:"inset 0 1px 0 rgba(255,255,255,0.08)" }} />
  </div>
  <div style={{ fontSize:"0.48rem", color:"var(--muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
- Getting the shell ready
+ Preparing the app
  </div>
  </div>
  </div>
@@ -17291,8 +17291,8 @@ function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTod
   isHybrid: todayPrescriptionModel?.family === "hybrid",
  });
  const todayAdjustmentIntroLine = environmentSelection?.scope === "today" && sanitizeDisplayText(environmentSelection?.mode || "")
-  ? `Active now: ${sanitizeDisplayText(environmentSelection.mode)} setup. Adjustments only change today's displayed prescription.`
-  : "Use this only when real-world constraints change today's session.";
+  ? `Active now: ${sanitizeDisplayText(environmentSelection.mode)} setup. These changes only affect today.`
+  : "Use this when today needs a real-world adjustment.";
 
  const setTodayAdjustmentField = (fieldKey, nextValue) => {
   setTodayAdjustmentState((current) => ({
@@ -17503,7 +17503,7 @@ function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTod
  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"flex-start", flexWrap:"wrap" }}>
  <div style={{ display:"grid", gap:"0.18rem", minWidth:0, flex:"1 1 280px" }}>
  <div style={{ fontSize:"0.52rem", color:"var(--consumer-text)", fontWeight:700 }}>
- Adjust Today
+ Adjust today
  </div>
  <div style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)", lineHeight:1.5 }}>
  {todayAdjustmentIntroLine}
@@ -17536,7 +17536,7 @@ function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTod
  Short on time
  </button>
  <button type="button" className="btn" onClick={() => toggleTodayTimeVariant("extended")} style={buildTodayAdjustmentButtonStyle(sessionVariant === "extended", C.amber)}>
- Push a little harder
+ Have extra time
  </button>
  <button type="button" className="btn" onClick={toggleTodayRecovery} style={buildTodayAdjustmentButtonStyle(todayAdjustmentState?.recovery === "low_energy", C.blue)}>
  Low energy

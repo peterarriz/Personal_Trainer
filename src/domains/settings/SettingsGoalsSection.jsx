@@ -44,12 +44,12 @@ export function SettingsGoalsSection({
       <div style={SETTINGS_SECTION_HEADER_STYLE}>
         <div className="sect-title" style={{ color:colors.green, marginBottom:0 }}>GOALS</div>
         <div style={SETTINGS_SECTION_INTRO_STYLE}>
-          Plan is now the main place to change goals and see how they affect the week ahead.
+          Review goal priority, timing, and status without leaving settings.
         </div>
       </div>
       <div style={{ ...SETTINGS_SUBPANEL_STYLE, display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"center", flexWrap:"wrap" }}>
         <div style={{ ...SETTINGS_BODY_STYLE, maxWidth:640 }}>
-          Use Plan for the common path. These controls stay here as a legacy workspace while we finish the move.
+          Use Plan when you want context. Use this page when you want direct edits.
         </div>
         <button className="btn" onClick={onOpenPlan} style={{ fontSize:"0.48rem", color:colors.green, borderColor:colors.green + "35" }}>
           Open Plan
@@ -57,7 +57,7 @@ export function SettingsGoalsSection({
       </div>
       {focusSection === "plan" && (
         <div data-testid="settings-goals-migration-note" style={{ ...SETTINGS_SUBPANEL_STYLE, color:"var(--text-strong)" }}>
-          Goal changes start in Plan now. This settings panel stays available as a fallback.
+          Goal details are ready to edit here.
         </div>
       )}
       <div data-testid="settings-goals-management" style={{ ...SETTINGS_PANEL_STYLE, gap:"0.55rem" }}>
@@ -65,7 +65,7 @@ export function SettingsGoalsSection({
           <div style={{ display:"grid", gap:"0.14rem", maxWidth:720 }}>
             <div style={SETTINGS_LABEL_STYLE}>ACTIVE GOALS</div>
             <div style={SETTINGS_TITLE_STYLE}>Set the order and update goals when life changes.</div>
-            <div style={SETTINGS_BODY_STYLE}>Priority 1 gets the most support.</div>
+            <div style={SETTINGS_BODY_STYLE}>Priority 1 gets the most planning support.</div>
             {!!priorityExplanation && (
               <details>
                 <summary style={{ cursor:"pointer", fontSize:"0.47rem", color:"var(--text-muted)" }}>How priorities work</summary>
@@ -222,7 +222,7 @@ export function SettingsGoalsSection({
         <summary style={{ cursor:"pointer", listStyle:"none" }}>
           <div style={{ display:"grid", gap:"0.14rem" }}>
             <div style={SETTINGS_LABEL_STYLE}>LIFECYCLE</div>
-            <div style={SETTINGS_TITLE_STYLE}>Open goal history and restore older goals when you need them.</div>
+            <div style={SETTINGS_TITLE_STYLE}>Review paused, finished, and older goals.</div>
           </div>
         </summary>
         <div style={{ display:"grid", gap:"0.45rem", marginTop:"0.55rem" }}>
